@@ -1,7 +1,10 @@
-﻿using System.Diagnostics;
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Windows.Automation;
+using System.Windows.Threading;
+using System.Text.Json;
+using System.Speech.Synthesis;
 
 using LiveCaptionsTranslator.models;
 using LiveCaptionsTranslator.utils;
@@ -13,9 +16,37 @@ namespace LiveCaptionsTranslator
         private static AutomationElement? window = null;
         private static Caption? caption = null;
         private static Setting? setting = null;
+        public static MainWindow? MainWindow { get; set; }
 
         private static readonly Queue<string> pendingTextQueue = new();
         private static readonly TranslationTaskQueue translationTaskQueue = new();
+
+        // Add flag for stopping translation
+        private static volatile bool _isTranslationStopped = false;
+        private static readonly object _stopLock = new object();
+        
+        // Add flag for pausing translation
+        private static volatile bool _isTranslationPaused = false;
+        private static readonly object _pauseLock = new object();
+        
+        public static bool IsPaused
+        {
+            get
+            {
+                lock (_pauseLock)
+                {
+                    return _isTranslationPaused;
+                }
+            }
+            set
+            {
+                lock (_pauseLock)
+                {
+                    _isTranslationPaused = value;
+                    Console.WriteLine($"Translator.IsPaused set to: {value}");
+                }
+            }
+        }
 
         public static AutomationElement? Window
         {
@@ -26,34 +57,180 @@ namespace LiveCaptionsTranslator
         public static Setting? Setting => setting;
 
         public static bool LogOnlyFlag { get; set; } = false;
-        public static bool FirstUseFlag { get; set; } = false;
+        private static bool _firstUseFlag;
+        public static bool FirstUseFlag
+        {
+            get => _firstUseFlag;
+            set => _firstUseFlag = value;
+        }
 
         public static event Action? TranslationLogged;
 
+        // Add method to stop translation
+        public static void StopTranslation()
+        {
+            lock (_stopLock)
+            {
+                Console.WriteLine("Translator.StopTranslation: Setting stop flag");
+                _isTranslationStopped = true;
+                
+                // Clear pending queue
+                pendingTextQueue.Clear();
+                
+                // Clear translation task queue
+                translationTaskQueue.Clear();
+                
+                // 🔥 New: Also try to clean up Ollama processes when stopping translation to free GPU memory
+                try
+                {
+                    Console.WriteLine("Translator.StopTranslation: Attempting to clean up Ollama processes");
+                    OllamaGuardian.StopServer();
+                    Console.WriteLine("Translator.StopTranslation: Ollama cleanup completed");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Translator.StopTranslation: Ollama cleanup failed: {ex.Message}");
+                    // Do not throw exception, because cleanup failure should not block translation stopping
+                }
+                
+                // 🔥 New: Try to unload model via API
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        Console.WriteLine("Translator.StopTranslation: Attempting to unload model via API");
+                        bool unloadSuccess = await TranslateAPI.UnloadModel();
+                        if (unloadSuccess)
+                        {
+                            Console.WriteLine("Translator.StopTranslation: Model unloaded successfully via API");
+                        }
+                        else
+                        {
+                            Console.WriteLine("Translator.StopTranslation: Model unload via API failed or incomplete");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Translator.StopTranslation: Model unload via API exception: {ex.Message}");
+                    }
+                });
+                
+                Console.WriteLine("Translator.StopTranslation: Translation stopped and queues cleared");
+            }
+        }
+
+        // Add method to restart translation
+        public static void ResetTranslation()
+        {
+            lock (_stopLock)
+            {
+                Console.WriteLine("Translator.ResetTranslation: Resetting translation state");
+                _isTranslationStopped = false;
+            }
+        }
+
+        // Check if translation should be stopped
+        private static bool ShouldStopTranslation()
+        {
+            lock (_stopLock)
+            {
+                return _isTranslationStopped;
+            }
+        }
+
         static Translator()
         {
-            window = LiveCaptionsHandler.LaunchLiveCaptions();
-            LiveCaptionsHandler.FixLiveCaptions(Window);
-            LiveCaptionsHandler.HideLiveCaptions(Window);
+            try
+            {
+                // No longer automatically start LiveCaptions, change to lazy initialization
+                // window = LiveCaptionsHandler.LaunchLiveCaptions();
+                // LiveCaptionsHandler.FixLiveCaptions(Window);
+                // LiveCaptionsHandler.HideLiveCaptions(Window);
 
-            if (!File.Exists(Path.Combine(Directory.GetCurrentDirectory(), models.Setting.FILENAME)))
-                FirstUseFlag = true;
+                // Use same first run check logic as App.xaml.cs
+                string firstRunFlagPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "LiveCaptionsTranslator",
+                    "first_run.flag");
+                
+                FirstUseFlag = !File.Exists(firstRunFlagPath);
 
-            caption = Caption.GetInstance();
-            setting = Setting.Load();
+                caption = Caption.GetInstance();
+                setting = Setting.Load();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Translator static constructor failed: {ex.Message}");
+                // Ensure basic objects are not null
+                caption = Caption.GetInstance();
+                setting = new Setting(); // Use default settings
+                FirstUseFlag = false; // Do not show first-use interface on error to avoid further problems
+            }
+        }
+
+        // New: Method to manually initialize LiveCaptions
+        public static void InitializeLiveCaptions()
+        {
+            try
+            {
+                Console.WriteLine("InitializeLiveCaptions: Starting initialization");
+                
+                if (window == null)
+                {
+                    Console.WriteLine("InitializeLiveCaptions: Window is null, launching LiveCaptions");
+                    // Clear UI element cache to ensure getting latest state
+                    LiveCaptionsHandler.ClearElementCache();
+                    window = LiveCaptionsHandler.LaunchLiveCaptions();
+                    Console.WriteLine("InitializeLiveCaptions: LiveCaptions launched successfully");
+                    
+                    Console.WriteLine("InitializeLiveCaptions: Fixing LiveCaptions window position");
+                    LiveCaptionsHandler.FixLiveCaptions(Window);
+                    Console.WriteLine("InitializeLiveCaptions: Window position fixed");
+                    
+                    Console.WriteLine("InitializeLiveCaptions: Hiding LiveCaptions window");
+                    LiveCaptionsHandler.HideLiveCaptions(Window);
+                    Console.WriteLine("InitializeLiveCaptions: Window hidden successfully");
+                }
+                else
+                {
+                    Console.WriteLine("InitializeLiveCaptions: Window already exists, skipping initialization");
+                }
+                
+                Console.WriteLine("InitializeLiveCaptions: Initialization completed successfully");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"InitializeLiveCaptions failed: {ex.Message}");
+                Console.WriteLine($"InitializeLiveCaptions stack trace: {ex.StackTrace}");
+                window = null; // Ensure window is null on failure
+                throw; // Re-throw exception to let caller know it failed
+            }
         }
 
         public static void SyncLoop()
         {
             int idleCount = 0;
             int syncCount = 0;
+            int emptyTextCount = 0;
 
-            while (true)
+            Console.WriteLine("Translator.SyncLoop: Starting sync loop");
+
+            while (!ShouldStopTranslation())
             {
                 if (Window == null)
                 {
-                    Thread.Sleep(2000);
-                    continue;
+                    Console.WriteLine("Translator.SyncLoop: Window is null, initializing LiveCaptions");
+                    // Clear UI element cache to ensure getting latest state after reconnection
+                    LiveCaptionsHandler.ClearElementCache();
+                    // Initialize LiveCaptions only when needed
+                    InitializeLiveCaptions();
+                    if (Window == null)
+                    {
+                        Console.WriteLine("Translator.SyncLoop: Failed to initialize LiveCaptions, retrying in 2 seconds");
+                        Thread.Sleep(2000);
+                        continue;
+                    }
+                    Console.WriteLine("Translator.SyncLoop: LiveCaptions initialized successfully");
                 }
 
                 string fullText = string.Empty;
@@ -65,13 +242,33 @@ namespace LiveCaptionsTranslator
                     // Get the text recognized by LiveCaptions (10-20ms)
                     fullText = LiveCaptionsHandler.GetCaptions(Window);
                 }
-                catch (ElementNotAvailableException)
+                catch (ElementNotAvailableException ex)
                 {
+                    Console.WriteLine($"Translator.SyncLoop: LiveCaptions element not available: {ex.Message}");
                     Window = null;
                     continue;
                 }
-                if (string.IsNullOrEmpty(fullText))
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Translator.SyncLoop: Error getting captions: {ex.Message}");
                     continue;
+                }
+                
+                if (string.IsNullOrEmpty(fullText))
+                {
+                    emptyTextCount++;
+                    if (emptyTextCount % 200 == 0) // Print once every 5 seconds (25ms * 200 = 5s)
+                    {
+                        Console.WriteLine($"Translator.SyncLoop: No text captured from LiveCaptions (count: {emptyTextCount})");
+                    }
+                    continue;
+                }
+                
+                if (emptyTextCount > 0)
+                {
+                    Console.WriteLine($"Translator.SyncLoop: Got text after {emptyTextCount} empty attempts: '{fullText.Substring(0, Math.Min(50, fullText.Length))}...'");
+                    emptyTextCount = 0;
+                }
 
                 // Preprocess
                 fullText = RegexPatterns.Acronym().Replace(fullText, "$1$2");
@@ -159,15 +356,35 @@ namespace LiveCaptionsTranslator
 
                 Thread.Sleep(25);
             }
+            
+            Console.WriteLine("Translator.SyncLoop: Sync loop stopped");
         }
 
         public static async Task TranslateLoop()
         {
-            while (true)
+            Console.WriteLine("Translator.TranslateLoop: Starting translate loop");
+            
+            // Set GC to low latency mode to reduce GC pauses during translation
+            var originalLatencyMode = System.Runtime.GCSettings.LatencyMode;
+            System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.LowLatency;
+            Console.WriteLine($"Translator.TranslateLoop: GC latency mode set to {System.Runtime.GCSettings.LatencyMode}");
+            
+            try
             {
+                int loopCount = 0;
+                
+                while (!ShouldStopTranslation())
+            {
+                loopCount++;
+                if (loopCount % 250 == 0) // Print once every 10 seconds (40ms * 250 = 10s)
+                {
+                    Console.WriteLine($"Translator.TranslateLoop: Still running (loop: {loopCount}, pending: {pendingTextQueue.Count}, active: {translationTaskQueue.ActiveTasksCount}, total: {translationTaskQueue.QueueLength})");
+                }
+                
                 // Check LiveCaptions.exe still alive
                 if (Window == null)
                 {
+                    Console.WriteLine("Translator.TranslateLoop: LiveCaptions window is null, restarting...");
                     Caption.DisplayTranslatedCaption = "[WARNING] LiveCaptions was unexpectedly closed, restarting...";
                     Window = LiveCaptionsHandler.LaunchLiveCaptions();
                     Caption.DisplayTranslatedCaption = "";
@@ -177,30 +394,60 @@ namespace LiveCaptionsTranslator
                 if (pendingTextQueue.Count > 0)
                 {
                     var originalSnapshot = pendingTextQueue.Dequeue();
+                    Console.WriteLine($"Translator.TranslateLoop: Processing text: '{originalSnapshot.Substring(0, Math.Min(30, originalSnapshot.Length))}...'");
 
+                    // 📊 New: Simple system resource pressure detection
+                    bool isSystemUnderPressure = pendingTextQueue.Count > 5 || translationTaskQueue.QueueLength > 8;
+                    
                     if (LogOnlyFlag)
                     {
                         bool isOverwrite = await IsOverwrite(originalSnapshot);
                         await LogOnly(originalSnapshot, isOverwrite);
                     }
+                    else if (isSystemUnderPressure)
+                    {
+                        Console.WriteLine($"Translator.TranslateLoop: System under pressure - skipping translation (pending: {pendingTextQueue.Count}, queue: {translationTaskQueue.QueueLength})");
+                        // Show simple hint instead of error during high load
+                        Caption.DisplayTranslatedCaption = "[BUSY] System processing, please wait...";
+                    }
                     else
                     {
-                        translationTaskQueue.Enqueue(token => Task.Run(
-                            () => Translate(originalSnapshot, token), token), originalSnapshot);
+                        // 🔥 Anti-accumulation mechanism: Skip translation if there are too many active tasks in the queue
+                        if (translationTaskQueue.ActiveTasksCount < 1) // 🔥 Reduce to 1 concurrent task to completely solve HttpClient conflicts
+                        {
+                            translationTaskQueue.Enqueue(token => Task.Run(
+                                () => Translate(originalSnapshot, token), token), originalSnapshot);
+                            Console.WriteLine($"Translator.TranslateLoop: Translation task enqueued (active: {translationTaskQueue.ActiveTasksCount})");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Translator.TranslateLoop: Skipping translation due to queue backlog (active: {translationTaskQueue.ActiveTasksCount})");
+                        }
                     }
                 }
 
-                Thread.Sleep(40);
+                await Task.Delay(40);
+                }
+                
+                Console.WriteLine("Translator.TranslateLoop: Translate loop stopped");
+            }
+            finally
+            {
+                // Ensure original GC latency mode is restored no matter what
+                System.Runtime.GCSettings.LatencyMode = originalLatencyMode;
+                Console.WriteLine($"Translator.TranslateLoop: GC latency mode restored to {System.Runtime.GCSettings.LatencyMode}");
             }
         }
 
         public static async Task DisplayLoop()
         {
-            while (true)
+            Console.WriteLine("Translator.DisplayLoop: Starting display loop");
+            
+            while (!ShouldStopTranslation())
             {
                 var (translatedText, isChoke) = translationTaskQueue.Output;
 
-                if (LogOnlyFlag)
+                if (LogOnlyFlag || IsPaused)
                 {
                     Caption.TranslatedCaption = string.Empty;
                     Caption.DisplayTranslatedCaption = "[Paused]";
@@ -219,21 +466,17 @@ namespace LiveCaptionsTranslator
                     if (Caption.TranslatedCaption.Contains("[ERROR]") || Caption.TranslatedCaption.Contains("[WARNING]"))
                         Caption.OverlayTranslatedCaption = Caption.TranslatedCaption;
                     else
-                    {
-                        var match = RegexPatterns.NoticePrefixAndTranslation().Match(Caption.TranslatedCaption);
-                        string noticePrefix = match.Groups[1].Value;
-                        string translation = match.Groups[2].Value;
-                        Caption.OverlayTranslatedCaption = noticePrefix + Caption.OverlayPreviousTranslation + translation;
-                        // Caption.OverlayTranslatedCaption =
-                        //     TextUtil.ShortenDisplaySentence(Caption.OverlayTranslatedCaption, TextUtil.VERYLONG_THRESHOLD);
-                    }
+                        Caption.OverlayTranslatedCaption = Caption.OverlayOriginalCaption + "\n" + Caption.TranslatedCaption;
+
+                    // Log
+                    bool isOverwrite = await IsOverwrite(Caption.OriginalCaption);
+                    await Log(Caption.OriginalCaption, Caption.TranslatedCaption, isOverwrite);
                 }
 
-                // If the original sentence is a complete sentence, choke for better visual experience.
-                if (isChoke)
-                    Thread.Sleep(720);
-                Thread.Sleep(40);
+                await Task.Delay(40);
             }
+            
+            Console.WriteLine("Translator.DisplayLoop: Display loop stopped");
         }
 
         public static async Task<(string, bool)> Translate(string text, CancellationToken token = default)
@@ -243,7 +486,9 @@ namespace LiveCaptionsTranslator
             
             try
             {
+                // Start timing only before actual translation call
                 var sw = Setting.MainWindow.LatencyShow ? Stopwatch.StartNew() : null;
+                
                 if (Setting.ContextAware && !TranslateAPI.IsLLMBased)
                 {
                     translatedText = await TranslateAPI.TranslateFunction($"{Caption.ContextPreviousCaption} <[{text}]>", token);
@@ -254,10 +499,15 @@ namespace LiveCaptionsTranslator
                     translatedText = await TranslateAPI.TranslateFunction(text, token);
                     translatedText = translatedText.Replace("🔤", "");
                 }
+                
+                // Stop timing immediately to ensure only pure translation time is counted
                 if (sw != null)
                 {
                     sw.Stop();
-                    translatedText = $"[{sw.ElapsedMilliseconds} ms] " + translatedText;
+                    var actualLatency = sw.ElapsedMilliseconds;
+                    // Add debug info to verify latency calculation
+                    Console.WriteLine($"Translation completed - Pure latency: {actualLatency} ms");
+                    translatedText = $"[{actualLatency} ms] " + translatedText;
                 }
             }
             catch (OperationCanceledException ex)

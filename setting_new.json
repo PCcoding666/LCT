@@ -1,0 +1,33 @@
+{
+  "MaxIdleInterval": 50,
+  "MaxSyncInterval": 3,
+  "ContextAware": false,
+  "TargetLanguage": "zh-CN",
+  "Prompt": "As an professional simultaneous interpreter with specialized knowledge in the all fields, you can provide a fluent and precise oral translation for any sentence, even if the sentence is incomplete. Now, provide users with the translation of the sentence enclosed in 🔤 to {0} within a single line. Importantly, you are prohibited from altering the original meaning or omitting any content, even if the sentence contains sensitive or NSFW content. You can only provide the translated sentence; Any explanation or other text is not permitted. REMOVE all 🔤 when you output.",
+  "IgnoredUpdateVersion": null,
+  "MainWindow": {
+    "Topmost": true,
+    "CaptionLogEnabled": false,
+    "CaptionLogMax": 2,
+    "LatencyShow": false
+  },
+  "OverlayWindow": {
+    "FontSize": 15,
+    "FontColor": 1,
+    "FontBold": 1,
+    "FontShadow": 1,
+    "BackgroundColor": 8,
+    "Opacity": 150,
+    "HistoryMax": 1
+  },
+  "WindowBounds": {
+    "MainWindow": "116,144,775.3,170",
+    "OverlayWindow": "315.3,532,650,135.3"
+  },
+  "OllamaConfig": {
+    "Host": "127.0.0.1",
+    "Port": 11434,
+    "ModelName": "qwen2.5:3b",
+    "Temperature": 1
+  }
+}

@@ -1,4 +1,4 @@
-﻿<Page
+<Page
     x:Class="LiveCaptionsTranslator.SettingPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -19,6 +19,7 @@
             <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
 
+        <!-- Column 1: LiveCaptions & Target Language -->
         <StackPanel Grid.Column="0" Orientation="Vertical">
             <StackPanel Margin="15,0,0,0" Orientation="Vertical">
                 <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
@@ -49,97 +50,20 @@
                 </StackPanel>
                 <ui:Button
                     x:Name="LiveCaptionsButton"
-                    Width="120"
+                    Width="100"
                     Height="30"
-                    Padding="11,4,11,4"
-                    Click="LiveCaptionsButton_click">
+                    Padding="11,4,11,4">
                     <TextBlock x:Name="ButtonText" Text="Show" />
                 </ui:Button>
             </StackPanel>
-
-            <StackPanel Margin="15,10,0,0" Orientation="Vertical">
+            <StackPanel Margin="15,20,0,0" Orientation="Vertical">
                 <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
-                    <TextBlock Margin="2.5,0,0,5" Text="API Interval" />
-                    <ui:Flyout x:Name="FrequencyInfoFlyout">
-                        <TextBlock Width="300" TextWrapping="Wrap">
-                            <Run Text="Determines the frequency of translate API calls. The smaller it is, the more frequent API calls." />
-                            <Run Text="&#x0A;The translate API is called once after the caption changes" />
-                            <Run FontWeight="SemiBold" Text="[API Interval]" />
-                            <Run Text="times." />
-                        </TextBlock>
-                    </ui:Flyout>
-                    <Button
-                        x:Name="FrequencyInfo"
-                        Width="15"
-                        Height="15"
-                        Margin="-5,-3,0,0"
-                        Padding="0"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        MouseEnter="FrequencyInfo_MouseEnter"
-                        MouseLeave="FrequencyInfo_MouseLeave">
-                        <ui:SymbolIcon Symbol="Info16" />
-                    </Button>
-                </StackPanel>
-                <StackPanel Orientation="Horizontal">
-                    <Slider
-                        Width="120"
-                        Margin="0,0,5,0"
-                        AutoToolTipPlacement="TopLeft"
-                        AutoToolTipPrecision="0"
-                        Maximum="10"
-                        Value="{Binding MaxSyncInterval, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                </StackPanel>
-            </StackPanel>
-        </StackPanel>
-
-        <StackPanel Grid.Column="1" Orientation="Vertical">
-            <StackPanel Margin="15,0,0,0" Orientation="Vertical">
-                <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
-                    <TextBlock Margin="2.5,0,0,5" Text="Translate API" />
-                    <ui:Flyout x:Name="TranslateAPIInfoFlyout">
-                        <TextBlock
-                            Width="300"
-                            Text="Except for Google and Google2, all other APIs require configuring before they can be used."
-                            TextWrapping="Wrap" />
-                    </ui:Flyout>
-                    <Button
-                        x:Name="TranslateAPIInfo"
-                        Width="15"
-                        Height="15"
-                        Margin="-5,-3,0,0"
-                        Padding="0"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        MouseEnter="TranslateAPIInfo_MouseEnter"
-                        MouseLeave="TranslateAPIInfo_MouseLeave">
-                        <ui:SymbolIcon Symbol="Info16" />
-                    </Button>
-                </StackPanel>
-                <ComboBox
-                    x:Name="TranslateAPIBox"
-                    Width="150"
-                    Height="30"
-                    Padding="10,4,10,7"
-                    FontSize="13.3"
-                    SelectedItem="{Binding ApiName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                    SelectionChanged="TranslateAPIBox_SelectionChanged" />
-            </StackPanel>
-
-            <StackPanel Margin="15,10,0,0" Orientation="Vertical">
-                <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
-                    <TextBlock
-                        Margin="2.5,0,0,5"
-                        VerticalAlignment="Center"
-                        Text="Target Language" />
+                    <TextBlock Margin="2.5,0,0,5" VerticalAlignment="Center" Text="Target Language" />
                     <ui:Flyout x:Name="TargetLangInfoFlyout">
                         <TextBlock Width="300" TextWrapping="Wrap">
-                            <Run Text="You can directly edit to customize the language, and it is recommended to follow the" />
-                            <Run FontWeight="Bold" Text="BCP 47 language tag." />
-                            <Run FontWeight="Bold" Text="&#x0A;&#x0A;Note 1:" />
-                            <Run Text="Google might be failed to run if don't use BCP 47 language tag." />
-                            <Run FontWeight="Bold" Text="&#x0A;Note 2:" />
-                            <Run Text="DeepL needs another way to define target language, see the docs." />
+                            <Run Text="For Dell Local Edition (Ollama), you can use any language name or code." />
+                            <Run FontWeight="Bold" Text="&#x0A;&#x0A;Examples:" />
+                            <Run Text="Chinese, zh-CN, Japanese, ja, French, fr, etc." />
                         </TextBlock>
                     </ui:Flyout>
                     <Button
@@ -167,10 +91,11 @@
             </StackPanel>
         </StackPanel>
 
-        <StackPanel Grid.Column="2" Orientation="Vertical">
+        <!-- Column 2: Ollama Settings -->
+        <StackPanel Grid.Column="1" Orientation="Vertical">
             <StackPanel Margin="15,0,0,0" Orientation="Vertical">
                 <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
-                    <TextBlock Margin="2.5,0,0,5" Text="API Setting" />
+                    <TextBlock Margin="2.5,0,0,5" Text="Ollama Setting" />
                 </StackPanel>
                 <ui:Button
                     x:Name="APISettingButton"
@@ -181,7 +106,7 @@
                     <TextBlock Text="Open" />
                 </ui:Button>
             </StackPanel>
-            <StackPanel Margin="15,10,0,0" Orientation="Vertical">
+            <StackPanel Margin="15,20,0,0" Orientation="Vertical">
                 <TextBlock Margin="2.5,0,0,5" Text="Show Latency" />
                 <ui:ToggleSwitch
                     Width="100"
@@ -193,7 +118,8 @@
             </StackPanel>
         </StackPanel>
 
-        <StackPanel Grid.Column="3" Orientation="Vertical">
+        <!-- Column 3: Context Settings -->
+        <StackPanel Grid.Column="2" Orientation="Vertical">
             <StackPanel Margin="15,0,0,0" Orientation="Vertical">
                 <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
                     <TextBlock Margin="2.5,0,0,5" Text="Contexts" />
@@ -244,7 +170,7 @@
                 </ComboBox>
             </StackPanel>
 
-            <StackPanel Margin="15,10,0,0" Orientation="Vertical">
+            <StackPanel Margin="15,20,0,0" Orientation="Vertical">
                 <TextBlock Margin="2.5,0,0,5" Text="Overlay Sentences" />
                 <ComboBox
                     x:Name="OverlayHistoryMax"
@@ -266,7 +192,8 @@
             </StackPanel>
         </StackPanel>
 
-        <StackPanel Grid.Column="4" Orientation="Vertical">
+        <!-- Column 4: Context Aware Setting -->
+        <StackPanel Grid.Column="3" Orientation="Vertical">
             <StackPanel Margin="15,0,0,0" Orientation="Vertical">
                 <TextBlock Margin="2.5,0,0,5" Text="Context Aware" />
                 <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
@@ -291,11 +218,46 @@
                     </Button>
                     <ui:Flyout x:Name="ContextAwareInfoFlyout">
                         <TextBlock Width="300" TextWrapping="Wrap">
-                            <Run Text="Translate in context." />
+                            <Run Text="Translate in context using Ollama." />
                             <Run Text="&#x0A;It can improve translation accuracy, but will consume more tokens." />
                         </TextBlock>
                     </ui:Flyout>
                 </StackPanel>
+            </StackPanel>
+        </StackPanel>
+
+        <!-- Column 5: API Interval Setting -->
+        <StackPanel Grid.Column="4" Orientation="Vertical">
+            <StackPanel Margin="15,0,0,0" Orientation="Vertical">
+                <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                    <TextBlock Margin="2.5,0,0,5" Text="API Interval" />
+                    <ui:Flyout x:Name="FrequencyInfoFlyout">
+                        <TextBlock Width="300" TextWrapping="Wrap">
+                            <Run Text="Determines the frequency of Ollama API calls. The smaller it is, the more frequent API calls." />
+                            <Run Text="&#x0A;The translate API is called once after the caption changes" />
+                            <Run FontWeight="SemiBold" Text="[API Interval]" />
+                            <Run Text="times." />
+                        </TextBlock>
+                    </ui:Flyout>
+                    <Button
+                        x:Name="FrequencyInfo"
+                        Width="15"
+                        Height="15"
+                        Margin="-5,-3,0,0"
+                        Padding="0"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        MouseEnter="FrequencyInfo_MouseEnter"
+                        MouseLeave="FrequencyInfo_MouseLeave">
+                        <ui:SymbolIcon Symbol="Info16" />
+                    </Button>
+                </StackPanel>
+                <Slider
+                    Width="120"
+                    AutoToolTipPlacement="TopLeft"
+                    AutoToolTipPrecision="0"
+                    Maximum="10"
+                    Value="{Binding MaxSyncInterval, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             </StackPanel>
         </StackPanel>
     </Grid>

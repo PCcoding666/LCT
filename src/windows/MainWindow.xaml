@@ -1,4 +1,4 @@
-﻿<ui:FluentWindow
+<ui:FluentWindow
     x:Class="LiveCaptionsTranslator.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -6,7 +6,7 @@
     xmlns:local="clr-namespace:LiveCaptionsTranslator"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
-    Title="LiveCaptions Translator"
+    Title="Dell LiveCaptions Translator (Local Edition)"
     Width="750"
     Height="170"
     MinWidth="750"
@@ -34,7 +34,7 @@
                 Height="27"
                 ShowMaximize="False">
                 <ui:TitleBar.Header>
-                    <ui:TextBlock Padding="15,0,0,0" VerticalAlignment="Center">LiveCaptions Translator</ui:TextBlock>
+                    <ui:TextBlock Padding="15,0,0,0" VerticalAlignment="Center">Dell LiveCaptions Translator (Local Edition)</ui:TextBlock>
                 </ui:TitleBar.Header>
                 <ui:TitleBar.TrailingContent>
                     <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
@@ -43,8 +43,7 @@
                             Margin="0,0,5,0"
                             Appearance="Transparent"
                             Click="CaptionLogButton_Click"
-                            Icon="{ui:SymbolIcon History16,
-                                                 Filled=False}"
+                            Icon="{ui:SymbolIcon History16, Filled=False}"
                             ToolTip="Log Cards of Captions"
                             Visibility="Collapsed" />
                         <ui:Button
@@ -52,24 +51,21 @@
                             Margin="0,0,5,0"
                             Appearance="Transparent"
                             Click="LogOnlyButton_Click"
-                            Icon="{ui:SymbolIcon Pause16,
-                                                 Filled=False}"
-                            ToolTip="Pause Translation (Log Only)" />
+                            Icon="{ui:SymbolIcon Play16, Filled=False}"
+                            ToolTip="Start Translation" />
                         <ui:Button
                             x:Name="OverlayModeButton"
                             Margin="0,0,5,0"
                             Appearance="Transparent"
                             Click="OverlayModeButton_Click"
-                            Icon="{ui:SymbolIcon ClosedCaptionOff24,
-                                                 Filled=False}"
+                            Icon="{ui:SymbolIcon ClosedCaptionOff24, Filled=False}"
                             ToolTip="Overlay Window" />
                         <ui:Button
                             x:Name="TopmostButton"
                             Margin="0,0,5,0"
                             Appearance="Transparent"
                             Click="TopmostButton_Click"
-                            Icon="{ui:SymbolIcon Pin16,
-                                                 Filled=True}"
+                            Icon="{ui:SymbolIcon Pin16, Filled=True}"
                             ToolTip="Always on Top" />
                     </StackPanel>
                 </ui:TitleBar.TrailingContent>
@@ -116,7 +112,7 @@
                 </ui:NavigationView.MenuItems>
             </ui:NavigationView>
         </Grid>
-        <ui:SnackbarPresenter x:Name="SnackbarHost" Grid.Row="0" />
+        <ui:SnackbarPresenter x:Name="SnackbarPresenter" Grid.Row="0" />
         <ContentPresenter
             x:Name="DialogHostContainer"
             MinHeight="167"

@@ -1,238 +1,260 @@
-﻿using System.Windows;
+using System;
+using System.ComponentModel;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using LiveCaptionsTranslator.utils;
 using Wpf.Ui.Appearance;
 using Wpf.Ui.Controls;
-using System.Diagnostics;
-using System.Reflection;
 
-using LiveCaptionsTranslator.utils;
+namespace LiveCaptionsTranslator;
 
-using Button = Wpf.Ui.Controls.Button;
-
-namespace LiveCaptionsTranslator
+public partial class MainWindow : FluentWindow, INotifyPropertyChanged
 {
-    public partial class MainWindow : FluentWindow
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public bool IsTranslationRunning { get; private set; } = false;
+    private CancellationTokenSource? _translationCancellationTokenSource;
+    public OverlayWindow? OverlayWindow { get; set; } = null;
+
+    public MainWindow()
     {
-        public OverlayWindow? OverlayWindow { get; set; } = null;
-        public bool IsAutoHeight { get; set; } = true;
+        InitializeComponent();
+        ApplicationThemeManager.ApplySystemTheme();
+        DataContext = this;
 
-        public MainWindow()
+        Loaded += OnMainWindowLoaded;
+        Closing += OnMainWindowClosing;
+    }
+
+    private void OnMainWindowLoaded(object sender, RoutedEventArgs e)
+    {
+        // 导航到默认页面
+        RootNavigation.Navigate(typeof(CaptionPage));
+
+        if (Translator.Setting != null)
         {
-            InitializeComponent();
-            ApplicationThemeManager.ApplySystemTheme();
-
-            Loaded += (s, e) =>
-            {
-                SystemThemeWatcher.Watch(this, WindowBackdropType.Mica, true);
-                RootNavigation.Navigate(typeof(CaptionPage));
-                IsAutoHeight = true;
-                CheckForFirstUse();
-                CheckForUpdates();
-            };
-
-            var windowState = WindowHandler.LoadState(this, Translator.Setting);
-            WindowHandler.RestoreState(this, windowState);
-
-            ToggleTopmost(Translator.Setting.MainWindow.Topmost);
-            ShowLogCard(Translator.Setting.MainWindow.CaptionLogEnabled);
+            this.Topmost = Translator.Setting.MainWindow.Topmost;
+            var icon = (TopmostButton.Icon as SymbolIcon);
+            if (icon != null) icon.Filled = this.Topmost;
         }
+    }
 
-        private void TopmostButton_Click(object sender, RoutedEventArgs e)
+    private void OnMainWindowClosing(object? sender, CancelEventArgs e)
+    {
+        if (Translator.Setting != null)
         {
-            ToggleTopmost(!this.Topmost);
+            Translator.Setting.MainWindow.Topmost = this.Topmost;
         }
+        OllamaGuardian.StopServer();
+        Translator.Setting?.Save();
+        Application.Current.Shutdown();
+    }
 
-        private void OverlayModeButton_Click(object sender, RoutedEventArgs e)
-        {
-            var button = sender as Button;
-            var symbolIcon = button?.Icon as SymbolIcon;
+    #region Window Event Handlers
+    private void MainWindow_LocationChanged(object? sender, EventArgs e)
+    {
+        // 处理窗口位置变化
+        // 位置信息存储在Setting.WindowBounds中，这里可以选择不保存或使用WindowHandler
+    }
 
-            if (OverlayWindow == null)
-            {
-                symbolIcon.Symbol = SymbolRegular.ClosedCaption24;
-                symbolIcon.Filled = true;
+    private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        // 处理窗口大小变化
+        // 大小信息存储在Setting.WindowBounds中，这里可以选择不保存或使用WindowHandler
+    }
+    #endregion
 
-                OverlayWindow = new OverlayWindow();
-                OverlayWindow.SizeChanged +=
-                    (s, e) => WindowHandler.SaveState(OverlayWindow, Translator.Setting);
-                OverlayWindow.LocationChanged +=
-                    (s, e) => WindowHandler.SaveState(OverlayWindow, Translator.Setting);
+    #region Title Bar Button Handlers
 
-                var windowState = WindowHandler.LoadState(OverlayWindow, Translator.Setting);
-                WindowHandler.RestoreState(OverlayWindow, windowState);
-                OverlayWindow.Show();
-            }
-            else
-            {
-                symbolIcon.Symbol = SymbolRegular.ClosedCaptionOff24;
-                symbolIcon.Filled = false;
-
-                switch (OverlayWindow.OnlyMode)
-                {
-                    case 1:
-                        OverlayWindow.OnlyMode = 2;
-                        OverlayWindow.OnlyMode = 0;
-                        break;
-                    case 2:
-                        OverlayWindow.OnlyMode = 0;
-                        break;
-                }
-
-                OverlayWindow.Close();
-                OverlayWindow = null;
-            }
-        }
-
-        private void LogOnlyButton_Click(object sender, RoutedEventArgs e)
-        {
-            var button = sender as Button;
-            var symbolIcon = button?.Icon as SymbolIcon;
-
-            if (Translator.LogOnlyFlag)
-            {
-                Translator.LogOnlyFlag = false;
-                symbolIcon.Filled = false;
-            }
-            else
-            {
-                Translator.LogOnlyFlag = true;
-                symbolIcon.Filled = true;
-            }
-        }
-
-        private void CaptionLogButton_Click(object sender, RoutedEventArgs e)
+    private void CaptionLogButton_Click(object sender, RoutedEventArgs e)
+    {
+        // 切换字幕日志显示
+        // 这个功能可以通过更新Setting.MainWindow.CaptionLogEnabled来实现
+        if (Translator.Setting != null)
         {
             Translator.Setting.MainWindow.CaptionLogEnabled = !Translator.Setting.MainWindow.CaptionLogEnabled;
-            ShowLogCard(Translator.Setting.MainWindow.CaptionLogEnabled);
-            CaptionPage.Instance?.AutoHeight();
         }
+    }
 
-        private void MainWindow_LocationChanged(object sender, EventArgs e)
+    public void LogOnlyButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
         {
-            var window = sender as Window;
-            WindowHandler.SaveState(window, Translator.Setting);
-        }
-
-        private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
-        {
-            MainWindow_LocationChanged(sender, e);
-            IsAutoHeight = false;
-        }
-
-        public void ToggleTopmost(bool enabled)
-        {
-            var button = TopmostButton as Button;
-            var symbolIcon = button?.Icon as SymbolIcon;
-            symbolIcon.Filled = enabled;
-            this.Topmost = enabled;
-            Translator.Setting.MainWindow.Topmost = enabled;
-        }
-
-        private void CheckForFirstUse()
-        {
-            if (!Translator.FirstUseFlag)
-                return;
-
-            RootNavigation.Navigate(typeof(SettingPage));
-            LiveCaptionsHandler.RestoreLiveCaptions(Translator.Window);
-
-            Dispatcher.InvokeAsync(() =>
+            if (!IsTranslationRunning)
             {
-                var welcomeWindow = new WelcomeWindow
-                {
-                    Owner = this
-                };
-                welcomeWindow.Show();
-            }, System.Windows.Threading.DispatcherPriority.Background);
-        }
-
-        private async Task CheckForUpdates()
-        {
-            if (Translator.FirstUseFlag)
-                return;
-
-            string latestVersion = string.Empty;
-            try
-            {
-                latestVersion = await UpdateUtil.GetLatestVersion();
+                StartTranslation();
             }
-            catch (Exception ex)
+            else
             {
-                ShowSnackbar("[ERROR] Update Check Failed.", ex.Message, true);
-                return;
-            }
-
-            var currentVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString();
-            var ignoredVersion = Translator.Setting.IgnoredUpdateVersion;
-            if (!string.IsNullOrEmpty(ignoredVersion) && ignoredVersion == latestVersion)
-                return;
-            if (!string.IsNullOrEmpty(latestVersion) && latestVersion != currentVersion)
-            {
-                var dialog = new Wpf.Ui.Controls.MessageBox
-                {
-                    Title = "New Version Available",
-                    Content = $"A new version has been detected: {latestVersion}\n" +
-                              $"Current version: {currentVersion}\n" +
-                              $"Please visit GitHub to download the latest release.",
-                    PrimaryButtonText = "Update",
-                    CloseButtonText = "Ignore this version"
-                };
-                var result = await dialog.ShowDialogAsync();
-
-                if (result == Wpf.Ui.Controls.MessageBoxResult.Primary)
-                {
-                    var url = UpdateUtil.GitHubReleasesUrl;
-                    try
-                    {
-                        Process.Start(new ProcessStartInfo
-                        {
-                            FileName = url,
-                            UseShellExecute = true
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        ShowSnackbar("[ERROR] Open Browser Failed.", ex.Message, true);
-                    }
-                }
-                else
-                    Translator.Setting.IgnoredUpdateVersion = latestVersion;
+                StopTranslation();
             }
         }
-
-        public void ShowLogCard(bool enabled)
+        catch (Exception ex)
         {
-            if (CaptionLogButton.Icon is SymbolIcon icon)
-            {
-                if (enabled)
-                    icon.Symbol = SymbolRegular.History24;
-                else
-                    icon.Symbol = SymbolRegular.HistoryDismiss24;
-                CaptionPage.Instance?.CollapseTranslatedCaption(enabled);
-            }
+            ShowSnackbar("错误", $"操作失败: {ex.Message}", true);
         }
+    }
 
-        public void AutoHeightAdjust(int minHeight = -1, int maxHeight = -1)
+    private void OverlayModeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (OverlayWindow == null)
         {
-            if (minHeight > 0 && Height < minHeight)
-            {
-                Height = minHeight;
-                IsAutoHeight = true;
-            }
-
-            if (IsAutoHeight && maxHeight > 0 && Height > maxHeight)
-                Height = maxHeight;
-        }
-
-        public void ShowSnackbar(string title, string message, bool isError = false)
-        {
-            var snackbar = new Snackbar(SnackbarHost)
-            {
-                Title = title,
-                Content = message,
-                Appearance = isError ? ControlAppearance.Danger : ControlAppearance.Light,
-                Timeout = TimeSpan.FromSeconds(5)
+            OverlayWindow = new OverlayWindow();
+            OverlayWindow.Closed += (s, args) => {
+                OverlayWindow = null; 
+                var icon = OverlayModeButton.Icon as SymbolIcon;
+                if (icon != null) icon.Symbol = SymbolRegular.ClosedCaptionOff24;
             };
-            snackbar.Show();
+            
+            var windowState = WindowHandler.LoadState(OverlayWindow, Translator.Setting);
+            WindowHandler.RestoreState(OverlayWindow, windowState);
+            OverlayWindow.Show();
+            var iconShow = OverlayModeButton.Icon as SymbolIcon;
+            if (iconShow != null) iconShow.Symbol = SymbolRegular.ClosedCaption24;
         }
+        else
+        {
+            OverlayWindow.Close();
+            OverlayWindow = null;
+            var icon = OverlayModeButton.Icon as SymbolIcon;
+            if (icon != null) icon.Symbol = SymbolRegular.ClosedCaptionOff24;
+        }
+    }
+
+    private void TopmostButton_Click(object sender, RoutedEventArgs e)
+    {
+        this.Topmost = !this.Topmost;
+        var icon = (TopmostButton.Icon as SymbolIcon);
+        if (icon != null) icon.Filled = this.Topmost;
+    }
+
+    #endregion
+
+    #region Overlay Window Management
+    
+    public void ShowOverlayWindow()
+    {
+        if (OverlayWindow == null)
+        {
+            OverlayWindow = new OverlayWindow();
+            OverlayWindow.Closed += (s, args) => {
+                OverlayWindow = null; 
+            };
+            
+            var windowState = WindowHandler.LoadState(OverlayWindow, Translator.Setting);
+            WindowHandler.RestoreState(OverlayWindow, windowState);
+            OverlayWindow.Show();
+        }
+        else
+        {
+            OverlayWindow.Activate();
+        }
+    }
+
+    #endregion
+
+    private async void StartTranslation()
+    {
+        try
+        {
+            LogOnlyButton.IsEnabled = false;
+            LogOnlyButton.ToolTip = "启动中...";
+
+            Translator.ResetTranslation();
+
+            bool initSuccess = await Task.Run(() =>
+            {
+                try
+                {
+                    Translator.InitializeLiveCaptions();
+                    return Translator.Window != null;
+                }
+                catch
+                {
+                    return false;
+                }
+            });
+
+            if (!initSuccess)
+            {
+                ShowSnackbar("错误", "无法启动 LiveCaptions，请检查系统是否支持", true);
+                LogOnlyButton.ToolTip = "开始翻译";
+                LogOnlyButton.IsEnabled = true;
+                return;
+            }
+
+            Translator.ResetTranslation();
+            _translationCancellationTokenSource = new CancellationTokenSource();
+            
+            Task.Run(() => Translator.SyncLoop());
+            Task.Run(() => Translator.TranslateLoop());
+            Task.Run(() => Translator.DisplayLoop());
+
+            IsTranslationRunning = true;
+            LogOnlyButton.ToolTip = "Pause Translation";
+            (LogOnlyButton.Icon as SymbolIcon).Symbol = SymbolRegular.Pause24;
+            LogOnlyButton.IsEnabled = true;
+        }
+        catch (Exception ex)
+        {
+            ShowSnackbar("错误", $"启动翻译失败: {ex.Message}", true);
+            LogOnlyButton.ToolTip = "开始翻译";
+            (LogOnlyButton.Icon as SymbolIcon).Symbol = SymbolRegular.Play24;
+            LogOnlyButton.IsEnabled = true;
+            IsTranslationRunning = false;
+        }
+    }
+
+    private void StopTranslation()
+    {
+        try
+        {
+            LogOnlyButton.IsEnabled = false;
+            LogOnlyButton.ToolTip = "停止中...";
+
+            _translationCancellationTokenSource?.Cancel();
+            _translationCancellationTokenSource?.Dispose();
+            _translationCancellationTokenSource = null;
+
+            Translator.StopTranslation();
+
+            if (Translator.Window != null)
+            {
+                Translator.Window = null;
+            }
+
+            IsTranslationRunning = false;
+            LogOnlyButton.ToolTip = "Start Translation";
+            (LogOnlyButton.Icon as SymbolIcon).Symbol = SymbolRegular.Play24;
+            LogOnlyButton.IsEnabled = true;
+        }
+        catch (Exception ex)
+        {
+            ShowSnackbar("错误", $"停止翻译失败: {ex.Message}", true);
+            IsTranslationRunning = false;
+            LogOnlyButton.ToolTip = "Start Translation";
+            (LogOnlyButton.Icon as SymbolIcon).Symbol = SymbolRegular.Play24;
+            LogOnlyButton.IsEnabled = true;
+        }
+    }
+
+    public void AutoHeightAdjust(double minHeight = -1, double maxHeight = -1)
+    {
+        // This might need adjustment depending on how you want the main window to behave
+    }
+
+    public void ShowSnackbar(string title, string message, bool isError = false)
+    {
+        var snackbar = new Snackbar(SnackbarPresenter);
+        snackbar.Title = title;
+        snackbar.Content = message;
+        snackbar.Show();
+    }
+
+    protected virtual void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string propertyName = "")
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }

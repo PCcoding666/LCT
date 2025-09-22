@@ -1,211 +1,79 @@
-﻿<div align="center">
-
-<img src="src/LiveCaptions-Translator.ico" width="128" height="128" alt="LiveCaptions-Translator Icon"/>
-
 # LiveCaptions Translator
 
-### *Real-time audio/speech translation tool based on Windows LiveCaptions*
+## Introduction
 
-[![Master Build](https://github.com/SakiRinn/LiveCaptions-Translator/actions/workflows/dotnet-build.yml/badge.svg?branch=master)](https://github.com/SakiRinn/LiveCaptions-Translator/actions/workflows/dotnet-build.yml)
-[![GitHub Release](https://img.shields.io/github/v/release/SakiRinn/LiveCaptions-Translator?label=Latest)](https://github.com/SakiRinn/LiveCaptions-Translator/releases/latest)
-[![Wiki](https://img.shields.io/badge/Wiki-GitHub-blue)](https://github.com/SakiRinn/LiveCaptions-Translator/wiki)
-[![GitHub License](https://img.shields.io/github/license/SakiRinn/LiveCaptions-Translator)](https://github.com/SakiRinn/LiveCaptions-Translator/blob/master/LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/SakiRinn/LiveCaptions-Translator)](https://github.com/SakiRinn/LiveCaptions-Translator/stargazers)
+LiveCaptions Translator is a desktop application designed to provide real-time translation of your system's Live Captions. It captures the original caption text, translates it into your desired language, and displays both the original and translated text in a clean, intuitive interface. This tool is perfect for users who want to understand foreign language content, attend international meetings, or simply make live audio more accessible.
 
-**English** | [中文](README_zh-CN.md)
+## Key Features
 
-</div>
+- **Real-time Translation:** Instantly translates system Live Captions.
+- **Multiple API Support:** Allows you to choose from various translation service providers (e.g., OpenAI).
+- **Translation History:** Automatically saves all translations. You can browse, search, filter, export, and manage your history.
+- **Highly Configurable:** Offers a wide range of settings to customize the user experience, including API settings, target language, UI behavior, and performance tuning.
+- **User-Friendly Interface:** Features a simple navigation sidebar, clear controls, and two main viewing modes (standard and compact).
+- **Window Management:** Includes an "Always on Top" feature to keep the translator visible and accessible.
 
-## Overview
+## Screenshots
 
-**✨ LiveCaptions Translator = Windows LiveCaptions + Translate API ✨**
+### Home (Real-time Translation View)
+*(Image of the main translation interface)*
+![Home View](images/preview.png)
 
-This is a lightweight tool that seamlessly integrates translation APIs with Windows Live Captions, enabling real-time speech translation without requiring a Copilot+ PC.
+### Settings View
+*(Image of the settings grid)*
+![Settings View](images/speech_recognition.png)
 
-Windows' built-in LiveCaptions is easy to use, uses few resources, and has extremely high recognition accuracy. If empowering it with the awesome translation capabilities of LLMs, you will get... possibly the best real-time translator available to date!
+### History View
+*(Image of the translation history table)*
+![History View](images/history.png)
 
-**🚀 Quick Start:** Download from [Releases](https://github.com/SakiRinn/LiveCaptions-Translator/releases) and start with a single click!
+## How to Use
 
-<div align="center">
-  <img src="images/preview.png" alt="Preview of LiveCaptions Translator" width="90%" />
-  <br>
-  <em style="font-size:80%">Preview of LiveCaptions Translator</em>
-  <br>
-</div>
+The application is organized into four main sections, accessible via the left sidebar.
 
-## Features
+### Main Window Controls
 
-- **🔄 Seamless Integration**
+The top header contains global controls for the application window:
+- **Pause/Resume Button:** Start or stop the real-time translation process.
+- **Compact Mode Button:** Switch to a smaller, minimalist UI that only shows the translated text.
+- **Pin/Always on Top Button:** Keep the application window on top of all other windows.
 
-  Automatically invokes Windows LiveCaptions without opening separate windows. Provides a unified experience for real-time audio/speech translation.
+### 1. Home (Real-time Translation)
 
-  After your first use, Windows LiveCaptions will be hidden by default. You can show it again in the settings.
+This is the main screen where the magic happens. It features a two-panel layout:
+- **Top Panel:** Displays the original text captured from your system's Live Captions.
+- **Bottom Panel:** Displays the translated text in real-time.
 
-  <div align="center">
-    <img src="images/show_livecaptions.png" alt="LiveCaptions Show/Hide button" width="90%" />
-    <br>
-    <em style="font-size:80%">LiveCaptions Show/Hide button</em>
-    <br>
-  </div>
+### 2. Settings
 
-  By enabling the ***Include microphone audio*** option in the setting of Windows LiveCaptions, you can achieve real-time speech translation!
-  > ⚠️ **IMPORTANT:** You must change the source language in Windows LiveCaptions!
+This screen allows you to configure the application to your needs. See the detailed Configuration section below for more information.
 
-- **🎨 Modern Interface**
+### 3. History
 
-  Easy-to-use and clean Fluent UI aligned with modern Windows aesthetics.
+This screen provides a comprehensive view of your past translations.
+- **Pagination:** Navigate through pages of your translation history.
+- **Items per Page:** Choose how many translations to display on a single page.
+- **Search Bar:** Quickly find specific translations by searching for keywords.
+- **Action Buttons:**
+    - **Download:** Export your translation history to a file.
+    - **Delete:** Remove selected entries from the history.
+    - **Reset:** Completely clear all saved translation history.
 
-  It can automatically switches between light and dark themes 🌓 based on the system setting.
+### 4. Info
 
-- **🌐 Multiple Translation Services**
+This screen displays information about the application, such as its version number and other relevant details.
 
-  Supports various translation engines, including 2 out-of-the-box Google Translate.
+## Configuration
 
-  Implemented translation engines are shown in the table below:
+You can customize the following options in the **Settings** view:
 
-  <div align="center">
-
-  | API                                                 | Type        | Hosting     |
-  |-----------------------------------------------------|-------------|-------------|
-  | [Ollama](https://ollama.com)                        | LLM-based   | Self-hosted |
-  | OpenAI Compatible API                               | LLM-based   | Online      |
-  | [OpenRouter](https://openrouter.ai)                 | LLM-based   | Online      |
-  | Google Translate                                    | Traditional | Online      |
-  | DeepL                                               | Traditional | Online      |
-  | Youdao                                              | Traditional | Online      |
-  | Baidu Translate                                     | Traditional | Online      |
-  | [MTranServer](https://github.com/xxnuo/MTranServer) | Traditional | Self-hosted |
-  | [LibreTranslate](https://libretranslate.com/)       | Traditional | Self-hosted |
-
-  </div>
-
-  It's strongly recommended using **LLM-based** translation engines, as LLMs excel at handling incomplete sentences and are adept at understanding context.
-
-- **🪟 Overlay Window**
-
-  Open a borderless, transparent overlay window to display subtitles, providing the most immersive experience. This is very useful for scenarios like gaming, videos, and live streams!
-
-  You can even make it completely embedded into the screen, becoming part of it. This means it won't affect any of your operations at all! This is perfect for gamers.
-
-  <div align="center">
-    <img src="images/overlay_window.png" alt="Overlay Window" width="80%" />
-    <br>
-    <em style="font-size:80%">Overlay window</em>
-    <br>
-  </div>
-
-  You can open the Overlay Window on the taskbar and adjust its parameters such as the window background and subtitle color, font size, and transparency. Extremely high configurability allows it to completely match your preferences!
-
-  You can adjust the number of sentences displayed simultaneously in the *Overlay Sentences* section of the setting page.
-
-- **⚙️ Flexible Controls**
-
-  Supports Always-on-top window and convenient translation pause/resume, and you can copy text with a single click for quick share or saving.
-
-- **📒 History Management**
-
-  Records original and translated text, perfect for meetings, lectures, and important discussions.
-
-  You can export all records as a CSV file.
-
-  <div align="center">
-    <img src="images/history.png" alt="Translation history" width="90%" />
-    <br>
-    <em style="font-size:80%">Translation history</em>
-    <br>
-  </div>
-
-- **🎞️ Log Cards**
-
-  Recent transcription records can be displayed as Log Cards, which helps you better grasp the context.
-
-  You can enable it on the taskbar of the main page and change the number of cards in the *Log Cards* section of the setting page.
-
-  <div align="center">
-    <img src="images/log_cards.png" alt="Log cards" width="90%" />
-    <br>
-    <em style="font-size:80%">Log Cards</em>
-    <br>
-  </div>
-
-
-## Prerequisites
-
-<div align="center">
-
-| Requirement                                                                                                           | Details                                     |
-|-----------------------------------------------------------------------------------------------------------------------|---------------------------------------------|
-| <img src="https://img.shields.io/badge/Windows-11%20(22H2+)-0078D6?style=for-the-badge&logo=windows&logoColor=white"> | With LiveCaptions support.                  |
-| <img src="https://img.shields.io/badge/.NET-8.0+-512BD4?style=for-the-badge&logo=dotnet&logoColor=white">             | Recommended. Not test in previous versions. |
-
-</div>
-
-This tool is based on Windows LiveCaptions, which is available since **Windows 11 22H2**.
-
-We suggest you have **.NET runtime 8.0** or higher installed. If you are not available to install one, you can download the ***with runtime*** version but its size is bigger.
-
-<div align="center">
-  <p align="center">
-    <a href="https://github.com/SakiRinn/LiveCaptions-Translator/wiki">
-      <img src="https://img.shields.io/badge/📚_Check_our_Wiki_for_detailed_information-2ea44f?style=for-the-badge" alt="Check our Wiki">
-    </a>
-  </p>
-</div>
-
-## Getting Started
-
-> ⚠️ **IMPORTANT:** You must complete the following steps before running LiveCaptions Translator for the first time.
->
-> For detailed information, see Microsoft's guide on [Using live captions](https://support.microsoft.com/en-us/windows/use-live-captions-to-better-understand-audio-b52da59c-14b8-4031-aeeb-f6a47e6055df).
-
-### Step 1: Verify Windows LiveCaptions Availability
-
-Confirm LiveCaptions is available on your system using any of these methods:
-
-- Toggle **Live captions** in the quick settings
-- Press **Win + Ctrl + L**
-- Access via **Quick settings** > **Accessibility** > **Live captions**
-- Open **Start** > **All apps** > **Accessibility** > **Live captions**
-- Navigate to **Settings** > **Accessibility** > **Captions** and enable **Live captions**
-
-### Step 2: Configure LiveCaptions
-
-When you first start, Windows LiveCaptions will ask for your consent to process voice data on your device and prompt you to download language files to be used by on-device speech recognition.
-
-After launching Windows LiveCaptions, click the **⚙️ gear** icon to open the setting menu, then select **Position** > **Overlaid on screen**.
-
-> ⚠️ **VERY IMPORTANT!** Otherwise, a display bug will occur on the screen after hiding Windows LiveCaptions.
-
-<div align="center">
-  <img src="images/speech_recognition.png" alt="Items under speech recognition" width="80%" />
-  <br>
-  <em style="font-size:80%">Required speech recognition downloads</em>
-  <br>
-</div>
-
-After configuration, close Windows LiveCaptions and launch LiveCaptions Translator to start using it! 🎉
-
-## Project Stats
-
-### Activity
-
-<div align="center">
-  <img src="https://img.shields.io/github/issues/SakiRinn/LiveCaptions-Translator?style=for-the-badge&label=Issues&color=yellow" alt="GitHub Issues">
-  <img src="https://img.shields.io/github/issues-pr/SakiRinn/LiveCaptions-Translator?style=for-the-badge&label=Pull%20Requests&color=blue" alt="GitHub Pull Requests">
-  <img src="https://img.shields.io/github/discussions/SakiRinn/LiveCaptions-Translator?style=for-the-badge&label=Discussions&color=orange" alt="GitHub Discussions">
-  <img src="https://img.shields.io/github/last-commit/SakiRinn/LiveCaptions-Translator?style=for-the-badge&label=Last%20Commit&color=purple" alt="GitHub Last Commit">
-</div>
-
-### Contributors
-
-<div align="center">
-  <img src="https://img.shields.io/github/contributors/SakiRinn/LiveCaptions-Translator?style=for-the-badge&label=Contributors&color=success" alt="GitHub Contributors">
-  <br>
-  <a href="https://github.com/SakiRinn/LiveCaptions-Translator/graphs/contributors">
-    <img src="https://contrib.rocks/image?repo=SakiRinn/LiveCaptions-Translator" />
-  </a>
-</div>
-
-### Star History
-
-[![Stargazers over time](https://starchart.cc/SakiRinn/LiveCaptions-Translator.svg?variant=adaptive)](https://starchart.cc/SakiRinn/LiveCaptions-Translator)
+- **LiveCaptions:** Controls the visibility of the original caption text in the Home view.
+  - **Show:** Displays both the original and translated text.
+  - **Hide:** Displays only the translated text.
+- **Translate API:** Select your preferred translation service provider from the dropdown menu.
+- **API Setting:** Opens a dialog to enter your credentials (e.g., API Key, Secret) for the selected translation service.
+- **Log Cards:** Determines the number of recent translation "cards" or entries displayed or cached.
+- **API Interval:** Adjust the slider to set the time delay (in milliseconds) between translation API calls. A higher value can reduce costs and lower API request frequency, while a lower value provides faster translations.
+- **Target Language:** Select the language you want the captions to be translated into.
+- **Show Latency:** A toggle switch. When enabled, it displays the network latency (in milliseconds) for each translation, helping you gauge performance.
+- **Overlay Sentences:** Controls how many sentences are displayed or grouped in the overlay/compact view.

@@ -63,6 +63,7 @@ namespace LiveCaptionsTranslator
 
         private async void Delete_click(object sender, RoutedEventArgs e)
         {
+            /*
             var dialogHostContainer = (Application.Current.MainWindow as MainWindow)?.DialogHostContainer;
 
             var dialog = new ContentDialog
@@ -91,6 +92,8 @@ namespace LiveCaptionsTranslator
                 await SQLiteHistoryLogger.ClearHistory();
                 await LoadHistory();
             }
+            */
+            await Task.CompletedTask;
         }
 
         private async void maxRow_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -174,15 +177,10 @@ namespace LiveCaptionsTranslator
 
         private void Snackbar_Show(string title, string message, bool isError = false)
         {
-            var snackbar = new Snackbar(SnackbarHost)
+            if (Application.Current.MainWindow is MainWindow mainWindow)
             {
-                Title = title,
-                Content = message,
-                Appearance = isError ? ControlAppearance.Danger : ControlAppearance.Light,
-                Timeout = TimeSpan.FromSeconds(2)
-            };
-
-            snackbar.Show();
+                mainWindow.ShowSnackbar(title, message, isError);
+            }
         }
 
         public async Task LoadHistory()

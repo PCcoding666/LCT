@@ -1,6 +1,10 @@
-﻿using System.IO;
+﻿﻿using System.IO;
 using System.Text;
 using Microsoft.Data.Sqlite;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Diagnostics;
 
 using LiveCaptionsTranslator.models;
 
@@ -8,10 +12,11 @@ namespace LiveCaptionsTranslator.utils
 {
     public static class SQLiteHistoryLogger
     {
-        public static readonly string CONNECTION_STRING = "Data Source=translation_history.db;";
+        public static readonly string CONNECTION_STRING = $"Data Source={Path.Combine(ApplicationSetup.AppDataPath, "translation_history.db")};";
 
         private static SqliteConnection _sharedConnection;
         private static readonly object _connectionLock = new object();
+        private static readonly SemaphoreSlim _dbSemaphore = new SemaphoreSlim(1, 1); // Limit only one thread can access database simultaneously
 
         static SQLiteHistoryLogger()
         {
@@ -20,19 +25,38 @@ namespace LiveCaptionsTranslator.utils
 
         private static void InitializeDatabase()
         {
-            GetConnection();
-
-            using (var command = new SqliteCommand(@"
-                CREATE TABLE IF NOT EXISTS TranslationHistory (
-                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    Timestamp TEXT,
-                    SourceText TEXT,
-                    TranslatedText TEXT,
-                    TargetLanguage TEXT,
-                    ApiUsed TEXT
-                );", GetConnection()))
+            lock (_connectionLock)
             {
-                command.ExecuteNonQuery();
+                if (_sharedConnection == null)
+                {
+                    // Ensure application data directory exists
+                    var dbPath = Path.Combine(ApplicationSetup.AppDataPath, "translation_history.db");
+                    var dbDir = Path.GetDirectoryName(dbPath);
+                    if (!Directory.Exists(dbDir))
+                    {
+                        Directory.CreateDirectory(dbDir);
+                        Console.WriteLine($"Create database directory: {dbDir}");
+                    }
+                    
+                    Console.WriteLine($"Initialize SQLite database: {dbPath}");
+                    _sharedConnection = new SqliteConnection(CONNECTION_STRING);
+                    _sharedConnection.Open();
+
+                    string createTableQuery = @"
+                        CREATE TABLE IF NOT EXISTS TranslationHistory (
+                            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            Timestamp TEXT NOT NULL,
+                            SourceText TEXT NOT NULL,
+                            TranslatedText TEXT NOT NULL,
+                            TargetLanguage TEXT NOT NULL,
+                            ApiUsed TEXT NOT NULL
+                        )";
+
+                    using (var command = new SqliteCommand(createTableQuery, _sharedConnection))
+                    {
+                        command.ExecuteNonQuery();
+                    }
+                }
             }
         }
 
@@ -40,25 +64,10 @@ namespace LiveCaptionsTranslator.utils
         {
             lock (_connectionLock)
             {
-                if (_sharedConnection == null)
+                if (_sharedConnection == null || _sharedConnection.State != System.Data.ConnectionState.Open)
                 {
-                    _sharedConnection = new SqliteConnection(CONNECTION_STRING);
-                    _sharedConnection.Open();
+                    InitializeDatabase();
                 }
-                else if (_sharedConnection.State != System.Data.ConnectionState.Open)
-                {
-                    try
-                    {
-                        _sharedConnection.Open();
-                    }
-                    catch
-                    {
-                        _sharedConnection.Dispose();
-                        _sharedConnection = new SqliteConnection(CONNECTION_STRING);
-                        _sharedConnection.Open();
-                    }
-                }
-
                 return _sharedConnection;
             }
         }
@@ -66,18 +75,30 @@ namespace LiveCaptionsTranslator.utils
         public static async Task LogTranslation(string sourceText, string translatedText,
             string targetLanguage, string apiUsed, CancellationToken token = default)
         {
-            string insertQuery = @"
-                INSERT INTO TranslationHistory (Timestamp, SourceText, TranslatedText, TargetLanguage, ApiUsed)
-                VALUES (@Timestamp, @SourceText, @TranslatedText, @TargetLanguage, @ApiUsed)";
-
-            using (var command = new SqliteCommand(insertQuery, GetConnection()))
+            await _dbSemaphore.WaitAsync(token);
+            try
             {
-                command.Parameters.AddWithValue("@Timestamp", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-                command.Parameters.AddWithValue("@SourceText", sourceText);
-                command.Parameters.AddWithValue("@TranslatedText", translatedText);
-                command.Parameters.AddWithValue("@TargetLanguage", targetLanguage);
-                command.Parameters.AddWithValue("@ApiUsed", apiUsed);
-                await command.ExecuteNonQueryAsync(token);
+                string insertQuery = @"
+                    INSERT INTO TranslationHistory (Timestamp, SourceText, TranslatedText, TargetLanguage, ApiUsed)
+                    VALUES (@Timestamp, @SourceText, @TranslatedText, @TargetLanguage, @ApiUsed)";
+
+                using (var command = new SqliteCommand(insertQuery, GetConnection()))
+                {
+                    command.Parameters.AddWithValue("@Timestamp", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                    command.Parameters.AddWithValue("@SourceText", sourceText);
+                    command.Parameters.AddWithValue("@TranslatedText", translatedText);
+                    command.Parameters.AddWithValue("@TargetLanguage", targetLanguage);
+                    command.Parameters.AddWithValue("@ApiUsed", apiUsed);
+                    await command.ExecuteNonQueryAsync(token);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SQLiteHistoryLogger.LogTranslation error: {ex.Message}");
+            }
+            finally
+            {
+                _dbSemaphore.Release();
             }
         }
 
@@ -142,19 +163,32 @@ namespace LiveCaptionsTranslator.utils
 
         public static async Task<string> LoadLastSourceText(CancellationToken token = default)
         {
-            string selectQuery = @"
-                SELECT SourceText
-                FROM TranslationHistory
-                ORDER BY Id DESC
-                LIMIT 1";
-
-            using (var command = new SqliteCommand(selectQuery, GetConnection()))
-            using (var reader = await command.ExecuteReaderAsync(token))
+            await _dbSemaphore.WaitAsync(token);
+            try
             {
-                if (await reader.ReadAsync(token))
-                    return reader.GetString(reader.GetOrdinal("SourceText"));
-                else
-                    return string.Empty;
+                string selectQuery = @"
+                    SELECT SourceText
+                    FROM TranslationHistory
+                    ORDER BY Id DESC
+                    LIMIT 1";
+
+                using (var command = new SqliteCommand(selectQuery, GetConnection()))
+                using (var reader = await command.ExecuteReaderAsync(token))
+                {
+                    if (await reader.ReadAsync(token))
+                        return reader.GetString(reader.GetOrdinal("SourceText"));
+                    else
+                        return string.Empty;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SQLiteHistoryLogger.LoadLastSourceText error: {ex.Message}");
+                return string.Empty;
+            }
+            finally
+            {
+                _dbSemaphore.Release();
             }
         }
 

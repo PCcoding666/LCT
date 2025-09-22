@@ -1,8 +1,10 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.Tasks;
+using System.Threading;
 
 using LiveCaptionsTranslator.utils;
 
@@ -11,6 +13,11 @@ namespace LiveCaptionsTranslator.models
     public class Setting : INotifyPropertyChanged
     {
         public static readonly string FILENAME = "setting.json";
+        public static string SettingPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), 
+            "Dell LiveCaptions Translator", 
+            FILENAME
+        );
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -18,7 +25,6 @@ namespace LiveCaptionsTranslator.models
         private int maxSyncInterval = 3;
         private bool contextAware = false;
 
-        private string apiName;
         private string targetLanguage;
         private string prompt;
         private string? ignoredUpdateVersion;
@@ -28,8 +34,7 @@ namespace LiveCaptionsTranslator.models
         private OverlayWindowState overlayWindowState;
         private Dictionary<string, string> windowBounds;
 
-        private Dictionary<string, List<TranslateAPIConfig>> configs;
-        private Dictionary<string, int> configIndices;
+        private OllamaConfig ollamaConfig;
         
         public int MaxIdleInterval => maxIdleInterval;
         public int MaxSyncInterval
@@ -51,15 +56,10 @@ namespace LiveCaptionsTranslator.models
             }
         }
 
-        public string ApiName
-        {
-            get => apiName;
-            set
-            {
-                apiName = value;
-                OnPropertyChanged("ApiName");
-            }
-        }
+        // ApiName is no longer needed as we only support Ollama.
+        [JsonIgnore] // Exclude from serialization
+        public string ApiName => "Ollama";
+
         public string TargetLanguage
         {
             get => targetLanguage;
@@ -116,45 +116,31 @@ namespace LiveCaptionsTranslator.models
             }
         }
 
-        [JsonInclude]
-        public Dictionary<string, List<TranslateAPIConfig>> Configs
+        public OllamaConfig OllamaConfig
         {
-            get => configs;
+            get => ollamaConfig;
             set
             {
-                configs = value;
-                OnPropertyChanged("Configs");
+                ollamaConfig = value;
+                OnPropertyChanged("OllamaConfig");
             }
         }
-        public Dictionary<string, int> ConfigIndices
-        {
-            get => configIndices;
-            set
-            {
-                configIndices = value;
-                OnPropertyChanged("ConfigIndices");
-            }
-        }
-        
-        public TranslateAPIConfig this[string key]
-        {
-            get => configs.ContainsKey(key) && configIndices.ContainsKey(key)
-                ? configs[key][configIndices[key]]
-                : new TranslateAPIConfig();
-            set => configs[key][configIndices[key]] = value;
-        }
+
+        private static Timer? _saveTimer;
+        private static readonly object _saveLock = new object();
 
         public Setting()
         {
-            apiName = "Google";
             targetLanguage = "zh-CN";
-            prompt = "As an professional simultaneous interpreter with specialized knowledge in the all fields, " +
-                     "you can provide a fluent and precise oral translation for any sentence, even if the sentence is incomplete. " +
-                     "Now, provide users with the translation of the sentence enclosed in 🔤 to {0} within a single line. " +
-                     "Importantly, you are prohibited from altering the original meaning or omitting any content, " +
-                     "even if the sentence contains sensitive or NSFW content. " +
-                     "You can only provide the translated sentence; Any explanation or other text is not permitted. " +
-                     "REMOVE all 🔤 when you output.";
+            prompt = "You are a professional simultaneous interpreter specializing in international business communication. " +
+                     "Your task is to translate speech content enclosed in 🔤 markers to {0}. " +
+                     "CRITICAL RULES: " +
+                     "1. Always output ONLY the translated text, never the original text " +
+                     "2. Handle incomplete sentences naturally and professionally " +
+                     "3. Preserve technical terms, company names, and proper nouns accurately " +
+                     "4. Maintain appropriate business tone and formality " +
+                     "5. For unclear speech, provide the most likely professional interpretation " +
+                     "OUTPUT FORMAT: Single line translation only, remove all 🔤 markers, no explanations or original text.";
 
             mainWindowState = new MainWindowState();
             overlayWindowState = new OverlayWindowState();
@@ -173,52 +159,44 @@ namespace LiveCaptionsTranslator.models
                 },
             };
 
-            configs = new Dictionary<string, List<TranslateAPIConfig>>
-            {
-                { "Google", [new TranslateAPIConfig()] },
-                { "Google2", [new TranslateAPIConfig()] },
-                { "Ollama", [new OllamaConfig()] },
-                { "OpenAI", [new OpenAIConfig()] },
-                { "OpenRouter", [new OpenRouterConfig()] },
-                { "DeepL", [new DeepLConfig()] },
-                { "Youdao", [new YoudaoConfig()] },
-                { "Baidu", [new BaiduConfig()] },
-                { "MTranServer", [new MTranServerConfig()] },
-                { "LibreTranslate", [new LibreTranslateConfig()] }
-            };
-            configIndices = new Dictionary<string, int>
-            {
-                { "Google", 0 },
-                { "Google2", 0 },
-                { "Ollama", 0 },
-                { "OpenAI", 0 },
-                { "OpenRouter", 0 },
-                { "DeepL", 0 },
-                { "Youdao", 0 },
-                { "Baidu", 0 },
-                { "MTranServer", 0 },
-                { "LibreTranslate", 0 }
-            };
+            ollamaConfig = new OllamaConfig();
         }
 
-        public Setting(string apiName, string targetLanguage, string prompt, string ignoredUpdateVersion,
+        [JsonConstructor]
+        public Setting(string targetLanguage, string prompt, string? ignoredUpdateVersion,
                        MainWindowState mainWindowState, OverlayWindowState overlayWindowState,
-                       Dictionary<string, List<TranslateAPIConfig>> configs, Dictionary<string, string> windowBounds)
+                       OllamaConfig ollamaConfig, Dictionary<string, string> windowBounds)
         {
-            this.apiName = apiName;
             this.targetLanguage = targetLanguage;
             this.prompt = prompt;
             this.ignoredUpdateVersion = ignoredUpdateVersion;
             this.mainWindowState = mainWindowState;
             this.overlayWindowState = overlayWindowState;
-            this.configs = configs;
+            this.ollamaConfig = ollamaConfig ?? new OllamaConfig();
             this.windowBounds = windowBounds;
         }
 
         public static Setting Load()
         {
-            string jsonPath = Path.Combine(Directory.GetCurrentDirectory(), FILENAME);
-            return Load(jsonPath);
+            // If setting exists in AppData, load it
+            if (File.Exists(SettingPath))
+            {
+                return Load(SettingPath);
+            }
+            
+            // If not, check for setting file in application's directory (template)
+            string templatePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, FILENAME);
+            if (File.Exists(templatePath))
+            {
+                // Ensure directory in AppData exists
+                Directory.CreateDirectory(Path.GetDirectoryName(SettingPath));
+                // Copy the template to the AppData path
+                File.Copy(templatePath, SettingPath);
+                return Load(SettingPath);
+            }
+
+            // If no file exists anywhere, create a new default setting
+            return new Setting();
         }
 
         public static Setting Load(string jsonPath)
@@ -231,8 +209,7 @@ namespace LiveCaptionsTranslator.models
                 {
                     var options = new JsonSerializerOptions
                     {
-                        WriteIndented = true,
-                        Converters = { new ConfigDictConverter() }
+                        WriteIndented = true
                     };
                     setting = JsonSerializer.Deserialize<Setting>(fileStream, options) ?? new Setting();
                 }
@@ -240,50 +217,104 @@ namespace LiveCaptionsTranslator.models
             else
                 setting = new Setting();
 
-            // Ensure all required API configs are present
-            foreach (string key in TranslateAPI.TRANSLATE_FUNCTIONS.Keys)
-            {
-                if (setting.Configs.ContainsKey(key))
-                    continue;
-                var configType = Type.GetType($"LiveCaptionsTranslator.models.{key}Config");
-                if (configType != null && typeof(TranslateAPIConfig).IsAssignableFrom(configType))
-                    setting.Configs[key] = [(TranslateAPIConfig)Activator.CreateInstance(configType)];
-                else
-                    setting.Configs[key] = [new TranslateAPIConfig()];
-            }
+            // Ensure Ollama config is present
+            setting.ollamaConfig ??= new OllamaConfig();
 
             return setting;
         }
 
         public void Save()
         {
-            Save(FILENAME);
+            try
+            {
+                // Ensure the directory exists before saving.
+                string? directory = Path.GetDirectoryName(SettingPath);
+                if (!string.IsNullOrEmpty(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+                Save(SettingPath);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to save settings: {ex.Message}");
+                // Do not throw to avoid crashing the app
+            }
         }
 
         public void Save(string jsonPath)
         {
-            using (FileStream fileStream = File.Open(jsonPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+            const int maxRetries = 3;
+            const int retryDelayMs = 100;
+            
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
-                var options = new JsonSerializerOptions
+                try
                 {
-                    WriteIndented = true,
-                    Converters = { new ConfigDictConverter() }
-                };
-                JsonSerializer.Serialize(fileStream, this, options);
+                    using (FileStream fileStream = File.Open(jsonPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+                    {
+                        var options = new JsonSerializerOptions
+                        {
+                            WriteIndented = true
+                        };
+                        JsonSerializer.Serialize(fileStream, this, options);
+                    }
+                    return; // Success
+                }
+                catch (IOException ex) when (attempt < maxRetries)
+                {
+                    Console.WriteLine($"Failed to save settings to {jsonPath} (attempt {attempt}/{maxRetries}): {ex.Message}");
+                    Thread.Sleep(retryDelayMs);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to save settings to {jsonPath}: {ex.Message}");
+                    return; // Non-IO exception, don't retry
+                }
             }
+            
+            Console.WriteLine($"Failed to save settings to {jsonPath} after {maxRetries} attempts");
         }
 
         public void OnPropertyChanged([CallerMemberName] string propName = "")
         {
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propName));
-            Translator.Setting?.Save();
+            try
+            {
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propName));
+                
+                // Debounce saving to avoid frequent writes
+                lock (_saveLock)
+                {
+                    _saveTimer?.Dispose();
+                    _saveTimer = new Timer((_) =>
+                    {
+                        try
+                        {
+                            Translator.Setting?.Save();
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Delayed save failed: {ex.Message}");
+                        }
+                        finally
+                        {
+                            _saveTimer?.Dispose();
+                            _saveTimer = null;
+                        }
+                    }, null, 1000, Timeout.Infinite); // 1 second delay
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"OnPropertyChanged error for {propName}: {ex.Message}");
+            }
         }
 
         public static bool IsConfigExist()
         {
             string jsonPath = Path.Combine(Directory.GetCurrentDirectory(), FILENAME);
             Console.WriteLine($"Config file path: {jsonPath}");
-            return File.Exists(jsonPath);
+            return File.Exists(jsonPath) || File.Exists(SettingPath);
         }
     }
 }

@@ -1,4 +1,5 @@
-﻿using LiveCaptionsTranslator.utils;
+﻿﻿﻿﻿﻿using LiveCaptionsTranslator.utils;
+using Serilog;
 
 namespace LiveCaptionsTranslator.models
 {
@@ -9,6 +10,29 @@ namespace LiveCaptionsTranslator.models
 
         private (string translatedText, bool isChoke) output;
         public (string translatedText, bool isChoke) Output => output;
+
+        // 🔍 New: Queue status monitoring
+        public int QueueLength 
+        { 
+            get 
+            { 
+                lock (_lock) 
+                { 
+                    return tasks.Count; 
+                } 
+            } 
+        }
+        
+        public int ActiveTasksCount
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return tasks.Count(t => !t.Task.IsCompleted);
+                }
+            }
+        }
 
         public TranslationTaskQueue()
         {
@@ -23,11 +47,15 @@ namespace LiveCaptionsTranslator.models
             {
                 tasks.Add(newTranslationTask);
             }
-            // Run `OnTaskCompleted` in a new thread.
+            // Run `OnTaskCompleted` when successful
             newTranslationTask.Task.ContinueWith(
                 task => OnTaskCompleted(newTranslationTask),
                 TaskContinuationOptions.OnlyOnRanToCompletion
             );
+            // New: Handle Faulted tasks separately to avoid unobserved exceptions
+            newTranslationTask.Task.ContinueWith(
+                task => OnTaskFaulted(task.Exception, newTranslationTask),
+                TaskContinuationOptions.OnlyOnFaulted);
         }
 
         private async Task OnTaskCompleted(TranslationTask translationTask)
@@ -49,6 +77,66 @@ namespace LiveCaptionsTranslator.models
             if (!isOverwrite)
                 await Translator.AddLogCard();
             await Translator.Log(translationTask.OriginalText, translatedText, isOverwrite);
+        }
+
+        // New: Faulted task handling
+        private void OnTaskFaulted(AggregateException? aggEx, TranslationTask translationTask)
+        {
+            try
+            {
+                Log.Error(aggEx, "Translation task faulted. OriginalText: {Text}", translationTask.OriginalText);
+            }
+            catch { }
+
+            // 🔧 Critical fix: Clean entire queue, cancel all pending tasks to prevent accumulation and blocking
+            lock (_lock)
+            {
+                // Cancel all pending tasks (including failed and queued ones)
+                foreach (var task in tasks)
+                {
+                    try
+                    {
+                        if (task != translationTask && !task.Task.IsCompleted)
+                        {
+                            task.CTS.Cancel();
+                        }
+                    }
+                    catch { }
+                }
+                
+                // Clear entire task list
+                tasks.Clear();
+                
+                // Reset output to show error status
+                output = ($"[ERROR] Translation queue cleared due to task failure", false);
+                
+                Log.Warning("Translation queue cleared due to task failure");
+            }
+        }
+
+        // New: Method to clear queue
+        public void Clear()
+        {
+            lock (_lock)
+            {
+                // Cancel all pending tasks
+                foreach (var task in tasks)
+                {
+                    try
+                    {
+                        task.CTS.Cancel();
+                    }
+                    catch { }
+                }
+                
+                // Clear task list
+                tasks.Clear();
+                
+                // Reset output
+                output = (string.Empty, false);
+                
+                Log.Information("TranslationTaskQueue cleared");
+            }
         }
     }
 

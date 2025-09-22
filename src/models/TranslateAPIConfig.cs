@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 
@@ -9,8 +9,6 @@ namespace LiveCaptionsTranslator.models
         /*
          * The key of this property is used as the content for `targetLangBox` in the `SettingPage`.
          * Its purpose is to standardize the language selection interface.
-         * Therefore, if your API doesn't follow the key format, please override (use `new`) this property.
-         * (See the definition of `DeepLConfig` for an example)
          */
         [JsonIgnore]
         public static Dictionary<string, string> SupportedLanguages => new()
@@ -38,8 +36,8 @@ namespace LiveCaptionsTranslator.models
     {
         public class Message
         {
-            public string role { get; set; }
-            public string content { get; set; }
+            public string role { get; set; } = "";
+            public string content { get; set; } = "";
         }
 
         private string modelName = "";
@@ -67,11 +65,34 @@ namespace LiveCaptionsTranslator.models
 
     public class OllamaConfig : BaseLLMConfig
     {
+        [JsonIgnore]
+        public static readonly Dictionary<string, string> RecommendedModels = new()
+        {
+            { "qwen2.5:0.5b", "Qwen2.5 0.5B (Lightest, Fastest)" },
+            { "qwen2.5:1.5b", "Qwen2.5 1.5B (Light, Fast)" },
+            { "qwen2.5:3b", "Qwen2.5 3B (Default, Balanced)" },
+            { "qwen2.5:7b", "Qwen2.5 7B (High Quality, Slower)" },
+            { "llama3.2:1b", "Llama 3.2 1B (Alternative Light Option)" },
+            { "llama3.2:3b", "Llama 3.2 3B (Alternative Balanced Option)" }
+        };
+        [JsonIgnore]
+        public new static Dictionary<string, string> SupportedLanguages => new()
+        {
+            { "zh-CN", "Chinese (Simplified)" },
+            { "zh-TW", "Chinese (Traditional)" },
+            { "en-US", "English" },
+            { "en-GB", "English" },
+            { "ja-JP", "Japanese" },
+            { "ko-KR", "한국어" },
+            { "fr-FR", "Français" },
+            { "th-TH", "ไทย" },
+        };
+
         public class Response
         {
-            public string model { get; set; }
+            public string? model { get; set; }
             public DateTime created_at { get; set; }
-            public Message message { get; set; }
+            public Message? message { get; set; }
             public bool done { get; set; }
             public long total_duration { get; set; }
             public int load_duration { get; set; }
@@ -82,6 +103,19 @@ namespace LiveCaptionsTranslator.models
         }
 
         private int port = 11434;
+        private string host = "127.0.0.1";
+        private string modelName = "qwen2.5:3b";
+        private int timeoutSeconds = 60; // Default 60 seconds timeout
+
+        public new string ModelName
+        {
+            get => modelName;
+            set
+            {
+                modelName = value;
+                OnPropertyChanged("ModelName");
+            }
+        }
 
         public int Port
         {
@@ -92,328 +126,25 @@ namespace LiveCaptionsTranslator.models
                 OnPropertyChanged("Port");
             }
         }
-    }
 
-    public class OpenAIConfig : BaseLLMConfig
-    {
-        public class Choice
+        public string Host
         {
-            public int index { get; set; }
-            public Message message { get; set; }
-            public string logprobs { get; set; }
-            public string finish_reason { get; set; }
-        }
-        public class Usage
-        {
-            public int prompt_tokens { get; set; }
-            public int completion_tokens { get; set; }
-            public int total_tokens { get; set; }
-            public int prompt_cache_hit_tokens { get; set; }
-            public int prompt_cache_miss_tokens { get; set; }
-        }
-        public class Response
-        {
-            public string id { get; set; }
-            public string @object { get; set; }
-            public int created { get; set; }
-            public string model { get; set; }
-            public List<Choice> choices { get; set; }
-            public Usage usage { get; set; }
-            public string system_fingerprint { get; set; }
-        }
-
-        private string apiKey = "";
-        private string apiUrl = "";
-
-        public string ApiKey
-        {
-            get => apiKey;
+            get => host;
             set
             {
-                apiKey = value;
-                OnPropertyChanged("ApiKey");
-            }
-        }
-        public string ApiUrl
-        {
-            get => apiUrl;
-            set
-            {
-                apiUrl = value;
-                OnPropertyChanged("ApiUrl");
-            }
-        }
-    }
-
-    public class OpenRouterConfig : BaseLLMConfig
-    {
-        private string apiKey = "";
-        public string ApiKey
-        {
-            get => apiKey;
-            set
-            {
-                apiKey = value;
-                OnPropertyChanged();
-            }
-        }
-    }
-
-    public class DeepLConfig : TranslateAPIConfig
-    {
-        [JsonIgnore]
-        public new static Dictionary<string, string> SupportedLanguages => new()
-        {
-            { "zh-CN", "ZH-HANS" },
-            { "zh-TW", "ZH-HANT" },
-            { "en-US", "EN-US" },
-            { "en-GB", "EN-GB" },
-            { "ja-JP", "JA" },
-            { "ko-KR", "KO" },
-            { "fr-FR", "FR" },
-            { "th-TH", "TH" },
-        };
-
-        private string apiKey = "";
-        private string apiUrl = "https://api.deepl.com/v2/translate";
-
-        public string ApiKey
-        {
-            get => apiKey;
-            set
-            {
-                apiKey = value;
-                OnPropertyChanged("ApiKey");
-            }
-        }
-        public string ApiUrl
-        {
-            get => apiUrl;
-            set
-            {
-                apiUrl = value;
-                OnPropertyChanged("ApiUrl");
-            }
-        }
-    }
-    public class YoudaoConfig : TranslateAPIConfig
-    {
-        public class TranslationResult
-        {
-            public string errorCode { get; set; }
-            public string query { get; set; }
-            public List<string> translation { get; set; }
-            public string l { get; set; }
-            public string tSpeakUrl { get; set; }
-            public string speakUrl { get; set; }
-        }
-
-        [JsonIgnore]
-        public new static Dictionary<string, string> SupportedLanguages => new()
-        {
-            { "zh-CN", "zh-CHS" },
-            { "zh-TW", "zh-CHT" },
-            { "en-US", "en" },
-            { "en-GB", "en" },
-            { "ja-JP", "ja" },
-            { "ko-KR", "ko" },
-            { "fr-FR", "fr" },
-            { "th-TH", "th" },
-        };
-
-        private string appKey = "";
-        private string appSecret = "";
-        private string apiUrl = "https://openapi.youdao.com/api";
-
-        public string AppKey
-        {
-            get => appKey;
-            set
-            {
-                appKey = value;
-                OnPropertyChanged("AppKey");
+                host = value;
+                OnPropertyChanged("Host");
             }
         }
 
-        public string AppSecret
+        public int TimeoutSeconds
         {
-            get => appSecret;
+            get => timeoutSeconds;
             set
             {
-                appSecret = value;
-                OnPropertyChanged("AppSecret");
+                timeoutSeconds = Math.Max(10, Math.Min(300, value)); // Limit to 10-300 seconds
+                OnPropertyChanged("TimeoutSeconds");
             }
-        }
-
-        public string ApiUrl
-        {
-            get => apiUrl;
-            set
-            {
-                apiUrl = value;
-                OnPropertyChanged("ApiUrl");
-            }
-        }
-    }
-
-    public class MTranServerConfig : TranslateAPIConfig
-    {
-        [JsonIgnore]
-        public new static Dictionary<string, string> SupportedLanguages => new()
-        {
-            { "zh-CN", "zh" },
-            { "zh-TW", "zh" },
-            { "en-US", "en" },
-            { "en-GB", "en" },
-            { "ja-JP", "ja" },
-            { "ko-KR", "ko" },
-            { "fr-FR", "fr" },
-            { "th-TH", "th" },
-        };
-
-        private string apiKey = "";
-        private string apiUrl = "http://localhost:8989/translate";
-        private string sourceLanguage = "en";
-
-        public string ApiKey
-        {
-            get => apiKey;
-            set
-            {
-                apiKey = value;
-                OnPropertyChanged("ApiKey");
-            }
-        }
-        public string ApiUrl
-        {
-            get => apiUrl;
-            set
-            {
-                apiUrl = value;
-                OnPropertyChanged("ApiUrl");
-            }
-        }
-
-        public string SourceLanguage
-        {
-            get => sourceLanguage;
-            set
-            {
-                sourceLanguage = value;
-                OnPropertyChanged("SourceLanguage");
-            }
-        }
-
-        public class Response
-        {
-            public string result { get; set; }
-        }
-    }
-
-    public class BaiduConfig : TranslateAPIConfig
-    {
-        public class TransResult
-        {
-            public string src { get; set; }
-            public string dst { get; set; }
-        }
-
-        public class TranslationResult
-        {
-            public string error_code { get; set; }
-            public string from { get; set; }
-            public string to { get; set; }
-            public List<TransResult> trans_result { get; set; }
-        }
-
-        [JsonIgnore]
-        public new static Dictionary<string, string> SupportedLanguages => new()
-        {
-            { "zh-CN", "zh" },
-            { "zh-TW", "cht" },
-            { "en-US", "en" },
-            { "en-GB", "en" },
-            { "ja-JP", "jp" },
-            { "ko-KR", "kor" },
-            { "fr-FR", "fra" },
-            { "th-TH", "th" },
-        };
-
-        private string appId = "";
-        private string appSecret = "";
-        private string apiUrl = "https://fanyi-api.baidu.com/api/trans/vip/translate";
-
-        public string AppId
-        {
-            get => appId;
-            set
-            {
-                appId = value;
-                OnPropertyChanged("AppId");
-            }
-        }
-
-        public string AppSecret
-        {
-            get => appSecret;
-            set
-            {
-                appSecret = value;
-                OnPropertyChanged("AppSecret");
-            }
-        }
-
-        public string ApiUrl
-        {
-            get => apiUrl;
-            set
-            {
-                apiUrl = value;
-                OnPropertyChanged("ApiUrl");
-            }
-        }
-    }
-
-    public class LibreTranslateConfig : TranslateAPIConfig
-    {
-        [JsonIgnore]
-        public new static Dictionary<string, string> SupportedLanguages => new()
-        {
-            { "zh-CN", "zh" },
-            { "zh-TW", "zh" },
-            { "en-US", "en" },
-            { "en-GB", "en" },
-            { "ja-JP", "ja" },
-            { "ko-KR", "ko" },
-            { "fr-FR", "fr" },
-            { "th-TH", "th" },
-        };
-
-        private string apiKey = "";
-        private string apiUrl = "http://localhost:5000/translate";
-
-        public string ApiKey
-        {
-            get => apiKey;
-            set
-            {
-                apiKey = value;
-                OnPropertyChanged("ApiKey");
-            }
-        }
-        public string ApiUrl
-        {
-            get => apiUrl;
-            set
-            {
-                apiUrl = value;
-                OnPropertyChanged("ApiUrl");
-            }
-        }
-
-        public class Response
-        {
-            public string translatedText { get; set; }
         }
     }
 }

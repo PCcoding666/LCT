@@ -36,6 +36,7 @@
         </ui:TitleBar>
 
         <StackPanel Grid.Row="1" Background="{ui:ThemeResource SystemFillColorNeutralBackgroundBrush}">
+            <Image Source="../resources/dell_logo.png" Width="100" Height="100" Margin="20,10,20,0" HorizontalAlignment="Center" />
             <TextBlock
                 Margin="20"
                 HorizontalAlignment="Left"

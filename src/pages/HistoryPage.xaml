@@ -113,7 +113,7 @@
                     Icon="{ui:SymbolIcon ArrowClockwise12,
                                          Filled=False}"
                     MouseOverBackground="#07000000"
-                    ToolTip="Refresh" />
+                    ToolTip="Reset" />
             </StackPanel>
         </Grid>
 
