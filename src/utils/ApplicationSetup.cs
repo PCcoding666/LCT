@@ -22,7 +22,7 @@ namespace LiveCaptionsTranslator.utils
         public static readonly string DownloadsPath = Path.Combine(AppDataPath, "downloads");
 
         // Expected Ollama version identifier (from filename)
-        private const string EXPECTED_OLLAMA_VERSION = "ollama-ipex-llm-2.3.0b20250415-win";
+        private const string EXPECTED_OLLAMA_VERSION = "ollama-ipex-llm-2.3.0b20250725-win";
 
         // Version record filename
         private static readonly string VersionRecordFile = Path.Combine(OllamaPath, ".version");

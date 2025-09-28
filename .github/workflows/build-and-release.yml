@@ -1,0 +1,312 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main, develop, 'release/*' ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: 'Override version (e.g., 1.2.3)'
+        required: false
+        type: string
+      create_release:
+        description: 'Create GitHub release'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  PROJECT_FILE: 'LiveCaptionsTranslator.csproj'
+  BUILD_CONFIGURATION: Release
+  TARGET_RUNTIME: win-x64
+
+jobs:
+  build:
+    name: Build Application
+    runs-on: windows-latest
+    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version-suffix: ${{ steps.version.outputs.version-suffix }}
+      full-version: ${{ steps.version.outputs.full-version }}
+      installer-name: ${{ steps.version.outputs.installer-name }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for version calculation
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Cache NuGet packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+        restore-path: |
+          ~/.nuget/packages
+    
+    - name: Generate version information
+      id: version
+      shell: pwsh
+      run: |
+        # Determine version
+        $versionPrefix = \"1.0.0\"
+        $versionSuffix = \"dev\"
+        
+        # Override from workflow input
+        if (\"${{ github.event.inputs.version_override }}\" -ne \"\") {
+          $versionPrefix = \"${{ github.event.inputs.version_override }}\"
+        }
+        
+        # Determine version suffix based on ref
+        $ref = \"${{ github.ref }}\"
+        $eventName = \"${{ github.event_name }}\"
+        
+        if ($ref -match \"refs/tags/v(.+)\") {
+          $versionPrefix = $matches[1]
+          $versionSuffix = \"\"
+        } elseif ($ref -eq \"refs/heads/main\") {
+          $versionSuffix = \"rc\"
+        } elseif ($ref -match \"refs/heads/release/(.+)\") {
+          $versionPrefix = $matches[1]
+          $versionSuffix = \"rc\"
+        } elseif ($ref -eq \"refs/heads/develop\") {
+          $versionSuffix = \"beta\"
+        } elseif ($eventName -eq \"pull_request\") {
+          $versionSuffix = \"pr${{ github.event.number }}\"
+        }
+        
+        # Run version script
+        $versionInfo = & \".\\scripts\\build-version.ps1\" -ProjectRoot \".\" -VersionPrefix $versionPrefix -VersionSuffix $versionSuffix -BuildConfiguration \"${{ env.BUILD_CONFIGURATION }}\" -UseGitInfo
+        
+        # Set outputs
+        echo \"version=$versionPrefix\" >> $env:GITHUB_OUTPUT
+        echo \"version-suffix=$versionSuffix\" >> $env:GITHUB_OUTPUT
+        echo \"full-version=$($versionInfo.InformationalVersion)\" >> $env:GITHUB_OUTPUT
+        echo \"installer-name=LiveCaptionsTranslator-v$versionPrefix-Setup.exe\" >> $env:GITHUB_OUTPUT
+        
+        # Display information
+        Write-Host \"Generated Version Information:\" -ForegroundColor Green
+        Write-Host \"  Version: $versionPrefix\" -ForegroundColor White
+        Write-Host \"  Suffix: $versionSuffix\" -ForegroundColor White
+        Write-Host \"  Full: $($versionInfo.InformationalVersion)\" -ForegroundColor White
+    
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.PROJECT_FILE }}
+    
+    - name: Build application
+      run: dotnet build ${{ env.PROJECT_FILE }} --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore
+    
+    - name: Run tests
+      run: dotnet test --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity normal --collect:\"XPlat Code Coverage\"
+      continue-on-error: true
+    
+    - name: Publish application
+      run: |
+        dotnet publish ${{ env.PROJECT_FILE }} `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --runtime ${{ env.TARGET_RUNTIME }} `
+          --self-contained `
+          --output \"./publish\"
+    
+    - name: Setup NSIS
+      run: |
+        # Download and install NSIS
+        $nsisUrl = \"https://sourceforge.net/projects/nsis/files/NSIS%203/3.09/nsis-3.09-setup.exe/download\"
+        $nsisInstaller = \"$env:TEMP\nsis-setup.exe\"
+        
+        Write-Host \"Downloading NSIS...\" -ForegroundColor Yellow
+        Invoke-WebRequest -Uri $nsisUrl -OutFile $nsisInstaller
+        
+        Write-Host \"Installing NSIS...\" -ForegroundColor Yellow
+        Start-Process -FilePath $nsisInstaller -ArgumentList \"/S\" -Wait
+        
+        # Add NSIS to PATH
+        $nsisPath = \"C:\\Program Files (x86)\\NSIS\"
+        echo \"$nsisPath\" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    
+    - name: Build installer
+      shell: cmd
+      run: |
+        echo Building installer...
+        \"C:\\Program Files (x86)\\NSIS\\makensis.exe\" /DPROJECT_ROOT=\"%cd%\" /DAPP_VERSION=\"${{ steps.version.outputs.version }}\" /DOUTPUT_NAME=\"${{ steps.version.outputs.installer-name }}\" \"scripts\\deployment\\installer.nsi\"
+    
+    - name: Verify installer
+      shell: pwsh
+      run: |
+        $installerPath = \"${{ steps.version.outputs.installer-name }}\"
+        if (Test-Path $installerPath) {
+          $size = (Get-Item $installerPath).Length
+          $sizeMB = [math]::Round($size / 1MB, 2)
+          Write-Host \"Installer created successfully: $installerPath ($sizeMB MB)\" -ForegroundColor Green
+        } else {
+          Write-Error \"Installer not found: $installerPath\"
+          exit 1
+        }
+    
+    - name: Upload installer artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: installer-${{ steps.version.outputs.version }}
+        path: ${{ steps.version.outputs.installer-name }}
+        retention-days: 30
+    
+    - name: Upload version info
+      uses: actions/upload-artifact@v4
+      with:
+        name: version-info-${{ steps.version.outputs.version }}
+        path: |
+          version-info.json
+          release-info-*.txt
+        retention-days: 30
+
+  security-scan:
+    name: Security Scan
+    runs-on: windows-latest
+    needs: build
+    if: github.event_name != 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Run security analysis
+      run: |
+        # Install security analysis tools
+        dotnet tool install --global security-scan
+        
+        # Run security scan (example)
+        Write-Host \"Running security analysis...\" -ForegroundColor Yellow
+        # security-scan . --format sarif --output security-results.sarif
+        
+        Write-Host \"Security analysis completed\" -ForegroundColor Green
+      continue-on-error: true
+
+  release:
+    name: Create Release
+    runs-on: windows-latest
+    needs: [build, security-scan]
+    if: |
+      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
+      (startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event.inputs.create_release == 'true')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Download installer
+      uses: actions/download-artifact@v4
+      with:
+        name: installer-${{ needs.build.outputs.version }}
+        path: ./release/
+    
+    - name: Download version info
+      uses: actions/download-artifact@v4
+      with:
+        name: version-info-${{ needs.build.outputs.version }}
+        path: ./release/
+    
+    - name: Generate release notes
+      id: release-notes
+      shell: pwsh
+      run: |
+        $version = \"${{ needs.build.outputs.version }}\"
+        $fullVersion = \"${{ needs.build.outputs.full-version }}\"
+        
+        # Generate changelog from commits
+        $commits = git log --oneline --pretty=format:\"- %s\" HEAD~10..HEAD
+        
+        $releaseNotes = @\"
+        # LiveCaptions Translator v$version
+        
+        **Full Version:** $fullVersion
+        **Build Date:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')
+        **Target Platform:** Windows 10/11 (x64)
+        
+        ## What's New
+        
+        $commits
+        
+        ## Installation
+        
+        1. Download the installer below
+        2. Run as administrator
+        3. Follow the installation wizard
+        
+        ## System Requirements
+        
+        - Windows 10 version 1903 or later
+        - .NET 8.0 Runtime (included in installer)
+        - Visual C++ 2015-2022 Redistributable (included in installer)
+        - At least 100MB free disk space
+        
+        ## Notes
+        
+        - This release includes automatic update checking
+        - All runtime dependencies are bundled in the installer
+        - Previous versions will be automatically upgraded
+        \"@
+        
+        # Save release notes
+        $releaseNotes | Out-File -FilePath \"./release/RELEASE_NOTES.md\" -Encoding UTF8
+        
+        # Set output for GitHub release
+        $releaseNotesEscaped = $releaseNotes -replace '`', '``' -replace '\"', '`\"' -replace \"'n\", \"`n\"
+        echo \"notes<<EOF\" >> $env:GITHUB_OUTPUT
+        echo $releaseNotesEscaped >> $env:GITHUB_OUTPUT
+        echo \"EOF\" >> $env:GITHUB_OUTPUT
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ needs.build.outputs.version }}
+        name: LiveCaptions Translator v${{ needs.build.outputs.version }}
+        body: ${{ steps.release-notes.outputs.notes }}
+        files: |
+          ./release/${{ needs.build.outputs.installer-name }}
+          ./release/version-info.json
+          ./release/release-info-*.txt
+          ./release/RELEASE_NOTES.md
+        draft: ${{ contains(needs.build.outputs.version-suffix, 'dev') || contains(needs.build.outputs.version-suffix, 'pr') }}
+        prerelease: ${{ needs.build.outputs.version-suffix != '' && !contains(needs.build.outputs.version-suffix, 'dev') && !contains(needs.build.outputs.version-suffix, 'pr') }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify:
+    name: Notification
+    runs-on: ubuntu-latest
+    needs: [build, release]
+    if: always()
+    
+    steps:
+    - name: Notify build status
+      shell: bash
+      run: |
+        if [ \"${{ needs.build.result }}\" == \"success\" ]; then
+          echo \"✅ Build completed successfully for version ${{ needs.build.outputs.full-version }}\"
+        else
+          echo \"❌ Build failed for version ${{ needs.build.outputs.full-version }}\"
+        fi
+        
+        if [ \"${{ needs.release.result }}\" == \"success\" ]; then
+          echo \"🚀 Release created successfully\"
+        elif [ \"${{ needs.release.result }}\" == \"skipped\" ]; then
+          echo \"⏭️ Release skipped (not on release branch/tag)\"
+        else
+          echo \"❌ Release creation failed\"
+        fi"

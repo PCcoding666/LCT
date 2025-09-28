@@ -11,6 +11,14 @@
 		<UseWPF>true</UseWPF>
 		<RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
 		
+		<!-- Version Management -->
+		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+		<VersionPrefix Condition="'$(VersionPrefix)' == ''">1.0.0</VersionPrefix>
+		<VersionSuffix Condition="'$(VersionSuffix)' == ''">dev</VersionSuffix>
+		<AssemblyVersion Condition="'$(AssemblyVersion)' == ''">$(VersionPrefix).0</AssemblyVersion>
+		<FileVersion Condition="'$(FileVersion)' == ''">$(VersionPrefix).0</FileVersion>
+		<InformationalVersion Condition="'$(InformationalVersion)' == ''">$(VersionPrefix)-$(VersionSuffix)</InformationalVersion>
+		
 		<!-- 发布配置 -->
 		<PublishReadyToRun>true</PublishReadyToRun>
 		<PublishSingleFile>true</PublishSingleFile>
@@ -25,7 +33,7 @@
 		<Copyright>Copyright (c) 2024 SakiRinn and other contributors</Copyright>
 		<Authors>SakiRinn</Authors>
 		<ApplicationIcon>src\LiveCaptions-Translator.ico</ApplicationIcon>
-		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+
 		<Platforms>AnyCPU;ARM64</Platforms>
 		<StartupObject Condition="'$(Configuration)'=='Debug' And '$(TestMode)'=='true'">LiveCaptionsTranslator.Program</StartupObject>
 	</PropertyGroup>

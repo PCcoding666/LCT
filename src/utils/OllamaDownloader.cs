@@ -11,13 +11,16 @@ namespace LiveCaptionsTranslator.utils
     public class OllamaDownloader
     {
         // 指向 Intel Arc / iGPU 专用的 IPEX-LLM Ollama 便携版
-        // 使用更新的下载源或提供多个备用链接
-        private const string INTEL_OLLAMA_URL = "https://github.com/ipex-llm/ipex-llm/releases/download/v2.3.0-nightly/ollama-ipex-llm-2.3.0b20250924-win.zip";
+        // 使用用户提供的正确下载链接
+        private const string INTEL_OLLAMA_URL = "https://github.com/ipex-llm/ipex-llm/releases/download/v2.3.0-nightly/ollama-ipex-llm-2.3.0b20250725-win.zip";
         
-        // 备用下载链接
+        // 备用下载链接 - 基于用户提供的正确链接格式更新其他版本
         private static readonly string[] BACKUP_URLS = {
-            "https://github.com/ipex-llm/ipex-llm/releases/download/v2.3.0-nightly/ollama-ipex-llm-2.3.0b20250830-win.zip",
-            "https://github.com/ipex-llm/ipex-llm/releases/download/v2.3.0-nightly/ollama-ipex-llm-2.3.0b20250724-win.zip"
+            "https://github.com/ipex-llm/ipex-llm/releases/download/v2.3.0-nightly/ollama-ipex-llm-2.3.0b20250724-win.zip",
+            "https://github.com/ipex-llm/ipex-llm/releases/download/v2.3.0-nightly/ollama-ipex-llm-2.3.0b20250630-win.zip",
+            "https://github.com/ipex-llm/ipex-llm/releases/download/v2.3.0-nightly/ollama-ipex-llm-2.3.0b20250611-win.zip",
+            // 如果 IPEX-LLM 不可用，回退到官方 Ollama
+            "https://github.com/ollama/ollama/releases/download/v0.3.12/ollama-windows-amd64.zip"
         };
         private readonly HttpClient _httpClient;
         private readonly IProgress<string>? _progress;
