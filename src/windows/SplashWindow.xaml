@@ -86,7 +86,11 @@
             </ItemsControl>
 
             <Border BorderBrush="#404040" BorderThickness="1" Margin="0,15,0,0" CornerRadius="3">
-                <ScrollViewer Height="80" VerticalScrollBarVisibility="Auto">
+                <ScrollViewer x:Name="LogScrollViewer" Height="80" 
+                              VerticalScrollBarVisibility="Auto" 
+                              HorizontalScrollBarVisibility="Auto"
+                              CanContentScroll="True"
+                              ScrollChanged="LogScrollViewer_ScrollChanged">
                     <TextBox x:Name="LogTextBox" 
                              IsReadOnly="True" 
                              Background="Transparent" 
@@ -94,7 +98,10 @@
                              BorderThickness="0"
                              TextWrapping="Wrap"
                              FontFamily="Consolas"
-                             FontSize="10"/>
+                             FontSize="10"
+                             AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Hidden"
+                             HorizontalScrollBarVisibility="Hidden"/>
                 </ScrollViewer>
             </Border>
         </StackPanel>

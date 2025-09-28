@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿using System;
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿using System;
 using System.Threading;
 using System.Windows;
 using LiveCaptionsTranslator.utils;
@@ -28,7 +28,10 @@ namespace LiveCaptionsTranslator
 
             Log.Logger = new LoggerConfiguration()
                 .MinimumLevel.Debug()
-                .WriteTo.File(logPath, rollingInterval: RollingInterval.Day)
+                .WriteTo.File(logPath, 
+                    rollingInterval: RollingInterval.Day,
+                    flushToDiskInterval: TimeSpan.FromSeconds(1),
+                    buffered: false)
                 .CreateLogger();
 
             Log.Information("Application starting up");
@@ -120,9 +123,24 @@ namespace LiveCaptionsTranslator
                 });
 
                 Log.Information("Starting startup checks");
-                // Execute startup checks
+                // Execute startup checks in background to prevent UI blocking
                 var startupManager = new StartupManager(_splashWindow, progress);
-                if (await startupManager.PerformStartupChecks())
+                
+                // Run startup checks on background thread to keep UI responsive
+                var startupResult = await Task.Run(async () => 
+                {
+                    try
+                    {
+                        return await startupManager.PerformStartupChecks();
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Exception during background startup checks");
+                        return false;
+                    }
+                });
+                
+                if (startupResult)
                 {
                     Log.Information("Startup checks passed. Creating main window.");
                     

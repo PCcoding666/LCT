@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Windows;
@@ -27,41 +28,42 @@ namespace LiveCaptionsTranslator.utils
             {
                 _log.Information("Starting startup checks.");
                 
-                // 1. 确保停止所有现有的 Ollama 进程
-                ReportAndLog("停止现有的 Ollama 进程...");
-                OllamaGuardian.StopServer();
+                // 1. Stop all existing Ollama processes
+                ReportAndLogCritical("Stopping existing Ollama processes...");
+                await Task.Run(() => OllamaGuardian.StopServer());
 
-                // 2. 检查并创建必要的目录结构
-                ReportAndLog("检查应用目录结构...");
+                // 2. Check and create necessary directory structure
+                ReportAndLogCritical("Checking application directory structure...");
                 if (!await CheckDirectoryStructure()) return false;
 
-                // 3. 检查 Ollama 可执行文件
-                ReportAndLog("检查 Ollama 安装状态...");
+                // 3. Check Ollama executable
+                ReportAndLogCritical("Checking Ollama installation status...");
                 if (!await CheckOllamaInstallation()) return false;
                 
-                // 4. 等待一段时间确保所有文件句柄都被释放
+                // 4. Wait for file handles to be released
+                ReportAndLog("Waiting for file system synchronization...");
                 await Task.Delay(1000);
 
-                // 5. 启动 Ollama 后端服务
-                ReportAndLog("启动 Ollama 服务...");
+                // 5. Start Ollama backend service
+                ReportAndLogCritical("Starting Ollama service...");
                 if (!await StartOllamaServer()) return false;
 
-                // 6. 检查默认模型
-                ReportAndLog("检查默认模型状态...");
+                // 6. Check default model
+                ReportAndLogCritical("Checking default model status...");
                 if (!await CheckAndPullDefaultModel()) return false;
 
-                // 7. 验证模型可用性
-                ReportAndLog("验证模型可用性...");
+                // 7. Validate model availability
+                ReportAndLogCritical("Verifying model availability...");
                 if (!await ValidateModelAvailability()) return false;
 
-                ReportAndLog("初始化完成！");
+                ReportAndLogCritical("Initialization complete!");
                 _log.Information("Startup checks completed successfully.");
                 return true;
             }
             catch (Exception ex)
             {
                 _log.Error(ex, "A critical error occurred during startup checks.");
-                ReportAndLog($"启动失败: {ex.Message}");
+                ReportAndLog($"Startup failed: {ex.Message}");
                 return false;
             }
         }
@@ -69,21 +71,38 @@ namespace LiveCaptionsTranslator.utils
         private void ReportAndLog(string message)
         {
             _progress?.Report(message);
-            _log.Information(message);
+            _log.Information("[STARTUP] {Message}", message);
+            
+            // Force immediate flush for important startup messages
+            Log.ForContext<StartupManager>().Information("[STARTUP] {Message}", message);
+        }
+
+        private void ReportAndLogCritical(string message)
+        {
+            _progress?.Report(message);
+            _log.Information("[STARTUP-CRITICAL] {Message}", message);
+            
+            // Force immediate flush for critical messages
+            Log.ForContext<StartupManager>().Information("[STARTUP-CRITICAL] {Message}", message);
+            Log.ForContext<StartupManager>().Debug("Forcing log flush for critical message");
+            
+            // Additional console output for debugging
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
         }
 
         private async Task<bool> CheckDirectoryStructure()
         {
             try
             {
-                ApplicationSetup.EnsureDirectoryStructure();
+                await Task.Run(() => ApplicationSetup.EnsureDirectoryStructure());
+                ReportAndLog("Directory structure check completed.");
                 _log.Information("Directory structure check passed.");
                 return true;
             }
             catch (Exception ex)
             {
                 _log.Error(ex, "Failed to check or create directory structure.");
-                ReportAndLog($"目录结构检查失败: {ex.Message}");
+                ReportAndLog($"Directory structure check failed: {ex.Message}");
                 return false;
             }
         }
@@ -94,21 +113,24 @@ namespace LiveCaptionsTranslator.utils
             {
                 if (ApplicationSetup.IsFirstRun || !ApplicationSetup.IsCorrectVersionInstalled())
                 {
-                    ReportAndLog("首次运行或版本不匹配，需要解压Ollama...");
+                    ReportAndLog("First run or version mismatch detected, extracting Ollama...");
                     await ApplicationSetup.ExtractOllamaAsync(_progress);
+                    ReportAndLog("Ollama extraction completed.");
                     _log.Information("Ollama extraction completed.");
                 }
                 else
                 {
+                    ReportAndLog("Ollama installation status is normal.");
                     _log.Information("Ollama installation is up to date.");
                 }
 
                 var exePath = ApplicationSetup.GetOllamaExecutablePath();
                 if (!System.IO.File.Exists(exePath))
                 {
-                    ReportAndLog("Ollama可执行文件丢失，重新解压...");
+                    ReportAndLog("Ollama executable missing, re-extracting...");
                     _log.Warning("Ollama executable not found at {Path}, re-extracting.", exePath);
                     await ApplicationSetup.ExtractOllamaAsync(_progress);
+                    ReportAndLog("Ollama re-extraction completed.");
                 }
 
                 _log.Information("Ollama installation check passed.");
@@ -117,7 +139,7 @@ namespace LiveCaptionsTranslator.utils
             catch (Exception ex)
             {
                 _log.Error(ex, "Ollama installation check failed.");
-                ReportAndLog($"Ollama 安装检查失败: {ex.Message}");
+                ReportAndLog($"Ollama installation check failed: {ex.Message}");
                 return false;
             }
         }
@@ -128,15 +150,15 @@ namespace LiveCaptionsTranslator.utils
             {
                 if (!OllamaGuardian.StartServer(_progress))
                 {
-                    ReportAndLog("Ollama 服务启动失败。查看日志获取详情。");
+                    ReportAndLog("Ollama service startup failed. Check logs for details.");
                     _log.Error("OllamaGuardian.StartServer() returned false.");
                     return false;
                 }
                 _log.Information("Ollama server process started.");
 
-                // 等待服务完全启动
+                // Wait for service to fully start
                 int retries = 0;
-                while (retries < 30) // 最多等待30秒
+                while (retries < 30) // Wait up to 30 seconds
                 {
                     if (OllamaGuardian.IsServerHealthy())
                     {
@@ -146,17 +168,17 @@ namespace LiveCaptionsTranslator.utils
 
                     await Task.Delay(1000);
                     retries++;
-                    ReportAndLog($"等待 Ollama 服务启动... ({retries}/30)");
+                    ReportAndLog($"Waiting for Ollama service to start... ({retries}/30)");
                 }
 
-                ReportAndLog("Ollama 服务启动超时。");
+                ReportAndLog("Ollama service startup timeout.");
                 _log.Error("Ollama server failed to start within the timeout period.");
                 return false;
             }
             catch (Exception ex)
             {
                 _log.Error(ex, "An exception occurred while starting Ollama server.");
-                ReportAndLog($"Ollama 服务启动时发生异常: {ex.Message}");
+                ReportAndLog($"Exception occurred while starting Ollama service: {ex.Message}");
                 return false;
             }
         }
@@ -165,15 +187,16 @@ namespace LiveCaptionsTranslator.utils
         {
             try
             {
-                using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(30) }; // 增加超时
+                using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(30) }; // Increase timeout
 
-                // 检查模型是否已存在
-                 _log.Information("Checking for model tags at http://localhost:11434/api/tags");
+                // Check if model already exists
+                ReportAndLog("Checking installed model list...");
+                _log.Information("Checking for model tags at http://localhost:11434/api/tags");
                 var response = await client.GetAsync("http://localhost:11434/api/tags");
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync();
-                    ReportAndLog("无法连接Ollama服务获取模型列表。");
+                    ReportAndLog("Unable to connect to Ollama service to get model list.");
                     _log.Error("Failed to get model list. Status: {StatusCode}, Content: {Content}", response.StatusCode, errorContent);
                     return false;
                 }
@@ -181,26 +204,34 @@ namespace LiveCaptionsTranslator.utils
                 var modelListJson = await response.Content.ReadAsStringAsync();
                 _log.Debug("Received model list: {ModelList}", modelListJson);
                 
-                // 更可靠的JSON解析
+                // More reliable JSON parsing
                 if (!modelListJson.Contains($"\"name\": \"{DEFAULT_MODEL}\""))
                 {
-                    ReportAndLog($"开始下载/更新默认模型 {DEFAULT_MODEL}...");
+                    ReportAndLogCritical($"Default model {DEFAULT_MODEL} not found, starting download...");
+                    _log.Information("[MODEL-DOWNLOAD] Starting download for model: {ModelName}", DEFAULT_MODEL);
                     
-                    var pullRequestContent = new StringContent($"{{\"name\": \"{DEFAULT_MODEL}\", \"stream\": false}}", System.Text.Encoding.UTF8, "application/json");
+                    // Use streaming download to get real-time progress
+                    var pullRequestContent = new StringContent($"{{\"name\": \"{DEFAULT_MODEL}\", \"stream\": true}}", System.Text.Encoding.UTF8, "application/json");
                     
                     var pullResponse = await client.PostAsync("http://localhost:11434/api/pull", pullRequestContent);
-
-                    var responseBody = await pullResponse.Content.ReadAsStringAsync();
+                    
                     if (!pullResponse.IsSuccessStatusCode)
                     {
-                        ReportAndLog("模型下载失败。请检查网络或查看日志。");
-                        _log.Error("Model pull request failed. Status: {StatusCode}, Body: {Body}", pullResponse.StatusCode, responseBody);
+                        var errorContent = await pullResponse.Content.ReadAsStringAsync();
+                        ReportAndLog("Model download request failed. Please check network or see logs.");
+                        _log.Error("Model pull request failed. Status: {StatusCode}, Body: {Body}", pullResponse.StatusCode, errorContent);
                         return false;
                     }
-                    _log.Information("Model pull completed. Response: {Body}", responseBody);
+
+                    // Process streaming response to show download progress
+                    await ProcessModelDownloadStream(pullResponse);
+                    
+                    ReportAndLog($"Model {DEFAULT_MODEL} download completed!");
+                    _log.Information("Model pull completed successfully.");
                 }
                 else
                 {
+                    ReportAndLog($"Model {DEFAULT_MODEL} already exists, skipping download.");
                     _log.Information("Default model '{ModelName}' already exists.", DEFAULT_MODEL);
                 }
 
@@ -209,8 +240,140 @@ namespace LiveCaptionsTranslator.utils
             catch (Exception ex)
             {
                 _log.Error(ex, "An exception occurred while checking/pulling the default model.");
-                ReportAndLog($"模型检查失败: {ex.Message}");
+                ReportAndLog($"Model check failed: {ex.Message}");
                 return false;
+            }
+        }
+
+        private async Task ProcessModelDownloadStream(HttpResponseMessage response)
+        {
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var reader = new StreamReader(stream);
+            
+            string? line;
+            var lastProgressUpdate = DateTime.Now;
+            var progressUpdateInterval = TimeSpan.FromSeconds(2); // 每2秒更新一次进度
+            var downloadStartTime = DateTime.Now;
+            var maxDownloadTime = TimeSpan.FromMinutes(30); // Maximum download time 30 minutes
+            
+            while ((line = await reader.ReadLineAsync()) != null)
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                
+                // Check timeout
+                if (DateTime.Now - downloadStartTime > maxDownloadTime)
+                {
+                    ReportAndLog("Model download timeout, network connection may be unstable.");
+                    _log.Warning("Model download timeout after {Minutes} minutes", maxDownloadTime.TotalMinutes);
+                    throw new TimeoutException("Model download timeout");
+                }
+                
+                try
+                {
+                    // Parse JSON response
+                    var jsonResponse = System.Text.Json.JsonDocument.Parse(line);
+                    var root = jsonResponse.RootElement;
+                    
+                    // Check status
+                    if (root.TryGetProperty("status", out var statusElement))
+                    {
+                        var status = statusElement.GetString();
+                        
+                        switch (status)
+                        {
+                            case "pulling manifest":
+                                ReportAndLog("Pulling model manifest...");
+                                _log.Information("[MODEL-DOWNLOAD] Status: pulling manifest");
+                                break;
+                                
+                            case "downloading":
+                                // Process download progress
+                                if (DateTime.Now - lastProgressUpdate >= progressUpdateInterval)
+                                {
+                                    ProcessDownloadProgress(root);
+                                    lastProgressUpdate = DateTime.Now;
+                                }
+                                break;
+                                
+                            case "verifying sha256":
+                                ReportAndLog("Verifying model file integrity...");
+                                _log.Information("[MODEL-DOWNLOAD] Status: verifying sha256");
+                                break;
+                                
+                            case "writing manifest":
+                                ReportAndLog("Writing model manifest...");
+                                _log.Information("[MODEL-DOWNLOAD] Status: writing manifest");
+                                break;
+                                
+                            case "removing any unused layers":
+                                ReportAndLog("Cleaning up unused layers...");
+                                _log.Information("[MODEL-DOWNLOAD] Status: removing unused layers");
+                                break;
+                                
+                            case "success":
+                                ReportAndLog("Model download successful!");
+                                _log.Information("[MODEL-DOWNLOAD] Status: success - Download completed");
+                                return;
+                        }
+                    }
+                    
+                    // Check errors
+                    if (root.TryGetProperty("error", out var errorElement))
+                    {
+                        var error = errorElement.GetString();
+                        var errorMessage = $"Model download error: {error}";
+                        ReportAndLog(errorMessage);
+                        _log.Error("[MODEL-DOWNLOAD] Error: {Error}", error);
+                        throw new Exception($"Model download failed: {error}");
+                    }
+                }
+                catch (System.Text.Json.JsonException ex)
+                {
+                    // Ignore JSON parsing errors, continue processing next line
+                    _log.Debug("Failed to parse JSON line: {Line}, Error: {Error}", line, ex.Message);
+                }
+            }
+        }
+        
+        private void ProcessDownloadProgress(System.Text.Json.JsonElement root)
+        {
+            try
+            {
+                var completed = 0L;
+                var total = 0L;
+                
+                if (root.TryGetProperty("completed", out var completedElement))
+                {
+                    completed = completedElement.GetInt64();
+                }
+                
+                if (root.TryGetProperty("total", out var totalElement))
+                {
+                    total = totalElement.GetInt64();
+                }
+                
+                if (total > 0)
+                {
+                    var percentage = (int)((double)completed / total * 100);
+                    var completedMB = completed / 1024 / 1024;
+                    var totalMB = total / 1024 / 1024;
+                    
+                    var progressMessage = $"Model download progress: {percentage}% ({completedMB}MB / {totalMB}MB)";
+                    ReportAndLog(progressMessage);
+                    _log.Information("[MODEL-DOWNLOAD] Progress: {Percentage}% ({CompletedMB}MB / {TotalMB}MB)", 
+                        percentage, completedMB, totalMB);
+                }
+                else if (completed > 0)
+                {
+                    var completedMB = completed / 1024 / 1024;
+                    var progressMessage = $"Downloaded: {completedMB}MB";
+                    ReportAndLog(progressMessage);
+                    _log.Information("[MODEL-DOWNLOAD] Downloaded: {CompletedMB}MB", completedMB);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Debug("Failed to process download progress: {Error}", ex.Message);
             }
         }
 
