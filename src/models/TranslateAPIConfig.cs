@@ -106,6 +106,7 @@ namespace LiveCaptionsTranslator.models
         private string host = "127.0.0.1";
         private string modelName = "qwen2.5:3b";
         private int timeoutSeconds = 60; // Default 60 seconds timeout
+        private string customDownloadUrl = ""; // 自定义下载地址
 
         public new string ModelName
         {
@@ -144,6 +145,16 @@ namespace LiveCaptionsTranslator.models
             {
                 timeoutSeconds = Math.Max(10, Math.Min(300, value)); // Limit to 10-300 seconds
                 OnPropertyChanged("TimeoutSeconds");
+            }
+        }
+
+        public string CustomDownloadUrl
+        {
+            get => customDownloadUrl;
+            set
+            {
+                customDownloadUrl = value;
+                OnPropertyChanged("CustomDownloadUrl");
             }
         }
     }

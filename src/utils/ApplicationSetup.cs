@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Net.Http;
 using System.Reflection;
 using System.Threading.Tasks;
 
@@ -102,6 +103,17 @@ namespace LiveCaptionsTranslator.utils
                 File.WriteAllText(VersionRecordFile, EXPECTED_OLLAMA_VERSION);
 
                 progress?.Report("Ollama engine installation completed!");
+            }
+            catch (HttpRequestException httpEx) when (httpEx.Message.Contains("404"))
+            {
+                var userFriendlyMessage = "下载链接已失效或不存在。\n\n" +
+                    "请尝试以下解决方案：\n" +
+                    "1. 检查网络连接是否正常\n" +
+                    "2. 稍后重试启动应用\n" +
+                    "3. 联系开发者获取最新版本\n\n" +
+                    $"技术详情：{httpEx.Message}";
+                progress?.Report(userFriendlyMessage);
+                throw new ApplicationException(userFriendlyMessage, httpEx);
             }
             catch (Exception ex)
             {
