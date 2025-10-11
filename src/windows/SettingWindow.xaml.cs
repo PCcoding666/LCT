@@ -18,6 +18,12 @@ namespace LiveCaptionsTranslator
                 UpdateConfigIndicator();
                 InitializeModelSelector();
             };
+            
+            // 在窗口激活时也刷新模型选择器
+            Activated += (sender, args) =>
+            {
+                RefreshModelSelector();
+            };
         }
 
         private void UpdateConfigIndicator()
@@ -38,18 +44,55 @@ namespace LiveCaptionsTranslator
         {
             try
             {
+                // 设置数据源
                 ModelNameComboBox.ItemsSource = OllamaConfig.RecommendedModels;
                 
-                // 如果当前模型不在推荐列表中，保持用户输入的值
-                if (!OllamaConfig.RecommendedModels.ContainsKey(Translator.Setting?.OllamaConfig?.ModelName ?? ""))
+                // 获取当前配置的模型名
+                var currentModelName = Translator.Setting?.OllamaConfig?.ModelName ?? "qwen3:4b-instruct-2507-q4_K_M";
+                
+                // 确保ComboBox显示正确的值
+                if (OllamaConfig.RecommendedModels.ContainsKey(currentModelName))
                 {
-                    ModelNameComboBox.Text = Translator.Setting?.OllamaConfig?.ModelName ?? "qwen3:4b-instruct-2507-q4_K_M";
+                    // 如果在推荐列表中，设置SelectedValue
+                    ModelNameComboBox.SelectedValue = currentModelName;
                 }
+                else
+                {
+                    // 如果不在推荐列表中，设置为自定义文本（保持用户输入的值）
+                    ModelNameComboBox.Text = currentModelName;
+                }
+                
+                Console.WriteLine($"InitializeModelSelector: Current model = {currentModelName}, Selected = {ModelNameComboBox.SelectedValue}, Text = {ModelNameComboBox.Text}");
             }
             catch (System.Exception ex)
             {
+                Console.WriteLine($"InitializeModelSelector failed: {ex.Message}");
                 // 如果初始化失败，使用默认值
                 ModelNameComboBox.Text = "qwen3:4b-instruct-2507-q4_K_M";
+            }
+        }
+        
+        private void RefreshModelSelector()
+        {
+            try
+            {
+                var currentModelName = Translator.Setting?.OllamaConfig?.ModelName ?? "qwen3:4b-instruct-2507-q4_K_M";
+                
+                // 刷新显示
+                if (OllamaConfig.RecommendedModels.ContainsKey(currentModelName))
+                {
+                    ModelNameComboBox.SelectedValue = currentModelName;
+                }
+                else
+                {
+                    ModelNameComboBox.Text = currentModelName;
+                }
+                
+                Console.WriteLine($"RefreshModelSelector: Current model = {currentModelName}, SelectedValue = {ModelNameComboBox.SelectedValue}, Text = {ModelNameComboBox.Text}");
+            }
+            catch (System.Exception ex)
+            {
+                Console.WriteLine($"RefreshModelSelector failed: {ex.Message}");
             }
         }
 

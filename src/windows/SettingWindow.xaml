@@ -76,6 +76,7 @@
                         <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,10,15">
                             <TextBlock Text="Model Name" Margin="0,0,0,5" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                             <ComboBox x:Name="ModelNameComboBox" 
+                                     Text="{Binding OllamaConfig.ModelName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      SelectedValue="{Binding OllamaConfig.ModelName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      SelectedValuePath="Key"
                                      DisplayMemberPath="Value"
