@@ -13,6 +13,7 @@ namespace LiveCaptionsTranslator.windows
         private int _currentStepIndex = -1;
         private bool _autoScroll = true;
         private const int MAX_LOG_LINES = 100; // Limit log lines to prevent memory issues
+        private bool _isModelDownloading = false;
 
         public SplashWindow()
         {
@@ -45,6 +46,26 @@ namespace LiveCaptionsTranslator.windows
 
                 // Update main status text
                 StatusText.Text = status;
+
+                // Handle model download progress specifically
+                if (status.Contains("Model download progress:"))
+                {
+                    HandleModelDownloadProgress(status);
+                    return; // Don't update step status for progress updates
+                }
+                
+                // Show/hide model download progress bar
+                if (status.Contains("starting download") || status.Contains("Starting download"))
+                {
+                    _isModelDownloading = true;
+                    ModelDownloadProgressBar.Visibility = Visibility.Visible;
+                    ModelDownloadProgressBar.Value = 0;
+                }
+                else if (status.Contains("download completed") || status.Contains("download successful"))
+                {
+                    _isModelDownloading = false;
+                    ModelDownloadProgressBar.Visibility = Visibility.Collapsed;
+                }
 
                 // Determine step index based on status message
                 int stepIndex = DetermineStepIndex(status);
@@ -192,6 +213,41 @@ namespace LiveCaptionsTranslator.windows
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Error in scroll changed event: {ex.Message}");
+            }
+        }
+        
+        private void HandleModelDownloadProgress(string status)
+        {
+            try
+            {
+                // Extract percentage from status message
+                // Expected format: "Model download progress: 45% (123MB / 456MB)"
+                var percentageStart = status.IndexOf(": ") + 2;
+                var percentageEnd = status.IndexOf('%');
+                
+                if (percentageStart > 1 && percentageEnd > percentageStart)
+                {
+                    var percentageStr = status.Substring(percentageStart, percentageEnd - percentageStart);
+                    if (int.TryParse(percentageStr, out int percentage))
+                    {
+                        ModelDownloadProgressBar.Value = Math.Min(100, Math.Max(0, percentage));
+                        
+                        // Update progress text to show download progress
+                        var mbInfo = "";
+                        var mbStart = status.IndexOf('(');
+                        var mbEnd = status.IndexOf(')', mbStart);
+                        if (mbStart > -1 && mbEnd > mbStart)
+                        {
+                            mbInfo = " - " + status.Substring(mbStart + 1, mbEnd - mbStart - 1);
+                        }
+                        
+                        ProgressText.Text = $"{percentage}%{mbInfo}";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error parsing download progress: {ex.Message}");
             }
         }
     }

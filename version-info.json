@@ -1,0 +1,12 @@
+﻿{
+    "BuildNumber":  277,
+    "GitBranch":  "master",
+    "GitCommitHash":  "2bc787ca047cc61cc5ab8141f3e4dff185fc89d0",
+    "InformationalVersion":  "1.0.1+277",
+    "FileVersion":  "1.0.1.277",
+    "BuildTimestamp":  "2025-10-11T06:26:45Z",
+    "AssemblyVersion":  "1.0.1.0",
+    "BuildConfiguration":  "Release",
+    "VersionPrefix":  "1.0.1",
+    "VersionSuffix":  ""
+}

@@ -1,6 +1,8 @@
 using LiveCaptionsTranslator.Models;
-using System.Reflection;
+using LiveCaptionsTranslator.Models;
 using System.Diagnostics;
+using System.IO;
+using System.Reflection;
 
 namespace LiveCaptionsTranslator.Utils
 {
@@ -24,7 +26,7 @@ namespace LiveCaptionsTranslator.Utils
         /// <summary>
         /// Get short version string (Major.Minor.Patch)
         /// </summary>
-        public static string ShortVersion => $\"{Current.Major}.{Current.Minor}.{Current.Patch}\";
+        public static string ShortVersion => $"{Current.Major}.{Current.Minor}.{Current.Patch}";
         
         /// <summary>
         /// Get build information string
@@ -38,22 +40,22 @@ namespace LiveCaptionsTranslator.Utils
                 if (!string.IsNullOrEmpty(Current.CommitHash))
                 {
                     var shortHash = Current.CommitHash.Length > 7 ? Current.CommitHash[..7] : Current.CommitHash;
-                    info.Add($\"Commit: {shortHash}\");
+                    info.Add($"Commit: {shortHash}");
                 }
                 
                 if (!string.IsNullOrEmpty(Current.BranchName))
                 {
-                    info.Add($\"Branch: {Current.BranchName}\");
+                    info.Add($"Branch: {Current.BranchName}");
                 }
                 
-                info.Add($\"Built: {Current.BuildTimestamp:yyyy-MM-dd HH:mm}\");
+                info.Add($"Built: {Current.BuildTimestamp:yyyy-MM-dd HH:mm}");
                 
                 if (Current.IsDevelopmentBuild)
                 {
-                    info.Add(\"DEBUG\");
+                    info.Add("DEBUG");
                 }
                 
-                return string.Join(\" | \", info);
+                return string.Join(" | ", info);
             }
         }
         
@@ -66,7 +68,7 @@ namespace LiveCaptionsTranslator.Utils
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 var copyrightAttr = assembly.GetCustomAttribute<AssemblyCopyrightAttribute>();
-                return copyrightAttr?.Copyright ?? \"Copyright © 2024 SakiRinn and other contributors\";
+                return copyrightAttr?.Copyright ?? "Copyright © 2024 SakiRinn and other contributors";
             }
         }
         
@@ -79,7 +81,7 @@ namespace LiveCaptionsTranslator.Utils
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 var companyAttr = assembly.GetCustomAttribute<AssemblyCompanyAttribute>();
-                return companyAttr?.Company ?? \"SakiRinn and Contributors\";
+                return companyAttr?.Company ?? "SakiRinn and Contributors";
             }
         }
         
@@ -92,7 +94,7 @@ namespace LiveCaptionsTranslator.Utils
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 var productAttr = assembly.GetCustomAttribute<AssemblyProductAttribute>();
-                return productAttr?.Product ?? \"LiveCaptions Translator\";
+                return productAttr?.Product ?? "LiveCaptions Translator";
             }
         }
         
@@ -105,7 +107,7 @@ namespace LiveCaptionsTranslator.Utils
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 var titleAttr = assembly.GetCustomAttribute<AssemblyTitleAttribute>();
-                return titleAttr?.Title ?? \"LiveCaptions Translator\";
+                return titleAttr?.Title ?? "LiveCaptions Translator";
             }
         }
         
@@ -118,7 +120,7 @@ namespace LiveCaptionsTranslator.Utils
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 var descAttr = assembly.GetCustomAttribute<AssemblyDescriptionAttribute>();
-                return descAttr?.Description ?? \"A real-time speech translation tool based on Windows LiveCaptions\";
+                return descAttr?.Description ?? "A real-time speech translation tool based on Windows LiveCaptions";
             }
         }
         
@@ -143,7 +145,7 @@ namespace LiveCaptionsTranslator.Utils
             
             // Get version from assembly attributes
             var assemblyVersion = assembly.GetName().Version ?? new Version(1, 0, 0, 0);
-            var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? \"1.0.0\";
+            var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "1.0.0";
             
             // Parse informational version to get pre-release and build info
             var versionInfo = VersionInfo.Parse(informationalVersion);
@@ -154,14 +156,14 @@ namespace LiveCaptionsTranslator.Utils
             versionInfo.Patch = assemblyVersion.Build >= 0 ? assemblyVersion.Build : 0;
             
             // Get build metadata from assembly metadata attributes
-            var commitHash = GetAssemblyMetadata(assembly, \"GitCommitHash\");
-            var branchName = GetAssemblyMetadata(assembly, \"GitBranch\");
-            var buildTimestampStr = GetAssemblyMetadata(assembly, \"BuildTimestamp\");
-            var buildConfig = GetAssemblyMetadata(assembly, \"BuildConfiguration\");
+            var commitHash = GetAssemblyMetadata(assembly, "GitCommitHash");
+            var branchName = GetAssemblyMetadata(assembly, "GitBranch");
+            var buildTimestampStr = GetAssemblyMetadata(assembly, "BuildTimestamp");
+            var buildConfig = GetAssemblyMetadata(assembly, "BuildConfiguration");
             
-            versionInfo.CommitHash = commitHash != \"unknown\" ? commitHash : null;
-            versionInfo.BranchName = branchName != \"unknown\" ? branchName : null;
-            versionInfo.IsDevelopmentBuild = buildConfig?.ToLowerInvariant() == \"debug\" || IsDebugBuild();
+            versionInfo.CommitHash = commitHash != "unknown" ? commitHash : null;
+            versionInfo.BranchName = branchName != "unknown" ? branchName : null;
+            versionInfo.IsDevelopmentBuild = buildConfig?.ToLowerInvariant() == "debug" || IsDebugBuild();
             
             // Parse build timestamp
             if (DateTime.TryParse(buildTimestampStr, out var buildTime))
@@ -197,8 +199,8 @@ namespace LiveCaptionsTranslator.Utils
         /// <summary>
         /// Get assembly metadata value
         /// </summary>
-        /// <param name=\"assembly\">Assembly to check</param>
-        /// <param name=\"key\">Metadata key</param>
+        /// <param name="assembly">Assembly to check</param>
+        /// <param name="key">Metadata key</param>
         /// <returns>Metadata value or null</returns>
         private static string? GetAssemblyMetadata(Assembly assembly, string key)
         {
@@ -228,11 +230,11 @@ namespace LiveCaptionsTranslator.Utils
         {
             var lines = new List<string>
             {
-                $\"{ProductName} {DisplayVersion}\",
+                $"{ProductName} {DisplayVersion}",
                 Description,
-                \"\",
+                "",
                 BuildInfo,
-                \"\",
+                "",
                 Copyright
             };
             
@@ -244,10 +246,10 @@ namespace LiveCaptionsTranslator.Utils
         /// </summary>
         public static void LogVersionInfo()
         {
-            Console.WriteLine($\"Application Version: {DisplayVersion}\");
-            Console.WriteLine($\"Build Information: {BuildInfo}\");
-            Console.WriteLine($\"Development Build: {IsDevelopmentBuild}\");
-            Console.WriteLine($\"Pre-release: {IsPreRelease}\");
+            Console.WriteLine($"Application Version: {DisplayVersion}");
+            Console.WriteLine($"Build Information: {BuildInfo}");
+            Console.WriteLine($"Development Build: {IsDevelopmentBuild}");
+            Console.WriteLine($"Pre-release: {IsPreRelease}");
         }
     }
-}"
+}

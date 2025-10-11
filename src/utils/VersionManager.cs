@@ -5,6 +5,7 @@ using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace LiveCaptionsTranslator.Utils
 {
@@ -136,7 +137,7 @@ namespace LiveCaptionsTranslator.Utils
         }
 
         /// <summary>
-        /// Get latest release information
+        /// Get latest release information with enhanced retry logic
         /// </summary>
         /// <returns>Latest release info or null if not found</returns>
         public async Task<ReleaseInfo?> GetLatestReleaseAsync()
@@ -145,43 +146,72 @@ namespace LiveCaptionsTranslator.Utils
             
             foreach (var url in urls)
             {
-                try
+                for (int attempt = 0; attempt < _config.MaxRetryAttempts; attempt++)
                 {
-                    Log.Debug("Checking for updates from: {Url}", url);
-                    
-                    using var response = await _httpClient.GetAsync(url);
-                    if (response.IsSuccessStatusCode)
+                    try
                     {
-                        var json = await response.Content.ReadAsStringAsync();
+                        Log.Debug("Checking for updates from: {Url} (attempt {Attempt}/{MaxAttempts})", 
+                                 url, attempt + 1, _config.MaxRetryAttempts);
                         
-                        // Handle GitHub API response format
-                        if (url.Contains("github.com"))
+                        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(_config.DownloadTimeoutSeconds));
+                        using var response = await _httpClient.GetAsync(url, cts.Token);
+                        
+                        if (response.IsSuccessStatusCode)
                         {
-                            var githubReleases = JsonSerializer.Deserialize<List<GitHubRelease>>(json);
-                            var latestRelease = githubReleases?.FirstOrDefault(r => !r.Draft);
-                            if (latestRelease != null)
+                            var json = await response.Content.ReadAsStringAsync();
+                            
+                            // Handle GitHub API response format
+                            if (url.Contains("github.com"))
                             {
-                                return ConvertFromGitHubRelease(latestRelease);
+                                var githubReleases = JsonSerializer.Deserialize<List<GitHubRelease>>(json);
+                                var latestRelease = githubReleases?.FirstOrDefault(r => !r.Draft);
+                                if (latestRelease != null)
+                                {
+                                    Log.Information("Successfully retrieved release info from GitHub: {Version}", latestRelease.TagName);
+                                    return ConvertFromGitHubRelease(latestRelease);
+                                }
+                            }
+                            else
+                            {
+                                // Custom API format
+                                var release = JsonSerializer.Deserialize<ReleaseInfo>(json);
+                                if (release != null)
+                                {
+                                    Log.Information("Successfully retrieved release info from custom API: {Version}", release.Version);
+                                    return release;
+                                }
                             }
                         }
                         else
                         {
-                            // Custom API format
-                            var release = JsonSerializer.Deserialize<ReleaseInfo>(json);
-                            if (release != null)
-                            {
-                                return release;
-                            }
+                            Log.Warning("HTTP error from {Url}: {StatusCode}", url, response.StatusCode);
                         }
+                        
+                        // If we got here, this attempt failed but didn't throw
+                        break; // Don't retry HTTP errors, try next URL
                     }
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning(ex, "Failed to check updates from {Url}", url);
-                    continue;
+                    catch (OperationCanceledException)
+                    {
+                        Log.Warning("Timeout checking updates from {Url} (attempt {Attempt}/{MaxAttempts})", 
+                                   url, attempt + 1, _config.MaxRetryAttempts);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "Failed to check updates from {Url} (attempt {Attempt}/{MaxAttempts})", 
+                                   url, attempt + 1, _config.MaxRetryAttempts);
+                    }
+                    
+                    // Wait before retry with exponential backoff
+                    if (attempt < _config.MaxRetryAttempts - 1)
+                    {
+                        var delay = TimeSpan.FromSeconds(_config.RetryDelaySeconds * Math.Pow(2, attempt));
+                        Log.Debug("Waiting {Delay}ms before retry", delay.TotalMilliseconds);
+                        await Task.Delay(delay);
+                    }
                 }
             }
 
+            Log.Warning("Failed to retrieve release information from all configured sources");
             return null;
         }
 
@@ -259,7 +289,7 @@ namespace LiveCaptionsTranslator.Utils
         }
 
         /// <summary>
-        /// Download asset with progress reporting
+        /// Download asset with progress reporting and multi-source retry
         /// </summary>
         /// <param name="asset">Asset to download</param>
         /// <returns>Downloaded file path or null on failure</returns>
@@ -270,51 +300,76 @@ namespace LiveCaptionsTranslator.Utils
             
             var urls = asset.GetAllDownloadUrls();
             
-            foreach (var url in urls)
+            // Add custom download sources if available
+            var customUrls = _config.GetDownloadUrls(asset.Name);
+            var allUrls = customUrls.Concat(urls).Distinct().ToList();
+            
+            foreach (var url in allUrls)
             {
-                try
+                for (int attempt = 0; attempt < _config.MaxRetryAttempts; attempt++)
                 {
-                    Log.Information("Downloading from: {Url}", url);
-                    
-                    using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-                    response.EnsureSuccessStatusCode();
-                    
-                    var totalBytes = response.Content.Headers.ContentLength ?? 0;
-                    var downloadedBytes = 0L;
-                    
-                    using var stream = await response.Content.ReadAsStreamAsync();
-                    using var fileStream = File.Create(downloadPath);
-                    
-                    var buffer = new byte[8192];
-                    int bytesRead;
-                    
-                    while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                    try
                     {
-                        await fileStream.WriteAsync(buffer, 0, bytesRead);
-                        downloadedBytes += bytesRead;
+                        Log.Information("Downloading from: {Url} (attempt {Attempt}/{MaxAttempts})", 
+                                       url, attempt + 1, _config.MaxRetryAttempts);
                         
-                        DownloadProgress?.Invoke(this, new DownloadProgressEventArgs
+                        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(_config.DownloadTimeoutSeconds));
+                        using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+                        response.EnsureSuccessStatusCode();
+                        
+                        var totalBytes = response.Content.Headers.ContentLength ?? 0;
+                        var downloadedBytes = 0L;
+                        
+                        using var stream = await response.Content.ReadAsStreamAsync();
+                        using var fileStream = File.Create(downloadPath);
+                        
+                        var buffer = new byte[8192];
+                        int bytesRead;
+                        
+                        while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length, cts.Token)) > 0)
                         {
-                            DownloadedBytes = downloadedBytes,
-                            TotalBytes = totalBytes,
-                            ProgressPercentage = totalBytes > 0 ? (double)downloadedBytes / totalBytes * 100 : 0
-                        });
+                            await fileStream.WriteAsync(buffer, 0, bytesRead, cts.Token);
+                            downloadedBytes += bytesRead;
+                            
+                            DownloadProgress?.Invoke(this, new DownloadProgressEventArgs
+                            {
+                                DownloadedBytes = downloadedBytes,
+                                TotalBytes = totalBytes,
+                                ProgressPercentage = totalBytes > 0 ? (double)downloadedBytes / totalBytes * 100 : 0
+                            });
+                        }
+                        
+                        Log.Information("Download completed successfully: {Path} ({Size} bytes)", downloadPath, downloadedBytes);
+                        return downloadPath;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        Log.Warning("Download timeout from {Url} (attempt {Attempt}/{MaxAttempts})", 
+                                   url, attempt + 1, _config.MaxRetryAttempts);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "Failed to download from {Url} (attempt {Attempt}/{MaxAttempts})", 
+                                   url, attempt + 1, _config.MaxRetryAttempts);
                     }
                     
-                    Log.Information("Download completed: {Path}", downloadPath);
-                    return downloadPath;
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning(ex, "Failed to download from {Url}", url);
+                    // Clean up partial download
                     if (File.Exists(downloadPath))
                     {
-                        File.Delete(downloadPath);
+                        try { File.Delete(downloadPath); } catch { }
                     }
-                    continue;
+                    
+                    // Wait before retry with exponential backoff
+                    if (attempt < _config.MaxRetryAttempts - 1)
+                    {
+                        var delay = TimeSpan.FromSeconds(_config.RetryDelaySeconds * Math.Pow(2, attempt));
+                        Log.Debug("Waiting {Delay}ms before retry", delay.TotalMilliseconds);
+                        await Task.Delay(delay);
+                    }
                 }
             }
             
+            Log.Error("Failed to download asset {AssetName} from all available sources", asset.Name);
             return null;
         }
 

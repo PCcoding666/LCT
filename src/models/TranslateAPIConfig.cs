@@ -68,9 +68,11 @@ namespace LiveCaptionsTranslator.models
         [JsonIgnore]
         public static readonly Dictionary<string, string> RecommendedModels = new()
         {
+            { "qwen3:4b-instruct-2507-q4_K_M", "Qwen3 4B Instruct (Default, High Performance)" },
+            { "qwen3:4b-instruct", "Qwen3 4B Instruct (Standard)" },
             { "qwen2.5:0.5b", "Qwen2.5 0.5B (Lightest, Fastest)" },
             { "qwen2.5:1.5b", "Qwen2.5 1.5B (Light, Fast)" },
-            { "qwen2.5:3b", "Qwen2.5 3B (Default, Balanced)" },
+            { "qwen2.5:3b", "Qwen2.5 3B (Legacy, Balanced)" },
             { "qwen2.5:7b", "Qwen2.5 7B (High Quality, Slower)" },
             { "llama3.2:1b", "Llama 3.2 1B (Alternative Light Option)" },
             { "llama3.2:3b", "Llama 3.2 3B (Alternative Balanced Option)" }
@@ -104,7 +106,7 @@ namespace LiveCaptionsTranslator.models
 
         private int port = 11434;
         private string host = "127.0.0.1";
-        private string modelName = "qwen2.5:3b";
+        private string modelName = "qwen3:4b-instruct-2507-q4_K_M";
         private int timeoutSeconds = 60; // Default 60 seconds timeout
         private string customDownloadUrl = ""; // 自定义下载地址
 

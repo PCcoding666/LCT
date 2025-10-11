@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.IO;
+using System.Text.Json;
 
 namespace LiveCaptionsTranslator.Models
 {
@@ -22,7 +24,7 @@ namespace LiveCaptionsTranslator.Models
         /// </summary>
         public List<string> UpdateServerUrls { get; set; } = new()
         {
-            "https://api.github.com/repos/SakiRinn/LiveCaptions-Translator/releases",
+            "https://api.github.com/repos/PCcoding666/LiveCaptions-Translator/releases",
             "https://update.livecaptions-translator.com/api/releases"
         };
 
@@ -32,7 +34,9 @@ namespace LiveCaptionsTranslator.Models
         public List<string> BackupServerUrls { get; set; } = new()
         {
             "https://mirror1.livecaptions-translator.com/api/releases",
-            "https://mirror2.livecaptions-translator.com/api/releases"
+            "https://mirror2.livecaptions-translator.com/api/releases",
+            "https://cdn.jsdelivr.net/gh/PCcoding666/LiveCaptions-Translator@latest/releases.json",
+            "https://gitee.com/PCcoding666/LiveCaptions-Translator/raw/master/releases.json"
         };
 
         /// <summary>
@@ -47,18 +51,29 @@ namespace LiveCaptionsTranslator.Models
 
         /// <summary>
         /// Custom download sources for enterprise deployments
+        /// Key: Source name, Value: URL pattern with {version} placeholder
         /// </summary>
-        public Dictionary<string, string> CustomDownloadSources { get; set; } = new();
+        public Dictionary<string, string> CustomDownloadSources { get; set; } = new()
+        {
+            // Example entries for common scenarios
+            // "Corporate Mirror": "https://internal-mirror.company.com/releases/{version}/",
+            // "CDN Backup": "https://backup-cdn.example.com/livecaptions/{version}/"
+        };
 
         /// <summary>
         /// Download timeout in seconds
         /// </summary>
-        public int DownloadTimeoutSeconds { get; set; } = 30;
+        public int DownloadTimeoutSeconds { get; set; } = 60;
 
         /// <summary>
         /// Maximum retry attempts for downloads
         /// </summary>
         public int MaxRetryAttempts { get; set; } = 3;
+
+        /// <summary>
+        /// Retry delay in seconds (exponential backoff will be applied)
+        /// </summary>
+        public int RetryDelaySeconds { get; set; } = 2;
 
         /// <summary>
         /// Enable incremental updates
@@ -145,6 +160,7 @@ namespace LiveCaptionsTranslator.Models
 
         /// <summary>
         /// Get effective update server URLs (including custom sources)
+        /// URLs are ordered by priority: custom sources, primary servers, backup servers
         /// </summary>
         /// <returns>Ordered list of update URLs</returns>
         public List<string> GetEffectiveUpdateUrls()
@@ -152,14 +168,39 @@ namespace LiveCaptionsTranslator.Models
             var urls = new List<string>();
 
             // Add custom sources first (highest priority)
-            urls.AddRange(CustomDownloadSources.Values);
+            urls.AddRange(CustomDownloadSources.Values.Where(url => !string.IsNullOrWhiteSpace(url)));
 
             // Add primary servers
-            urls.AddRange(UpdateServerUrls);
+            urls.AddRange(UpdateServerUrls.Where(url => !string.IsNullOrWhiteSpace(url)));
 
             // Add backup servers
-            urls.AddRange(BackupServerUrls);
+            urls.AddRange(BackupServerUrls.Where(url => !string.IsNullOrWhiteSpace(url)));
 
+            // Remove duplicates while preserving order
+            return urls.Distinct().ToList();
+        }
+
+        /// <summary>
+        /// Get prioritized download URLs for a specific version
+        /// </summary>
+        /// <param name="version">Target version</param>
+        /// <returns>Ordered list of download URLs</returns>
+        public List<string> GetDownloadUrls(string version)
+        {
+            var urls = new List<string>();
+            
+            // Process custom download sources with version substitution
+            foreach (var source in CustomDownloadSources.Values)
+            {
+                if (!string.IsNullOrWhiteSpace(source))
+                {
+                    urls.Add(source.Replace("{version}", version));
+                }
+            }
+            
+            // Add other URLs as fallbacks
+            urls.AddRange(GetEffectiveUpdateUrls());
+            
             return urls.Distinct().ToList();
         }
 

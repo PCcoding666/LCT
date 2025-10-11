@@ -1,5 +1,7 @@
 using LiveCaptionsTranslator.Models;
+using LiveCaptionsTranslator.Models;
 using Serilog;
+using System.IO;
 using System.Text.Json;
 
 namespace LiveCaptionsTranslator.Utils
@@ -18,36 +20,36 @@ namespace LiveCaptionsTranslator.Utils
         private VersionCompatibilityChecker()
         {
             var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            var appDataDirectory = Path.Combine(appDataPath, \"LiveCaptions-Translator\");
-            _compatibilityConfigPath = Path.Combine(appDataDirectory, \"compatibility-rules.json\");
+            var appDataDirectory = Path.Combine(appDataPath, "LiveCaptions-Translator");
+            _compatibilityConfigPath = Path.Combine(appDataDirectory, "compatibility-rules.json");
             
             _compatibilityRules = new List<CompatibilityRule>
             {
                 // Define built-in compatibility rules
                 new CompatibilityRule
                 {
-                    FromVersion = \"1.0.0\",
-                    ToVersion = \"1.1.0\",
+                    FromVersion = "1.0.0",
+                    ToVersion = "1.1.0",
                     CompatibilityLevel = CompatibilityLevel.FullyCompatible,
                     RequiredActions = new List<string>()
                 },
                 new CompatibilityRule
                 {
-                    FromVersion = \"1.1.0\",
-                    ToVersion = \"1.2.0\",
+                    FromVersion = "1.1.0",
+                    ToVersion = "1.2.0",
                     CompatibilityLevel = CompatibilityLevel.FullyCompatible,
-                    RequiredActions = new List<string> { \"Settings migration required\" }
+                    RequiredActions = new List<string> { "Settings migration required" }
                 },
                 new CompatibilityRule
                 {
-                    FromVersion = \"1.0.0\",
-                    ToVersion = \"2.0.0\",
+                    FromVersion = "1.0.0",
+                    ToVersion = "2.0.0",
                     CompatibilityLevel = CompatibilityLevel.MajorBreaking,
                     RequiredActions = new List<string> 
-                    { 
-                        \"Full data migration required\",
-                        \"Settings will be reset to defaults\",
-                        \"Translation history format updated\"
+                    {
+                        "Full data migration required",
+                        "Settings will be reset to defaults",
+                        "Translation history format updated"
                     }
                 }
             };
@@ -56,14 +58,14 @@ namespace LiveCaptionsTranslator.Utils
         /// <summary>
         /// Check compatibility between two versions
         /// </summary>
-        /// <param name=\"fromVersion\">Source version</param>
-        /// <param name=\"toVersion\">Target version</param>
+        /// <param name="fromVersion">Source version</param>
+        /// <param name="toVersion">Target version</param>
         /// <returns>Compatibility result</returns>
         public CompatibilityResult CheckCompatibility(VersionInfo fromVersion, VersionInfo toVersion)
         {
             try
             {
-                Log.Information(\"Checking compatibility from {From} to {To}\", fromVersion.FullVersion, toVersion.FullVersion);
+                Log.Information("Checking compatibility from {From} to {To}", fromVersion.FullVersion, toVersion.FullVersion);
                 
                 // Same version - fully compatible
                 if (fromVersion.CompareTo(toVersion) == 0)
@@ -84,10 +86,10 @@ namespace LiveCaptionsTranslator.Utils
                     return new CompatibilityResult
                     {
                         CompatibilityLevel = CompatibilityLevel.Incompatible,
-                        RequiredActions = new List<string> { \"Downgrade not supported\" },
+                        RequiredActions = new List<string> { "Downgrade not supported" },
                         CanAutoMigrate = false,
-                        Warnings = new List<string> { \"Data loss may occur when downgrading\" },
-                        BlockingIssues = new List<string> { \"Application version is newer than target version\" }
+                        Warnings = new List<string> { "Data loss may occur when downgrading" },
+                        BlockingIssues = new List<string> { "Application version is newer than target version" }
                     };
                 }
                 
@@ -104,15 +106,15 @@ namespace LiveCaptionsTranslator.Utils
             }
             catch (Exception ex)
             {
-                Log.Error(ex, \"Failed to check compatibility\");
+                Log.Error(ex, "Failed to check compatibility");
                 
                 return new CompatibilityResult
                 {
                     CompatibilityLevel = CompatibilityLevel.Unknown,
-                    RequiredActions = new List<string> { \"Compatibility check failed\" },
+                    RequiredActions = new List<string> { "Compatibility check failed" },
                     CanAutoMigrate = false,
-                    Warnings = new List<string> { $\"Error during compatibility check: {ex.Message}\" },
-                    BlockingIssues = new List<string> { \"Unable to determine compatibility\" }
+                    Warnings = new List<string> { $"Error during compatibility check: {ex.Message}" },
+                    BlockingIssues = new List<string> { "Unable to determine compatibility" }
                 };
             }
         }
@@ -120,12 +122,12 @@ namespace LiveCaptionsTranslator.Utils
         /// <summary>
         /// Check if a specific version is supported
         /// </summary>
-        /// <param name=\"version\">Version to check</param>
+        /// <param name="version">Version to check</param>
         /// <returns>True if supported</returns>
         public bool IsVersionSupported(VersionInfo version)
         {
             // Define minimum supported version
-            var minimumSupportedVersion = VersionInfo.Parse(\"1.0.0\");
+            var minimumSupportedVersion = VersionInfo.Parse("1.0.0");
             
             return version.CompareTo(minimumSupportedVersion) >= 0;
         }
@@ -138,7 +140,7 @@ namespace LiveCaptionsTranslator.Utils
         {
             return new VersionRange
             {
-                MinimumVersion = \"1.0.0\",
+                MinimumVersion = "1.0.0",
                 MaximumVersion = null, // No maximum limit
                 RecommendedVersion = AppVersionInfo.Current.FullVersion
             };
@@ -147,7 +149,7 @@ namespace LiveCaptionsTranslator.Utils
         /// <summary>
         /// Validate system requirements for a specific version
         /// </summary>
-        /// <param name=\"version\">Version to validate</param>
+        /// <param name="version">Version to validate</param>
         /// <returns>System requirements validation result</returns>
         public SystemRequirementsResult ValidateSystemRequirements(VersionInfo version)
         {
@@ -165,7 +167,7 @@ namespace LiveCaptionsTranslator.Utils
                 if (osVersion.Major < 10)
                 {
                     result.IsSupported = false;
-                    result.Issues.Add(\"Windows 10 or later is required\");
+                    result.Issues.Add("Windows 10 or later is required");
                 }
                 
                 // Check .NET runtime
@@ -173,18 +175,18 @@ namespace LiveCaptionsTranslator.Utils
                 if (dotnetVersion.Major < 8)
                 {
                     result.IsSupported = false;
-                    result.Issues.Add(\".NET 8.0 runtime or later is required\");
+                    result.Issues.Add(".NET 8.0 runtime or later is required");
                 }
                 
                 // Check architecture
                 if (!Environment.Is64BitOperatingSystem)
                 {
-                    result.Warnings.Add(\"64-bit operating system is recommended for optimal performance\");
+                    result.Warnings.Add("64-bit operating system is recommended for optimal performance");
                 }
                 
                 // Check available disk space (approximate)
                 var drives = DriveInfo.GetDrives().Where(d => d.IsReady && d.DriveType == DriveType.Fixed);
-                var systemDrive = drives.FirstOrDefault(d => d.Name.StartsWith(\"C:\"));
+                var systemDrive = drives.FirstOrDefault(d => d.Name.StartsWith(@"C:\"));
                 
                 if (systemDrive != null)
                 {
@@ -192,21 +194,21 @@ namespace LiveCaptionsTranslator.Utils
                     if (availableSpaceGB < 0.5) // 500 MB minimum
                     {
                         result.IsSupported = false;
-                        result.Issues.Add(\"Insufficient disk space (minimum 500 MB required)\");
+                        result.Issues.Add("Insufficient disk space (minimum 500 MB required)");
                     }
                     else if (availableSpaceGB < 1.0) // 1 GB recommended
                     {
-                        result.Warnings.Add(\"Low disk space detected (1 GB recommended)\");
+                        result.Warnings.Add("Low disk space detected (1 GB recommended)");
                     }
                 }
                 
-                Log.Information(\"System requirements validation completed. Supported: {Supported}, Issues: {Issues}\", 
+                Log.Information("System requirements validation completed. Supported: {Supported}, Issues: {Issues}", 
                     result.IsSupported, result.Issues.Count);
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, \"Failed to validate system requirements\");
-                result.Warnings.Add(\"Unable to fully validate system requirements\");
+                Log.Warning(ex, "Failed to validate system requirements");
+                result.Warnings.Add("Unable to fully validate system requirements");
             }
             
             return result;
@@ -231,13 +233,13 @@ namespace LiveCaptionsTranslator.Utils
                     {
                         _compatibilityRules.Clear();
                         _compatibilityRules.AddRange(rules);
-                        Log.Information(\"Loaded {Count} compatibility rules from configuration\", rules.Count);
+                        Log.Information("Loaded {Count} compatibility rules from configuration", rules.Count);
                     }
                 }
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, \"Failed to load compatibility rules from configuration\");
+                Log.Warning(ex, "Failed to load compatibility rules from configuration");
             }
         }
 
@@ -260,11 +262,11 @@ namespace LiveCaptionsTranslator.Utils
                 });
                 
                 await File.WriteAllTextAsync(_compatibilityConfigPath, json);
-                Log.Information(\"Saved {Count} compatibility rules to configuration\", _compatibilityRules.Count);
+                Log.Information("Saved {Count} compatibility rules to configuration", _compatibilityRules.Count);
             }
             catch (Exception ex)
             {
-                Log.Error(ex, \"Failed to save compatibility rules\");
+                Log.Error(ex, "Failed to save compatibility rules");
             }
         }
 
@@ -301,14 +303,14 @@ namespace LiveCaptionsTranslator.Utils
             switch (rule.CompatibilityLevel)
             {
                 case CompatibilityLevel.MinorBreaking:
-                    result.Warnings.Add(\"Some settings may need to be reconfigured\");
+                    result.Warnings.Add("Some settings may need to be reconfigured");
                     break;
                 case CompatibilityLevel.MajorBreaking:
-                    result.Warnings.Add(\"Significant changes detected - review settings after update\");
-                    result.BlockingIssues.Add(\"Manual intervention may be required\");
+                    result.Warnings.Add("Significant changes detected - review settings after update");
+                    result.BlockingIssues.Add("Manual intervention may be required");
                     break;
                 case CompatibilityLevel.Incompatible:
-                    result.BlockingIssues.Add(\"Versions are incompatible\");
+                    result.BlockingIssues.Add("Versions are incompatible");
                     break;
             }
             
@@ -331,22 +333,22 @@ namespace LiveCaptionsTranslator.Utils
             if (toVersion.Major > fromVersion.Major)
             {
                 result.CompatibilityLevel = CompatibilityLevel.MajorBreaking;
-                result.RequiredActions.Add(\"Major version upgrade detected\");
-                result.Warnings.Add(\"Breaking changes expected\");
+                result.RequiredActions.Add("Major version upgrade detected");
+                result.Warnings.Add("Breaking changes expected");
                 result.CanAutoMigrate = false;
             }
             // Minor version change
             else if (toVersion.Minor > fromVersion.Minor)
             {
                 result.CompatibilityLevel = CompatibilityLevel.FullyCompatible;
-                result.RequiredActions.Add(\"Minor version upgrade - new features available\");
+                result.RequiredActions.Add("Minor version upgrade - new features available");
                 result.CanAutoMigrate = true;
             }
             // Patch version change
             else if (toVersion.Patch > fromVersion.Patch)
             {
                 result.CompatibilityLevel = CompatibilityLevel.FullyCompatible;
-                result.RequiredActions.Add(\"Patch version upgrade - bug fixes included\");
+                result.RequiredActions.Add("Patch version upgrade - bug fixes included");
                 result.CanAutoMigrate = true;
             }
             else
@@ -413,4 +415,4 @@ namespace LiveCaptionsTranslator.Utils
         public List<string> Issues { get; set; } = new();
         public List<string> Warnings { get; set; } = new();
     }
-}"
+}

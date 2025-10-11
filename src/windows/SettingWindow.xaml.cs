@@ -43,13 +43,13 @@ namespace LiveCaptionsTranslator
                 // 如果当前模型不在推荐列表中，保持用户输入的值
                 if (!OllamaConfig.RecommendedModels.ContainsKey(Translator.Setting?.OllamaConfig?.ModelName ?? ""))
                 {
-                    ModelNameComboBox.Text = Translator.Setting?.OllamaConfig?.ModelName ?? "qwen2.5:3b";
+                    ModelNameComboBox.Text = Translator.Setting?.OllamaConfig?.ModelName ?? "qwen3:4b-instruct-2507-q4_K_M";
                 }
             }
             catch (System.Exception ex)
             {
                 // 如果初始化失败，使用默认值
-                ModelNameComboBox.Text = "qwen2.5:3b";
+                ModelNameComboBox.Text = "qwen3:4b-instruct-2507-q4_K_M";
             }
         }
 

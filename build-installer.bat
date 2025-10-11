@@ -109,7 +109,7 @@ if not exist %PUBLISH_DIR% (
     exit /b 1
 )
 
-if not exist "%PUBLISH_DIR%\LiveCaptions-Translator.exe" (
+if not exist "%PUBLISH_DIR%\LiveCaptionsTranslator.exe" (
     echo.
     echo ERROR: Main executable not found in publish directory.
     pause

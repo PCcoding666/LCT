@@ -46,7 +46,7 @@ namespace LiveCaptionsTranslator.Utils
 
             try
             {
-                Log.Information(\"Initializing auto-update service\");
+                Log.Information("Initializing auto-update service");
                 
                 await _versionManager.InitializeAsync();
                 
@@ -54,7 +54,7 @@ namespace LiveCaptionsTranslator.Utils
                 if (config.AutoUpdateEnabled && !config.OfflineMode)
                 {
                     _updateTimer.Start();
-                    Log.Information(\"Auto-update service started. Check interval: {Interval} hours\", config.UpdateCheckInterval);
+                    Log.Information("Auto-update service started. Check interval: {Interval} hours", config.UpdateCheckInterval);
                     
                     // Perform initial update check if needed
                     if (config.ShouldCheckForUpdates())
@@ -68,7 +68,7 @@ namespace LiveCaptionsTranslator.Utils
                 }
                 else
                 {
-                    Log.Information(\"Auto-update service disabled (AutoUpdateEnabled: {Enabled}, OfflineMode: {Offline})\", 
+                    Log.Information("Auto-update service disabled (AutoUpdateEnabled: {Enabled}, OfflineMode: {Offline})", 
                         config.AutoUpdateEnabled, config.OfflineMode);
                 }
                 
@@ -76,19 +76,19 @@ namespace LiveCaptionsTranslator.Utils
             }
             catch (Exception ex)
             {
-                Log.Error(ex, \"Failed to initialize auto-update service\");
+                Log.Error(ex, "Failed to initialize auto-update service");
             }
         }
 
         /// <summary>
         /// Manually check for updates
         /// </summary>
-        /// <param name=\"silent\">Whether to show UI notifications</param>
+        /// <param name="silent">Whether to show UI notifications</param>
         public async Task CheckForUpdatesAsync(bool silent = false)
         {
             if (_isCheckingForUpdates)
             {
-                Log.Debug(\"Update check already in progress, skipping\");
+                Log.Debug("Update check already in progress, skipping");
                 return;
             }
 
@@ -96,22 +96,22 @@ namespace LiveCaptionsTranslator.Utils
             
             try
             {
-                Log.Information(\"Checking for updates (silent: {Silent})\", silent);
+                Log.Information("Checking for updates (silent: {Silent})", silent);
                 _lastUpdateCheck = DateTime.Now;
                 
                 await _versionManager.CheckForUpdatesAsync();
             }
             catch (Exception ex)
             {
-                Log.Error(ex, \"Failed to check for updates\");
+                Log.Error(ex, "Failed to check for updates");
                 
                 if (!silent)
                 {
                     Application.Current.Dispatcher.Invoke(() =>
                     {
                         MessageBox.Show(
-                            $\"Failed to check for updates: {ex.Message}\",
-                            \"Update Check Failed\",
+                            $"Failed to check for updates: {ex.Message}",
+                            "Update Check Failed",
                             MessageBoxButton.OK,
                             MessageBoxImage.Warning);
                     });
@@ -126,8 +126,8 @@ namespace LiveCaptionsTranslator.Utils
         /// <summary>
         /// Show update dialog for a specific release
         /// </summary>
-        /// <param name=\"releaseInfo\">Release information</param>
-        /// <param name=\"owner\">Owner window</param>
+        /// <param name="releaseInfo">Release information</param>
+        /// <param name="owner">Owner window</param>
         public void ShowUpdateDialog(ReleaseInfo releaseInfo, Window? owner = null)
         {
             try
@@ -138,25 +138,25 @@ namespace LiveCaptionsTranslator.Utils
                     
                     if (result == true)
                     {
-                        Log.Information(\"User accepted update to version {Version}\", releaseInfo.Version);
+                        Log.Information("User accepted update to version {Version}", releaseInfo.Version);
                         // Installation process will handle application restart
                     }
                     else
                     {
-                        Log.Information(\"User declined or skipped update to version {Version}\", releaseInfo.Version);
+                        Log.Information("User declined or skipped update to version {Version}", releaseInfo.Version);
                     }
                 });
             }
             catch (Exception ex)
             {
-                Log.Error(ex, \"Failed to show update dialog\");
+                Log.Error(ex, "Failed to show update dialog");
             }
         }
 
         /// <summary>
         /// Enable or disable automatic updates
         /// </summary>
-        /// <param name=\"enabled\">Whether to enable automatic updates</param>
+        /// <param name="enabled">Whether to enable automatic updates</param>
         public async Task SetAutoUpdateEnabledAsync(bool enabled)
         {
             try
@@ -168,24 +168,24 @@ namespace LiveCaptionsTranslator.Utils
                 if (enabled && !config.OfflineMode)
                 {
                     _updateTimer.Start();
-                    Log.Information(\"Auto-update service enabled\");
+                    Log.Information("Auto-update service enabled");
                 }
                 else
                 {
                     _updateTimer.Stop();
-                    Log.Information(\"Auto-update service disabled\");
+                    Log.Information("Auto-update service disabled");
                 }
             }
             catch (Exception ex)
             {
-                Log.Error(ex, \"Failed to update auto-update configuration\");
+                Log.Error(ex, "Failed to update auto-update configuration");
             }
         }
 
         /// <summary>
         /// Set update check interval
         /// </summary>
-        /// <param name=\"intervalHours\">Interval in hours</param>
+        /// <param name="intervalHours">Interval in hours</param>
         public async Task SetUpdateCheckIntervalAsync(int intervalHours)
         {
             try
@@ -197,18 +197,18 @@ namespace LiveCaptionsTranslator.Utils
                 // Update timer interval
                 _updateTimer.Interval = TimeSpan.FromHours(config.UpdateCheckInterval);
                 
-                Log.Information(\"Update check interval changed to {Hours} hours\", config.UpdateCheckInterval);
+                Log.Information("Update check interval changed to {Hours} hours", config.UpdateCheckInterval);
             }
             catch (Exception ex)
             {
-                Log.Error(ex, \"Failed to update check interval\");
+                Log.Error(ex, "Failed to update check interval");
             }
         }
 
         /// <summary>
         /// Enable or disable pre-release updates
         /// </summary>
-        /// <param name=\"allowPreRelease\">Whether to allow pre-release updates</param>
+        /// <param name="allowPreRelease">Whether to allow pre-release updates</param>
         public async Task SetAllowPreReleaseAsync(bool allowPreRelease)
         {
             try
@@ -217,11 +217,11 @@ namespace LiveCaptionsTranslator.Utils
                 config.AllowPreReleaseUpdates = allowPreRelease;
                 await _versionManager.UpdateConfigAsync(config);
                 
-                Log.Information(\"Pre-release updates {Status}\", allowPreRelease ? \"enabled\" : \"disabled\");
+                Log.Information("Pre-release updates {Status}", allowPreRelease ? "enabled" : "disabled");
             }
             catch (Exception ex)
             {
-                Log.Error(ex, \"Failed to update pre-release setting\");
+                Log.Error(ex, "Failed to update pre-release setting");
             }
         }
 
@@ -286,7 +286,7 @@ namespace LiveCaptionsTranslator.Utils
                 
                 if (e.UpdateAvailable && e.LatestRelease != null)
                 {
-                    Log.Information(\"Update available: {Version} (current: {Current})\", 
+                    Log.Information("Update available: {Version} (current: {Current})", 
                         e.LatestRelease.Version, _versionManager.GetCurrentVersion().FullVersion);
                     
                     _pendingUpdate = e.LatestRelease;
@@ -312,17 +312,17 @@ namespace LiveCaptionsTranslator.Utils
                 }
                 else if (!e.UpdateAvailable)
                 {
-                    Log.Debug(\"No updates available\");
+                    Log.Debug("No updates available");
                     _pendingUpdate = null;
                 }
                 else if (!string.IsNullOrEmpty(e.Error))
                 {
-                    Log.Warning(\"Update check failed: {Error}\", e.Error);
+                    Log.Warning("Update check failed: {Error}", e.Error);
                 }
             }
             catch (Exception ex)
             {
-                Log.Error(ex, \"Error handling update check completion\");
+                Log.Error(ex, "Error handling update check completion");
             }
         }
 
@@ -354,11 +354,11 @@ namespace LiveCaptionsTranslator.Utils
             {
                 _updateTimer?.Stop();
                 _versionManager?.Dispose();
-                Log.Information(\"Auto-update service shutdown completed\");
+                Log.Information("Auto-update service shutdown completed");
             }
             catch (Exception ex)
             {
-                Log.Error(ex, \"Error during auto-update service shutdown\");
+                Log.Error(ex, "Error during auto-update service shutdown");
             }
         }
     }
@@ -372,4 +372,4 @@ namespace LiveCaptionsTranslator.Utils
         public required VersionInfo CurrentVersion { get; init; }
         public bool IsCritical { get; init; }
     }
-}"
+}

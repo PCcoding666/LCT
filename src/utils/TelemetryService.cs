@@ -22,8 +22,8 @@ namespace LiveCaptionsTranslator.Utils
         private TelemetryService()
         {
             _httpClient = new HttpClient();
-            _httpClient.DefaultRequestHeaders.Add(\"User-Agent\", \"LiveCaptions-Translator-Telemetry\");
-            _telemetryEndpoint = \"https://telemetry.livecaptions-translator.com/api/events\";
+            _httpClient.DefaultRequestHeaders.Add("User-Agent", "LiveCaptions-Translator-Telemetry");
+            _telemetryEndpoint = "https://telemetry.livecaptions-translator.com/api/events";
             _sessionId = Guid.NewGuid().ToString();
             _isEnabled = true; // Default enabled, can be configured
         }
@@ -42,23 +42,23 @@ namespace LiveCaptionsTranslator.Utils
                 {
                     await SendEventAsync(new TelemetryEvent
                     {
-                        EventType = \"app_start\",
+                        EventType = "app_start",
                         Version = AppVersionInfo.Current.FullVersion,
                         Properties = new Dictionary<string, object>
                         {
-                            [\"os_version\"] = Environment.OSVersion.ToString(),
-                            [\"dotnet_version\"] = Environment.Version.ToString(),
-                            [\"is_64bit\"] = Environment.Is64BitOperatingSystem,
-                            [\"session_id\"] = _sessionId
+                            ["os_version"] = Environment.OSVersion.ToString(),
+                            ["dotnet_version"] = Environment.Version.ToString(),
+                            ["is_64bit"] = Environment.Is64BitOperatingSystem,
+                            ["session_id"] = _sessionId
                         }
                     });
                 }
                 
-                Log.Information(\"Telemetry service initialized (enabled: {Enabled})\", _isEnabled);
+                Log.Information("Telemetry service initialized (enabled: {Enabled})", _isEnabled);
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, \"Failed to initialize telemetry service\");
+                Log.Warning(ex, "Failed to initialize telemetry service");
             }
         }
 
@@ -73,22 +73,22 @@ namespace LiveCaptionsTranslator.Utils
             {
                 await SendEventAsync(new TelemetryEvent
                 {
-                    EventType = \"version_usage\",
+                    EventType = "version_usage",
                     Version = AppVersionInfo.Current.FullVersion,
                     Properties = new Dictionary<string, object>
                     {
-                        [\"major_version\"] = AppVersionInfo.Current.Major,
-                        [\"minor_version\"] = AppVersionInfo.Current.Minor,
-                        [\"patch_version\"] = AppVersionInfo.Current.Patch,
-                        [\"is_dev_build\"] = AppVersionInfo.Current.IsDevelopmentBuild,
-                        [\"is_prerelease\"] = AppVersionInfo.IsPreRelease,
-                        [\"session_id\"] = _sessionId
+                        ["major_version"] = AppVersionInfo.Current.Major,
+                        ["minor_version"] = AppVersionInfo.Current.Minor,
+                        ["patch_version"] = AppVersionInfo.Current.Patch,
+                        ["is_dev_build"] = AppVersionInfo.Current.IsDevelopmentBuild,
+                        ["is_prerelease"] = AppVersionInfo.IsPreRelease,
+                        ["session_id"] = _sessionId
                     }
                 });
             }
             catch (Exception ex)
             {
-                Log.Debug(ex, \"Failed to report version usage\");
+                Log.Debug(ex, "Failed to report version usage");
             }
         }
 
@@ -103,26 +103,26 @@ namespace LiveCaptionsTranslator.Utils
             {
                 var properties = new Dictionary<string, object>
                 {
-                    [\"update_available\"] = updateAvailable,
-                    [\"current_version\"] = AppVersionInfo.Current.FullVersion,
-                    [\"session_id\"] = _sessionId
+                    ["update_available"] = updateAvailable,
+                    ["current_version"] = AppVersionInfo.Current.FullVersion,
+                    ["session_id"] = _sessionId
                 };
                 
                 if (latestVersion != null)
                 {
-                    properties[\"latest_version\"] = latestVersion;
+                    properties["latest_version"] = latestVersion;
                 }
                 
                 await SendEventAsync(new TelemetryEvent
                 {
-                    EventType = \"update_check\",
+                    EventType = "update_check",
                     Version = AppVersionInfo.Current.FullVersion,
                     Properties = properties
                 });
             }
             catch (Exception ex)
             {
-                Log.Debug(ex, \"Failed to report update check\");
+                Log.Debug(ex, "Failed to report update check");
             }
         }
 
@@ -138,21 +138,21 @@ namespace LiveCaptionsTranslator.Utils
                 
                 await SendEventAsync(new TelemetryEvent
                 {
-                    EventType = \"error\",
+                    EventType = "error",
                     Version = AppVersionInfo.Current.FullVersion,
                     Properties = new Dictionary<string, object>
                     {
-                        [\"error_type\"] = exception.GetType().Name,
-                        [\"error_message\"] = exception.Message,
-                        [\"stack_trace\"] = exception.StackTrace ?? \"\",
-                        [\"context\"] = context ?? \"unknown\",
-                        [\"session_id\"] = _sessionId
+                        ["error_type"] = exception.GetType().Name,
+                        ["error_message"] = exception.Message,
+                        ["stack_trace"] = exception.StackTrace ?? "",
+                        ["context"] = context ?? "unknown",
+                        ["session_id"] = _sessionId
                     }
                 });
             }
             catch (Exception ex)
             {
-                Log.Debug(ex, \"Failed to report error\");
+                Log.Debug(ex, "Failed to report error");
             }
         }
 
@@ -167,8 +167,8 @@ namespace LiveCaptionsTranslator.Utils
             {
                 var properties = new Dictionary<string, object>
                 {
-                    [\"feature_name\"] = featureName,
-                    [\"session_id\"] = _sessionId
+                    ["feature_name"] = featureName,
+                    ["session_id"] = _sessionId
                 };
                 
                 if (additionalProperties != null)
@@ -181,14 +181,14 @@ namespace LiveCaptionsTranslator.Utils
                 
                 await SendEventAsync(new TelemetryEvent
                 {
-                    EventType = \"feature_usage\",
+                    EventType = "feature_usage",
                     Version = AppVersionInfo.Current.FullVersion,
                     Properties = properties
                 });
             }
             catch (Exception ex)
             {
-                Log.Debug(ex, \"Failed to report feature usage\");
+                Log.Debug(ex, "Failed to report feature usage");
             }
         }
 
@@ -205,11 +205,11 @@ namespace LiveCaptionsTranslator.Utils
                 config.TelemetryEnabled = enabled;
                 await VersionManager.Instance.UpdateConfigAsync(config);
                 
-                Log.Information(\"Telemetry {Status}\", enabled ? \"enabled\" : \"disabled\");
+                Log.Information("Telemetry {Status}", enabled ? "enabled" : "disabled");
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, \"Failed to update telemetry setting\");
+                Log.Warning(ex, "Failed to update telemetry setting");
             }
         }
 
@@ -223,30 +223,30 @@ namespace LiveCaptionsTranslator.Utils
             try
             {
                 telemetryEvent.Timestamp = DateTime.UtcNow;
-                telemetryEvent.Properties[\"app_name\"] = \"LiveCaptions-Translator\";
+                telemetryEvent.Properties["app_name"] = "LiveCaptions-Translator";
                 
                 var json = JsonSerializer.Serialize(telemetryEvent, new JsonSerializerOptions
                 {
                     PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
                 });
                 
-                var content = new StringContent(json, Encoding.UTF8, \"application/json\");
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
                 
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 var response = await _httpClient.PostAsync(_telemetryEndpoint, content, cts.Token);
                 
                 if (!response.IsSuccessStatusCode)
                 {
-                    Log.Debug(\"Telemetry event failed with status: {Status}\", response.StatusCode);
+                    Log.Debug("Telemetry event failed with status: {Status}", response.StatusCode);
                 }
             }
             catch (OperationCanceledException)
             {
-                Log.Debug(\"Telemetry request timed out\");
+                Log.Debug("Telemetry request timed out");
             }
             catch (Exception ex)
             {
-                Log.Debug(ex, \"Failed to send telemetry event\");
+                Log.Debug(ex, "Failed to send telemetry event");
             }
         }
 
@@ -261,17 +261,17 @@ namespace LiveCaptionsTranslator.Utils
             {
                 await SendEventAsync(new TelemetryEvent
                 {
-                    EventType = \"app_shutdown\",
+                    EventType = "app_shutdown",
                     Version = AppVersionInfo.Current.FullVersion,
                     Properties = new Dictionary<string, object>
                     {
-                        [\"session_id\"] = _sessionId
+                        ["session_id"] = _sessionId
                     }
                 });
             }
             catch (Exception ex)
             {
-                Log.Debug(ex, \"Failed to report shutdown\");
+                Log.Debug(ex, "Failed to report shutdown");
             }
         }
 
@@ -291,4 +291,4 @@ namespace LiveCaptionsTranslator.Utils
         public DateTime Timestamp { get; set; }
         public Dictionary<string, object> Properties { get; set; } = new();
     }
-}"
+}

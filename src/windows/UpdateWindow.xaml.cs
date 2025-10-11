@@ -15,7 +15,7 @@ namespace LiveCaptionsTranslator.Windows
         private ReleaseInfo? _updateInfo;
         private bool _isDownloading;
         private double _downloadProgress;
-        private string _downloadStatus = \"Preparing download...\";
+        private string _downloadStatus = "Preparing download...";
         private bool _canInstall;
         private string? _downloadedFilePath;
 
@@ -47,13 +47,13 @@ namespace LiveCaptionsTranslator.Windows
         /// Update title for display
         /// </summary>
         public string UpdateTitle => UpdateInfo != null ? 
-            $\"Update to {UpdateInfo.Name} (v{UpdateInfo.Version})\" : 
-            \"No update available\";
+            $"Update to {UpdateInfo.Name} (v{UpdateInfo.Version})" : 
+            "No update available";
 
         /// <summary>
         /// Update description
         /// </summary>
-        public string UpdateDescription => UpdateInfo?.Description ?? \"No description available\";
+        public string UpdateDescription => UpdateInfo?.Description ?? "No description available";
 
         /// <summary>
         /// Update download size
@@ -62,16 +62,16 @@ namespace LiveCaptionsTranslator.Windows
         {
             get
             {
-                if (UpdateInfo == null) return \"\";
+                if (UpdateInfo == null) return "";
                 
                 var asset = UpdateInfo.GetInstallerAsset();
                 if (asset != null && asset.Size > 0)
                 {
                     var sizeMB = asset.Size / (1024.0 * 1024.0);
-                    return $\"Download size: {sizeMB:F1} MB\";
+                    return $"Download size: {sizeMB:F1} MB";
                 }
                 
-                return \"Download size: Unknown\";
+                return "Download size: Unknown";
             }
         }
 
@@ -146,7 +146,7 @@ namespace LiveCaptionsTranslator.Windows
             DataContext = this;
             
             // Set window properties
-            Title = \"Software Update\";
+            Title = "Software Update";
             Width = 600;
             Height = 500;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -159,8 +159,8 @@ namespace LiveCaptionsTranslator.Windows
         /// <summary>
         /// Show update window with specific update info
         /// </summary>
-        /// <param name=\"updateInfo\">Update information</param>
-        /// <param name=\"owner\">Owner window</param>
+        /// <param name="updateInfo">Update information</param>
+        /// <param name="owner">Owner window</param>
         /// <returns>Dialog result</returns>
         public static bool? ShowUpdate(ReleaseInfo updateInfo, Window? owner = null)
         {
@@ -186,11 +186,11 @@ namespace LiveCaptionsTranslator.Windows
                 {
                     var downloadedMB = e.DownloadedBytes / (1024.0 * 1024.0);
                     var totalMB = e.TotalBytes / (1024.0 * 1024.0);
-                    DownloadStatus = $\"Downloading... {downloadedMB:F1} MB / {totalMB:F1} MB ({e.ProgressPercentage:F1}%)\";
+                    DownloadStatus = $"Downloading... {downloadedMB:F1} MB / {totalMB:F1} MB ({e.ProgressPercentage:F1}%)";
                 }
                 else
                 {
-                    DownloadStatus = $\"Downloading... {e.ProgressPercentage:F1}%\";
+                    DownloadStatus = $"Downloading... {e.ProgressPercentage:F1}%";
                 }
             });
         }
@@ -203,7 +203,7 @@ namespace LiveCaptionsTranslator.Windows
             if (UpdateInfo == null) return;
 
             IsDownloading = true;
-            DownloadStatus = \"Starting download...\";
+            DownloadStatus = "Starting download...";
             DownloadProgress = 0;
 
             try
@@ -213,18 +213,18 @@ namespace LiveCaptionsTranslator.Windows
                 if (success)
                 {
                     CanInstall = true;
-                    DownloadStatus = \"Download completed! Ready to install.\";
+                    DownloadStatus = "Download completed! Ready to install.";
                     DownloadProgress = 100;
                 }
                 else
                 {
-                    DownloadStatus = \"Download failed. Please try again later.\";
+                    DownloadStatus = "Download failed. Please try again later.";
                     DownloadProgress = 0;
                 }
             }
             catch (Exception ex)
             {
-                DownloadStatus = $\"Download error: {ex.Message}\";
+                DownloadStatus = $"Download error: {ex.Message}";
                 DownloadProgress = 0;
             }
             finally
@@ -247,9 +247,9 @@ namespace LiveCaptionsTranslator.Windows
             catch (Exception ex)
             {
                 System.Windows.MessageBox.Show(
-                    $\"Failed to start installation: {ex.Message}\",
-                    \"Installation Error\",
-                    MessageBoxButton.OK,
+                    $"Failed to start installation: {ex.Message}",
+                    "Installation Error",
+                    System.Windows.MessageBoxButton.OK,
                     MessageBoxImage.Error);
             }
         }
@@ -270,9 +270,9 @@ namespace LiveCaptionsTranslator.Windows
             catch (Exception ex)
             {
                 System.Windows.MessageBox.Show(
-                    $\"Failed to skip version: {ex.Message}\",
-                    \"Error\",
-                    MessageBoxButton.OK,
+                    $"Failed to skip version: {ex.Message}",
+                    "Error",
+                    System.Windows.MessageBoxButton.OK,
                     MessageBoxImage.Warning);
             }
         }
@@ -295,7 +295,7 @@ namespace LiveCaptionsTranslator.Windows
             {
                 // TODO: Implement download cancellation
                 IsDownloading = false;
-                DownloadStatus = \"Download cancelled\";
+                DownloadStatus = "Download cancelled";
                 DownloadProgress = 0;
             }
             else
@@ -323,9 +323,9 @@ namespace LiveCaptionsTranslator.Windows
                 catch (Exception ex)
                 {
                     System.Windows.MessageBox.Show(
-                        $\"Failed to open changelog: {ex.Message}\",
-                        \"Error\",
-                        MessageBoxButton.OK,
+                        $"Failed to open changelog: {ex.Message}",
+                        "Error",
+                        System.Windows.MessageBoxButton.OK,
                         MessageBoxImage.Warning);
                 }
             }
@@ -343,4 +343,4 @@ namespace LiveCaptionsTranslator.Windows
             base.OnClosed(e);
         }
     }
-}"
+}

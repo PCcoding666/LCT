@@ -19,7 +19,7 @@ namespace LiveCaptionsTranslator.utils
         private static Process? ollamaProcess = null;
         private static Process? modelProcess = null;
         private const string OLLAMA_PROCESS_NAME = "ollama";
-        private const string MODEL_NAME = "qwen2.5:3b";
+        // Remove hardcoded GetConfiguredModelName() - always use user configuration
         
         // 添加静态HttpClient实例以提高性能和避免端口耗尽
         private static readonly HttpClient httpClient = new HttpClient
@@ -60,6 +60,38 @@ namespace LiveCaptionsTranslator.utils
         private static long _downloadedBytes = 0;
         private static DateTime _downloadStartTime = DateTime.MinValue;
         private static string _downloadStatus = "";
+        
+        /// <summary>
+        /// Get the configured model name from user settings
+        /// Falls back to qwen3:4b-instruct-2507-q4_K_M if no configuration is available
+        /// </summary>
+        /// <returns>Model name to use</returns>
+        private static string GetConfiguredModelName()
+        {
+            try
+            {
+                // Try to get model name from current setting
+                var modelName = Translator.Setting?.OllamaConfig?.ModelName;
+                if (!string.IsNullOrEmpty(modelName))
+                {
+                    Debug.WriteLine($"Using model from current settings: {modelName}");
+                    Console.WriteLine($"Using model from current settings: {modelName}");
+                    return modelName;
+                }
+                
+                // If no current setting, use fallback
+                var fallbackModel = "qwen3:4b-instruct-2507-q4_K_M";
+                Debug.WriteLine($"No model configured in settings, using fallback: {fallbackModel}");
+                Console.WriteLine($"No model configured in settings, using fallback: {fallbackModel}");
+                return fallbackModel;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to get configured model name: {ex.Message}, using fallback");
+                Console.WriteLine($"Failed to get configured model name: {ex.Message}, using fallback");
+                return "qwen3:4b-instruct-2507-q4_K_M";
+            }
+        }
 
         // 安全的HTTP任务等待辅助方法，避免未观察任务异常
         private static T SafeWaitForTask<T>(Task<T> task, int timeoutMs = 5000, string operation = "HTTP操作")
@@ -262,7 +294,8 @@ namespace LiveCaptionsTranslator.utils
         {
             try
             {
-                progress?.Report($"开始下载并初始化模型 {MODEL_NAME}...");
+                var modelName = GetConfiguredModelName();
+                progress?.Report($"开始下载并初始化模型 {modelName}...");
                 if (IsModelLoaded(progress))
                 {
                     progress?.Report("模型已存在，跳过下载。");
@@ -281,11 +314,12 @@ namespace LiveCaptionsTranslator.utils
 
         private static bool DownloadModelWithProgress(IProgress<string>? progress = null)
         {
-            progress?.Report($"触发模型 {MODEL_NAME} 下载... (这可能需要很长时间)");
+            var modelName = GetConfiguredModelName();
+            progress?.Report($"触发模型 {modelName} 下载... (这可能需要很长时间)");
             using (var client = new HttpClient())
             {
                 client.Timeout = TimeSpan.FromSeconds(HTTP_CLIENT_TIMEOUT_SECONDS);
-                var requestData = new { name = MODEL_NAME, stream = true };
+                var requestData = new { name = modelName, stream = true };
                 var content = new StringContent(JsonSerializer.Serialize(requestData), Encoding.UTF8, "application/json");
 
                 try
@@ -330,7 +364,8 @@ namespace LiveCaptionsTranslator.utils
                 progress?.Report("正在测试模型可用性...");
                 using var client = new HttpClient();
                 client.Timeout = TimeSpan.FromSeconds(30);
-                var requestData = new { model = MODEL_NAME, prompt = "Hello", stream = false };
+                var modelName = GetConfiguredModelName();
+                var requestData = new { model = modelName, prompt = "Hello", stream = false };
                 var content = new StringContent(JsonSerializer.Serialize(requestData), Encoding.UTF8, "application/json");
                 var response = client.PostAsync($"{GetServerUrl()}/api/generate", content).Result;
 
@@ -362,7 +397,8 @@ namespace LiveCaptionsTranslator.utils
                 if (response.IsSuccessStatusCode)
                 {
                     var content = response.Content.ReadAsStringAsync().Result;
-                    bool loaded = content.Contains(MODEL_NAME);
+                    var modelName = GetConfiguredModelName();
+                    bool loaded = content.Contains(modelName);
                     progress?.Report($"检查本地模型: {(loaded ? "已存在" : "未找到")}");
                     return loaded;
                 }
@@ -683,8 +719,40 @@ namespace LiveCaptionsTranslator.utils
 
             if (IsServerOnline())
             {
-                Log.Information("✅ 服务器已在线，跳过启动和模型检查。");
-                return true;
+                Log.Information("🔍 开始检查服务器连接: {ServerUrl}/api/version", GetServerUrl());
+                Log.Information("📡 服务器响应状态: \"OK\" (在线)");
+                
+                // Check server version
+                try
+                {
+                    using var client = new HttpClient();
+                    client.Timeout = TimeSpan.FromSeconds(5);
+                    var versionResponse = client.GetAsync($"{GetServerUrl()}/api/version").Result;
+                    if (versionResponse.IsSuccessStatusCode)
+                    {
+                        var versionContent = versionResponse.Content.ReadAsStringAsync().Result;
+                        Log.Information("✅ 服务器版本信息: {VersionInfo}", versionContent);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning("获取服务器版本信息失败: {Error}", ex.Message);
+                }
+                
+                // Always check if the correct model is loaded
+                bool modelLoaded = IsModelLoaded();
+                if (modelLoaded)
+                {
+                    var configuredModel = GetConfiguredModelName();
+                    Log.Information("✅ 默认模型 {ModelName} 已加载，服务器就绪。", configuredModel);
+                    return true;
+                }
+                else
+                {
+                    var configuredModel = GetConfiguredModelName();
+                    Log.Warning("⚠️ 服务器在线但默认模型 {ModelName} 未加载，需要下载。", configuredModel);
+                    return false; // Force model download through StartupManager
+                }
             }
 
             Log.Information("⚠️ 服务器不在线，开始启动流程...");
@@ -724,9 +792,10 @@ namespace LiveCaptionsTranslator.utils
                 }
                 
                 var content = modelResponse.Content.ReadAsStringAsync().Result;
-                var modelLoaded = content.Contains(MODEL_NAME);
-                Debug.WriteLine($"模型 {MODEL_NAME} {(modelLoaded ? "已加载" : "未加载")}");
-                Console.WriteLine($"模型 {MODEL_NAME} {(modelLoaded ? "已加载" : "未加载")}");
+                var modelName = GetConfiguredModelName();
+                var modelLoaded = content.Contains(modelName);
+                Debug.WriteLine($"模型 {modelName} {(modelLoaded ? "已加载" : "未加载")}");
+                Console.WriteLine($"模型 {modelName} {(modelLoaded ? "已加载" : "未加载")}");
                 
                 return modelLoaded;
             }
@@ -785,9 +854,10 @@ namespace LiveCaptionsTranslator.utils
                     Debug.WriteLine($"响应内容预览: {preview}");
                     Console.WriteLine($"响应内容预览: {preview}");
                     
-                    var modelLoaded = content.Contains(MODEL_NAME);
-                    Debug.WriteLine($"模型 {MODEL_NAME} {(modelLoaded ? "已加载" : "未加载")}");
-                    Console.WriteLine($"模型 {MODEL_NAME} {(modelLoaded ? "已加载" : "未加载")}");
+                    var modelName = GetConfiguredModelName();
+                    var modelLoaded = content.Contains(modelName);
+                    Debug.WriteLine($"模型 {modelName} {(modelLoaded ? "已加载" : "未加载")}");
+                    Console.WriteLine($"模型 {modelName} {(modelLoaded ? "已加载" : "未加载")}");
                     return modelLoaded;
                 }
                 catch (OperationCanceledException ex)
@@ -828,8 +898,8 @@ namespace LiveCaptionsTranslator.utils
                 // 1. 先检查模型是否存在于标签列表中
                 if (!IsModelLoaded())
                 {
-                    Debug.WriteLine($"模型 {MODEL_NAME} 未在标签列表中找到");
-                    Console.WriteLine($"模型 {MODEL_NAME} 未在标签列表中找到");
+                    Debug.WriteLine($"模型 {GetConfiguredModelName()} 未在标签列表中找到");
+                    Console.WriteLine($"模型 {GetConfiguredModelName()} 未在标签列表中找到");
                     return false;
                 }
                 
@@ -841,9 +911,10 @@ namespace LiveCaptionsTranslator.utils
                 Debug.WriteLine($"发送测试推理请求到: {url}");
                 Console.WriteLine($"发送测试推理请求到: {url}");
                 
+                var modelName = GetConfiguredModelName();
                 var requestData = new
                 {
-                    model = MODEL_NAME,
+                    model = modelName,
                     prompt = "测试模型初始化，请回复一个字",
                     stream = false,
                     options = new { temperature = 0 }
@@ -954,8 +1025,9 @@ namespace LiveCaptionsTranslator.utils
         {
             try
             {
-                Debug.WriteLine($"开始下载并初始化模型 {MODEL_NAME}...");
-                Console.WriteLine($"开始下载并初始化模型 {MODEL_NAME}...");
+                var modelName = GetConfiguredModelName();
+                Debug.WriteLine($"开始下载并初始化模型 {modelName}...");
+                Console.WriteLine($"开始下载并初始化模型 {modelName}...");
                 
                 // 1. 检查模型是否已存在
                 Console.WriteLine("检查模型是否已在Ollama中注册...");
@@ -996,8 +1068,9 @@ namespace LiveCaptionsTranslator.utils
         // 新增下载模型和显示进度的方法
         private static bool DownloadModelWithProgress()
         {
-            Debug.WriteLine($"触发模型 {MODEL_NAME} 下载（带进度显示）...");
-            Console.WriteLine($"触发模型 {MODEL_NAME} 下载（带进度显示）...");
+            var modelName = GetConfiguredModelName();
+            Debug.WriteLine($"触发模型 {modelName} 下载（带进度显示）...");
+            Console.WriteLine($"触发模型 {modelName} 下载（带进度显示）...");
             Console.WriteLine($"已设置HTTP客户端超时时间为{HTTP_CLIENT_TIMEOUT_SECONDS}秒（{HTTP_CLIENT_TIMEOUT_SECONDS/3600}小时）");
             
             using (var client = new HttpClient())
@@ -1007,7 +1080,7 @@ namespace LiveCaptionsTranslator.utils
                 var pullUrl = $"{GetServerUrl()}/api/pull";
                 var requestData = new
                 {
-                    name = MODEL_NAME,
+                    name = modelName,
                     stream = true // 使用流式响应获取进度
                 };
                 
@@ -1251,7 +1324,7 @@ namespace LiveCaptionsTranslator.utils
                 
                 var requestData = new
                 {
-                    model = MODEL_NAME,
+                    model = GetConfiguredModelName(),
                     prompt = "Hello",
                     stream = false,
                     keep_alive = "30m" // 保持模型在内存中30分钟
@@ -1299,7 +1372,7 @@ namespace LiveCaptionsTranslator.utils
                 // 发送测试请求来预热模型
                 var testRequest = new
                 {
-                    model = MODEL_NAME,
+                    model = GetConfiguredModelName(),
                     prompt = "Hello",
                     stream = false,
                     options = new
@@ -1524,7 +1597,7 @@ namespace LiveCaptionsTranslator.utils
                  
                  var requestData = new
                  {
-                     model = MODEL_NAME,
+                     model = GetConfiguredModelName(),
                      prompt = "Please translate the following English text to Chinese: Hello world",
                      stream = false,
                      options = new
@@ -1635,7 +1708,7 @@ namespace LiveCaptionsTranslator.utils
                 var url = $"{GetServerUrl()}/api/generate";
                 var unloadData = new
                 {
-                    model = MODEL_NAME,
+                    model = GetConfiguredModelName(),
                     keep_alive = 0 // 立即卸载模型
                 };
                 

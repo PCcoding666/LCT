@@ -27,7 +27,7 @@
   "OllamaConfig": {
     "Host": "127.0.0.1",
     "Port": 11434,
-    "ModelName": "qwen2.5:3b",
+    "ModelName": "qwen3:4b-instruct-2507-q4_K_M",
     "Temperature": 1
   }
 }

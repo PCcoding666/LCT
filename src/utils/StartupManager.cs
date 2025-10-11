@@ -10,7 +10,7 @@ namespace LiveCaptionsTranslator.utils
 {
     public class StartupManager
     {
-        private const string DEFAULT_MODEL = "qwen2.5:3b";
+        // Remove hardcoded model constant - always use user configuration
         private readonly IProgress<string>? _progress;
         private readonly Window _splashWindow;
         private readonly ILogger _log;
@@ -189,6 +189,10 @@ namespace LiveCaptionsTranslator.utils
             {
                 using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(30) }; // Increase timeout
 
+                // Get model name from user configuration instead of hardcoded constant
+                var configuredModel = GetConfiguredModelName();
+                _log.Information("Using configured model: {ModelName}", configuredModel);
+
                 // Check if model already exists
                 ReportAndLog("Checking installed model list...");
                 _log.Information("Checking for model tags at http://localhost:11434/api/tags");
@@ -204,14 +208,16 @@ namespace LiveCaptionsTranslator.utils
                 var modelListJson = await response.Content.ReadAsStringAsync();
                 _log.Debug("Received model list: {ModelList}", modelListJson);
                 
-                // More reliable JSON parsing
-                if (!modelListJson.Contains($"\"name\": \"{DEFAULT_MODEL}\""))
+                // Enhanced model checking with better JSON parsing
+                bool modelExists = await CheckIfModelExists(modelListJson, configuredModel);
+                
+                if (!modelExists)
                 {
-                    ReportAndLogCritical($"Default model {DEFAULT_MODEL} not found, starting download...");
-                    _log.Information("[MODEL-DOWNLOAD] Starting download for model: {ModelName}", DEFAULT_MODEL);
+                    ReportAndLogCritical($"Configured model {configuredModel} not found, starting download...");
+                    _log.Information("[MODEL-DOWNLOAD] Starting download for model: {ModelName}", configuredModel);
                     
                     // Use streaming download to get real-time progress
-                    var pullRequestContent = new StringContent($"{{\"name\": \"{DEFAULT_MODEL}\", \"stream\": true}}", System.Text.Encoding.UTF8, "application/json");
+                    var pullRequestContent = new StringContent($"{{\"name\": \"{configuredModel}\", \"stream\": true}}", System.Text.Encoding.UTF8, "application/json");
                     
                     var pullResponse = await client.PostAsync("http://localhost:11434/api/pull", pullRequestContent);
                     
@@ -226,13 +232,13 @@ namespace LiveCaptionsTranslator.utils
                     // Process streaming response to show download progress
                     await ProcessModelDownloadStream(pullResponse);
                     
-                    ReportAndLog($"Model {DEFAULT_MODEL} download completed!");
+                    ReportAndLog($"Model {configuredModel} download completed!");
                     _log.Information("Model pull completed successfully.");
                 }
                 else
                 {
-                    ReportAndLog($"Model {DEFAULT_MODEL} already exists, skipping download.");
-                    _log.Information("Default model '{ModelName}' already exists.", DEFAULT_MODEL);
+                    ReportAndLog($"Model {configuredModel} already exists, skipping download.");
+                    _log.Information("Configured model '{ModelName}' already exists.", configuredModel);
                 }
 
                 return true;
@@ -370,10 +376,49 @@ namespace LiveCaptionsTranslator.utils
                     ReportAndLog(progressMessage);
                     _log.Information("[MODEL-DOWNLOAD] Downloaded: {CompletedMB}MB", completedMB);
                 }
+                else
+                {
+                    // Handle cases where we don't have specific bytes info
+                    ReportAndLog("Model download in progress...");
+                    _log.Information("[MODEL-DOWNLOAD] Download in progress (no size info available)");
+                }
             }
             catch (Exception ex)
             {
                 _log.Debug("Failed to process download progress: {Error}", ex.Message);
+            }
+        }
+        
+        private async Task<bool> CheckIfModelExists(string modelListJson, string modelName)
+        {
+            try
+            {
+                // More robust model existence check
+                using var document = System.Text.Json.JsonDocument.Parse(modelListJson);
+                if (document.RootElement.TryGetProperty("models", out var modelsElement))
+                {
+                    foreach (var model in modelsElement.EnumerateArray())
+                    {
+                        if (model.TryGetProperty("name", out var nameElement))
+                        {
+                            var existingModelName = nameElement.GetString();
+                            if (string.Equals(existingModelName, modelName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                _log.Information("Found existing model: {ModelName}", existingModelName);
+                                return true;
+                            }
+                        }
+                    }
+                }
+                
+                _log.Information("Model {ModelName} not found in installed models", modelName);
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _log.Warning(ex, "Failed to parse model list JSON, falling back to string search");
+                // Fallback to string search
+                return modelListJson.Contains($"\"name\": \"{modelName}\"");
             }
         }
 
@@ -383,10 +428,11 @@ namespace LiveCaptionsTranslator.utils
             {
                 using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
                 
-                _log.Information("Validating model '{ModelName}' availability.", DEFAULT_MODEL);
+                var configuredModel = GetConfiguredModelName();
+                _log.Information("Validating model '{ModelName}' availability.", configuredModel);
                 
                 var content = new StringContent(
-                    $"{{\"model\": \"{DEFAULT_MODEL}\", \"prompt\": \"Hello\", \"stream\": false}}",
+                    $"{{\"model\": \"{configuredModel}\", \"prompt\": \"Hello\", \"stream\": false}}",
                     System.Text.Encoding.UTF8,
                     "application/json"
                 );
@@ -409,6 +455,35 @@ namespace LiveCaptionsTranslator.utils
                 _log.Error(ex, "An exception occurred during model validation.");
                 ReportAndLog($"Model validation failed: {ex.Message}");
                 return false;
+            }
+        }
+        
+        /// <summary>
+        /// Get the configured model name from user settings
+        /// Falls back to qwen3:4b-instruct-2507-q4_K_M if no configuration is available
+        /// </summary>
+        /// <returns>Model name to use</returns>
+        private string GetConfiguredModelName()
+        {
+            try
+            {
+                // Try to get model name from current setting
+                var modelName = Translator.Setting?.OllamaConfig?.ModelName;
+                if (!string.IsNullOrEmpty(modelName))
+                {
+                    _log.Information("Using model from current settings: {ModelName}", modelName);
+                    return modelName;
+                }
+                
+                // If no current setting, try to load from configuration file
+                var fallbackModel = "qwen3:4b-instruct-2507-q4_K_M";
+                _log.Warning("No model configured in settings, using fallback: {ModelName}", fallbackModel);
+                return fallbackModel;
+            }
+            catch (Exception ex)
+            {
+                _log.Error(ex, "Failed to get configured model name, using fallback");
+                return "qwen3:4b-instruct-2507-q4_K_M";
             }
         }
     }
