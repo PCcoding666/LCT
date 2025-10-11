@@ -3,9 +3,9 @@
 
 param(
     [string]$ProjectRoot = ".",
-    [string]$VersionPrefix = "1.0.0",
-    [string]$VersionSuffix = "dev",
-    [string]$BuildConfiguration = "Debug",
+    [string]$VersionPrefix = "1.0.1",
+    [string]$VersionSuffix = "",
+    [string]$BuildConfiguration = "Release",
     [switch]$UseGitInfo = $true
 )
 

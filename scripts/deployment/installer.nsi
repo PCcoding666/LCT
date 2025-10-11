@@ -2,16 +2,28 @@
 ; Auto-generated version support
 
 !include "MUI2.nsh"
+; Include additional functions
+!include "FileFunc.nsh"
+!include "LogicLib.nsh"
+!include "WinVer.nsh"
+!insertmacro GetSize
 
 # --- Version and Application Information ---
 !define APP_NAME "LiveCaptions Translator"
 !define COMPANY_NAME "SakiRinn and Contributors"
-!define APP_VERSION "1.0.0" ; This will be replaced by build script
-!define EXE_NAME "LiveCaptions-Translator.exe"
-!define INSTALLER_NAME "LiveCaptionsTranslator-Setup.exe"
+; APP_VERSION can be overridden from command line
+!ifndef APP_VERSION
+  !define APP_VERSION "1.0.0" ; Default version if not provided
+!endif
+!define EXE_NAME "LiveCaptionsTranslator.exe"
+; INSTALLER_NAME can be overridden from command line
+!ifndef INSTALLER_NAME
+  !define INSTALLER_NAME "LiveCaptionsTranslator-Setup.exe"
+!endif
 
 ; Override from command line if provided
 !ifdef OUTPUT_NAME
+  !undef INSTALLER_NAME
   !define INSTALLER_NAME "${OUTPUT_NAME}"
 !endif
 
@@ -45,9 +57,10 @@ VIAddVersionKey "OriginalFilename" "${INSTALLER_NAME}"
 !define MUI_ABORTWARNING
 !define MUI_ICON "${PROJECT_ROOT}\src\LiveCaptions-Translator.ico"
 !define MUI_UNICON "${PROJECT_ROOT}\src\LiveCaptions-Translator.ico"
-!define MUI_HEADERIMAGE
-!define MUI_HEADERIMAGE_BITMAP "${PROJECT_ROOT}\images\installer-header.bmp" ; Optional: 150x57 pixels
-!define MUI_WELCOMEFINISHPAGE_BITMAP "${PROJECT_ROOT}\images\installer-welcome.bmp" ; Optional: 164x314 pixels
+; Optional: Header and welcome images (commented out if files don't exist)
+; !define MUI_HEADERIMAGE
+; !define MUI_HEADERIMAGE_BITMAP "${PROJECT_ROOT}\images\installer-header.bmp" ; Optional: 150x57 pixels
+; !define MUI_WELCOMEFINISHPAGE_BITMAP "${PROJECT_ROOT}\images\installer-welcome.bmp" ; Optional: 164x314 pixels
 
 # --- Custom Pages ---
 !define MUI_WELCOMEPAGE_TITLE "Welcome to ${APP_NAME} v${APP_VERSION} Setup"
@@ -186,12 +199,12 @@ Section "Uninstall"
     DetailPrint "Uninstalling ${APP_NAME}..."
     SetDetailsPrint listonly
     
-    ; Stop application if running
-    DetailPrint "Stopping ${APP_NAME} if running..."
-    ${nsProcess::FindProcess} "${EXE_NAME}" $R0
-    StrCmp $R0 0 0 +3
-    DetailPrint "${APP_NAME} is running, attempting to close..."
-    ${nsProcess::CloseProcess} "${EXE_NAME}" $R0
+    ; Stop application if running (commented out - requires nsProcess plugin)
+    ; DetailPrint "Stopping ${APP_NAME} if running..."
+    ; ${nsProcess::FindProcess} "${EXE_NAME}" $R0
+    ; StrCmp $R0 0 0 +3
+    ; DetailPrint "${APP_NAME} is running, attempting to close..."
+    ; ${nsProcess::CloseProcess} "${EXE_NAME}" $R0
     
     ; Remove files and directories
     DetailPrint "Removing application files..."
@@ -257,9 +270,3 @@ Function un.onInit
     Abort
 FunctionEnd
 
-; Include additional functions
-!include "FileFunc.nsh"
-!insertmacro GetSize
-
-; Process handling
-!include "nsProcess.nsh"

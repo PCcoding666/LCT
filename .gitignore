@@ -386,3 +386,14 @@ dev-debug.log
 # Task files
 # tasks.json
 # tasks/ 
+
+# Build and deployment artifacts
+build-log.txt
+release-info-*.txt
+test-nsis.bat
+*.exe
+!scripts/deployment/VC_redist.x64.exe
+
+# Dell Local Edition specific
+DellLiveCaptionsTranslator*.exe
+LiveCaptionsTranslator-Setup*.exe 

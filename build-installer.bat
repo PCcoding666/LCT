@@ -46,8 +46,8 @@ goto :parse_args
 :args_done
 
 :: Set default version if not provided
-if "%VERSION_PREFIX%"=="" set VERSION_PREFIX=1.0.0
-if "%VERSION_SUFFIX%"=="" set VERSION_SUFFIX=dev
+if "%VERSION_PREFIX%"=="" set VERSION_PREFIX=1.0.1
+if "%VERSION_SUFFIX%"=="" set VERSION_SUFFIX=
 
 echo Configuration:
 echo   Project File: %PROJECT_FILE%
@@ -120,56 +120,70 @@ echo Published files verified.
 :: Step 4: Check NSIS compiler
 echo.
 echo Step 4: Checking for NSIS compiler...
-if not exist %NSIS_PATH% (
+
+:: Try multiple possible NSIS locations
+set NSIS_FOUND=0
+if exist %NSIS_PATH% (
+    set NSIS_FOUND=1
+    echo NSIS compiler found at %NSIS_PATH%
+) else (
+    echo NSIS not found at default location, checking alternatives...
+    
+    :: Check Program Files
+    set ALT_NSIS_PATH="C:\Program Files\NSIS\makensis.exe"
+    if exist !ALT_NSIS_PATH! (
+        set NSIS_PATH=!ALT_NSIS_PATH!
+        set NSIS_FOUND=1
+        echo NSIS compiler found at !ALT_NSIS_PATH!
+    )
+)
+
+if %NSIS_FOUND%==0 (
     echo.
-    echo ERROR: NSIS compiler not found at %NSIS_PATH%.
-    echo Please make sure NSIS is installed to the default directory.
-    echo Download from: https://nsis.sourceforge.io/Download
+    echo ERROR: NSIS compiler not found.
+    echo Searched locations:
+    echo   - C:\Program Files ^(x86^)\NSIS\makensis.exe
+    echo   - C:\Program Files\NSIS\makensis.exe
+    echo.
+    echo Please install NSIS from: https://nsis.sourceforge.io/Download
+    echo Make sure to install to the default directory.
     pause
     exit /b 1
 )
-echo NSIS compiler found.
 
-:: Step 5: Update installer script with version
+:: Step 5: Prepare for NSIS compilation
 echo.
-echo Step 5: Updating installer script with version information...
-set TEMP_INSTALLER_SCRIPT="%TEMP%\installer_temp.nsi"
-powershell.exe -Command "(Get-Content '%INSTALLER_SCRIPT%') -replace '!define APP_VERSION \"[^\"]*\"', '!define APP_VERSION \"%VERSION_NUMBER%\"' | Set-Content '%TEMP_INSTALLER_SCRIPT%'"
-if %errorlevel% neq 0 (
-    echo.
-    echo ERROR: Failed to update installer script.
-    pause
-    exit /b %errorlevel%
-)
+echo Step 5: Preparing for NSIS compilation...
+echo Using installer script: %INSTALLER_SCRIPT%
+echo Version: %VERSION_NUMBER%
+echo Output: %OUTPUT_NAME%
 
 :: Step 6: Compile installer with NSIS
 echo.
 echo Step 6: Compiling installer with NSIS...
 set OUTPUT_NAME=DellLiveCaptionsTranslator-v%VERSION_NUMBER%-Setup.exe
-%NSIS_PATH% /DPROJECT_ROOT="%cd%" /DAPP_VERSION="%VERSION_NUMBER%" /DOUTPUT_NAME="%OUTPUT_NAME%" "%TEMP_INSTALLER_SCRIPT%"
+%NSIS_PATH% /DPROJECT_ROOT="%cd%" /DAPP_VERSION="%VERSION_NUMBER%" /DOUTPUT_NAME="%OUTPUT_NAME%" "%INSTALLER_SCRIPT%"
 if %errorlevel% neq 0 (
     echo.
     echo ERROR: NSIS compilation failed.
-    if exist "%TEMP_INSTALLER_SCRIPT%" del "%TEMP_INSTALLER_SCRIPT%"
     pause
     exit /b %errorlevel%
 )
 
-:: Clean up temporary files
-if exist "%TEMP_INSTALLER_SCRIPT%" del "%TEMP_INSTALLER_SCRIPT%"
-
 :: Step 7: Verify installer
 echo.
 echo Step 7: Verifying installer...
-if not exist "%OUTPUT_NAME%" (
+set INSTALLER_PATH="scripts\deployment\%OUTPUT_NAME%"
+if not exist %INSTALLER_PATH% (
     echo.
     echo ERROR: Installer not created: %OUTPUT_NAME%
+    echo Expected location: %INSTALLER_PATH%
     pause
     exit /b 1
 )
 
 :: Get file size
-for %%F in ("%OUTPUT_NAME%") do set INSTALLER_SIZE=%%~zF
+for %%F in (%INSTALLER_PATH%) do set INSTALLER_SIZE=%%~zF
 set /a INSTALLER_SIZE_MB=!INSTALLER_SIZE!/1024/1024
 
 echo.
@@ -179,7 +193,7 @@ echo =======================================================
 echo Installer: %OUTPUT_NAME%
 echo Version: !FULL_VERSION!
 echo Size: !INSTALLER_SIZE_MB! MB
-echo Location: %cd%\%OUTPUT_NAME%
+echo Location: %cd%\scripts\deployment\%OUTPUT_NAME%
 echo =======================================================
 
 :: Step 8: Optional - Create release notes
