@@ -53,16 +53,12 @@
                 <Run Text="Before your first running, you need to configure it according to the following steps:&#x0A;" />
                 <Run Text="&#x0A;1. Open Windows LiveCaptions and follow the guide to download the necessary files for on-device speech recognition and language packs." />
                 <Run Text="&#x0A;2. Click the" />
-                <Run FontWeight="Bold" Text="⚙️ gear" />
-                <Run Text="icon in Windows LiveCaptions to open the settings menu, and select" />
-                <Run FontWeight="Bold" Text="&quot;Position &gt; Overlaid on screen&quot;" />
-                <Run Text=".&#x0A;3. Click the" />
                 <Run FontWeight="Bold" Text="&quot;Hide&quot;" />
                 <Run Text="button located in the setting page of LiveCaptions Translator to hide Windows LiveCaptions.&#x0A;" />
                 <Run Text="&#x0A;The program has automatically navigated to the setting page and opened Windows LiveCaptions." />
                 <Run Text="After completing the configuration, you can switch back to the main page and enjoy real-time audio translation." />
                 <Run Text="&#x0A;" />
-                <Run Text="For support, visit our official website: " />
+                <Run Text="Visit our official website: " />
                 <Hyperlink NavigateUri="https://aiallyouneed.dev" RequestNavigate="Hyperlink_RequestNavigate">
                     https://aiallyouneed.dev
                 </Hyperlink>

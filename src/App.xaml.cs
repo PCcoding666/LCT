@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿using System;
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿using System;
 using System.Threading;
 using System.Windows;
 using LiveCaptionsTranslator.utils;
@@ -103,10 +103,6 @@ namespace LiveCaptionsTranslator
                 return;
             }
 
-            // Add enterprise mode detection
-            bool enterpriseMode = CheckEnterpriseMode();
-            Log.Information("Enterprise mode: {EnterpriseMode}", enterpriseMode);
-
             base.OnStartup(e);
 
             try
@@ -146,10 +142,6 @@ namespace LiveCaptionsTranslator
                     
                     try
                     {
-                        // Startup successful, check if welcome page needs to be displayed
-                        bool isFirstRun = IsFirstRun();
-                        Log.Information("First run: {IsFirstRun}", isFirstRun);
-                        
                         // Create main window
                         Log.Information("Creating MainWindow instance");
                         _mainWindow = new MainWindow();
@@ -168,27 +160,22 @@ namespace LiveCaptionsTranslator
                         Log.Information("Closing splash window");
                         _splashWindow.Close();
                         
-                        // If first run, show welcome page
-                        if (isFirstRun)
+                        // Always show welcome window on every startup
+                        Log.Information("Showing welcome window");
+                        var welcomeWindow = new WelcomeWindow();
+                        welcomeWindow.Owner = _mainWindow;
+                        welcomeWindow.ShowDialog();
+                        
+                        // After welcome page closes, automatically initialize LiveCaptions
+                        Log.Information("Welcome window closed, initializing LiveCaptions");
+                        try
                         {
-                            Log.Information("First run detected, showing welcome window");
-                            var welcomeWindow = enterpriseMode ? 
-                                (Window)new EnterpriseWelcomeWindow() : 
-                                new WelcomeWindow();
-                            welcomeWindow.Owner = _mainWindow;
-                            welcomeWindow.ShowDialog();
-                            
-                            // After welcome page closes, automatically initialize LiveCaptions
-                            Log.Information("Welcome window closed, initializing LiveCaptions");
-                            try
-                            {
-                                Translator.InitializeLiveCaptions();
-                                Log.Information("LiveCaptions initialized successfully");
-                            }
-                            catch (Exception liveCaptionsEx)
-                            {
-                                Log.Warning(liveCaptionsEx, "Failed to initialize LiveCaptions, but application can continue");
-                            }
+                            Translator.InitializeLiveCaptions();
+                            Log.Information("LiveCaptions initialized successfully");
+                        }
+                        catch (Exception liveCaptionsEx)
+                        {
+                            Log.Warning(liveCaptionsEx, "Failed to initialize LiveCaptions, but application can continue");
                         }
                         
                         Log.Information("OnStartup completed successfully");
@@ -232,56 +219,7 @@ namespace LiveCaptionsTranslator
             }
         }
 
-        private bool CheckEnterpriseMode()
-        {
-            // Check if it's enterprise mode
-            // 1. Check if installation path contains Dell
-            string installPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-            Log.Debug("Checking for enterprise mode. Install path: {InstallPath}", installPath);
-            if (installPath.Contains("Dell") || installPath.Contains("dell"))
-            {
-                Log.Information("Enterprise mode detected based on install path.");
-                return true;
-            }
 
-            // 2. Check for enterprise flag file
-            string enterpriseFlagPath = System.IO.Path.Combine(
-                System.IO.Path.GetDirectoryName(installPath) ?? "", 
-                "enterprise.flag");
-            
-            var enterpriseFlagExists = System.IO.File.Exists(enterpriseFlagPath);
-            Log.Debug("Enterprise flag at {FlagPath} exists: {Exists}", enterpriseFlagPath, enterpriseFlagExists);
-            return enterpriseFlagExists;
-        }
-
-        private bool IsFirstRun()
-        {
-            // Check if it's first run
-            string settingsFile = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "LiveCaptionsTranslator",
-                "first_run.flag");
-            
-            if (!System.IO.File.Exists(settingsFile))
-            {
-                Log.Information("First run detected. Creating flag file at {FlagPath}", settingsFile);
-                // Create first run flag file
-                try
-                {
-                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(settingsFile) ?? "");
-                    System.IO.File.WriteAllText(settingsFile, DateTime.Now.ToString());
-                    return true;
-                }
-                catch(Exception ex)
-                {
-                    Log.Error(ex, "Failed to create first run flag file.");
-                    return true; // If unable to create file, still treat as first run
-                }
-            }
-            
-            Log.Debug("Not first run. Flag file exists at {FlagPath}", settingsFile);
-            return false;
-        }
 
         protected override void OnExit(ExitEventArgs e)
         {
