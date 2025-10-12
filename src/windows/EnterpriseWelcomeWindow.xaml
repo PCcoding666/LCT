@@ -16,6 +16,7 @@
     WindowBackdropType="Mica"
     WindowStartupLocation="CenterScreen"
     WindowStyle="None"
+    Icon="/images/AppIcon.ico"
     mc:Ignorable="d">
     <Grid>
         <Grid.RowDefinitions>
@@ -41,7 +42,7 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <Image Source="/src/resources/dell_logo.png" Width="60" Height="60" Margin="0,0,15,0"/>
+                <Image Source="/images/Logo.png" Width="60" Height="60" Margin="0,0,15,0"/>
                 <TextBlock Grid.Column="1"
                     HorizontalAlignment="Left"
                     FontSize="24"

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<OutputType Condition="'$(Configuration)' == 'Debug' And '$(TestMode)' == 'true'">Exe</OutputType>
@@ -28,11 +28,11 @@
 		<DebugType>embedded</DebugType>
 		<EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
 
-		<Title>LiveCaptions Translator</Title>
-		<Description>A real-time speech translation tool based on Windows LiveCaptions.</Description>
-		<Copyright>Copyright (c) 2024 SakiRinn and other contributors</Copyright>
-		<Authors>SakiRinn</Authors>
-		<ApplicationIcon>src\LiveCaptions-Translator.ico</ApplicationIcon>
+		<Title>DellLiveCaptionsTranslator</Title>
+		<Description>Professional real-time speech translation solution for enterprise and individual users</Description>
+		<Copyright>Copyright (c) 2024 Ai-All-You-Need-Platform Pte. Ltd.</Copyright>
+		<Authors>Ai-All-You-Need-Platform Pte. Ltd.</Authors>
+		<ApplicationIcon>images\AppIcon.ico</ApplicationIcon>
 
 		<Platforms>AnyCPU;ARM64</Platforms>
 		<StartupObject Condition="'$(Configuration)'=='Debug' And '$(TestMode)'=='true'">LiveCaptionsTranslator.Program</StartupObject>
@@ -43,6 +43,8 @@
 			<Generator>MSBuild:Compile</Generator>
 			<SubType>Designer</SubType>
 		</ApplicationDefinition>
+		<Resource Include="images\AppIcon.ico" />
+		<Resource Include="images\Logo.png" />
 		<Content Include="src\LiveCaptions-Translator.ico" />
 		
 		<PackageReference Include="Interop.UIAutomationClient" Version="10.19041.0" />
@@ -66,10 +68,8 @@
 		</PackageReference>
 	</ItemGroup>
 
-	<ItemGroup>
-		<Content Include="src\resources\dell_logo.png">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</Content>
-	</ItemGroup>
+
+
+
 
 </Project>

@@ -1,4 +1,4 @@
-﻿<Page
+﻿﻿<Page
     x:Class="LiveCaptionsTranslator.InfoPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -9,12 +9,20 @@
     Title="InfoPage"
     mc:Ignorable="d">
 
-    <ScrollViewer>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <ui:Card Margin="20" Padding="25">
             <StackPanel>
+                <!-- 公司Logo -->
+                <Image 
+                    Source="/images/Logo.png" 
+                    Width="80" 
+                    Height="80" 
+                    Margin="0,0,0,15"
+                    HorizontalAlignment="Center"/>
+                
                 <!-- 应用标题 -->
                 <TextBlock 
-                    Text="Dell LiveCaptions Translator (Local Edition)" 
+                    Text="DellLiveCaptionsTranslator" 
                     FontSize="20" 
                     FontWeight="Bold" 
                     Margin="0,0,0,20"
@@ -24,8 +32,8 @@
                 <ui:Card Margin="0,0,0,15" Padding="15">
                     <StackPanel>
                         <TextBlock Text="Version Information" FontWeight="Bold" Margin="0,0,0,10"/>
-                        <TextBlock Text="Version: 1.0.0 Dell Edition" Margin="0,0,0,5"/>
-                        <TextBlock Text="Build Date: 2024-01-01" Margin="0,0,0,5"/>
+                        <TextBlock Text="Version: 1.0.1 Professional Edition" Margin="0,0,0,5"/>
+                        <TextBlock Text="Build Date: 2025/10/12" Margin="0,0,0,5"/>
                         <TextBlock Text="Translation Engine: Ollama" Margin="0,0,0,5"/>
                     </StackPanel>
                 </ui:Card>
@@ -42,12 +50,17 @@
                     </StackPanel>
                 </ui:Card>
                 
-                <!-- 技术支持 -->
+                <!-- 公司信息 -->
                 <ui:Card Margin="0,0,0,15" Padding="15">
                     <StackPanel>
-                        <TextBlock Text="Technical Support" FontWeight="Bold" Margin="0,0,0,10"/>
-                        <TextBlock Text="For technical support and documentation, please contact:" Margin="0,0,0,5"/>
-                        <TextBlock Text="e1143754@u.nus.edu" Margin="0,0,0,5"/>
+                        <TextBlock Text="Company Information" FontWeight="Bold" Margin="0,0,0,10"/>
+                        <TextBlock Text="Ai-All-You-Need-Platform Pte. Ltd." Margin="0,0,0,5"/>
+                        <TextBlock Text="Official Website: " Margin="0,0,0,5">
+                            <Run Text="Official Website: "/>
+                            <Hyperlink NavigateUri="https://aiallyouneed.dev" RequestNavigate="Hyperlink_RequestNavigate">
+                                https://aiallyouneed.dev
+                            </Hyperlink>
+                        </TextBlock>
                     </StackPanel>
                 </ui:Card>
                 
@@ -55,9 +68,9 @@
                 <ui:Card Padding="15">
                     <StackPanel>
                         <TextBlock Text="About" FontWeight="Bold" Margin="0,0,0,10"/>
-                        <TextBlock Text="This Dell customized edition provides local AI-powered translation" Margin="0,0,0,5"/>
+                        <TextBlock Text="This professional edition provides local AI-powered translation" Margin="0,0,0,5"/>
                         <TextBlock Text="capabilities using Ollama, ensuring privacy and performance." Margin="0,0,0,5"/>
-                        <TextBlock Text="© 2024 Dell Technologies. All rights reserved." Margin="0,10,0,0" FontStyle="Italic"/>
+                        <TextBlock Text="© 2024 Ai-All-You-Need-Platform Pte. Ltd. All rights reserved." Margin="0,10,0,0" FontStyle="Italic"/>
                     </StackPanel>
                 </ui:Card>
             </StackPanel>

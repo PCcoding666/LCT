@@ -44,31 +44,31 @@ namespace LiveCaptionsTranslator
         {
             try
             {
-                // 设置数据源
-                ModelNameComboBox.ItemsSource = OllamaConfig.RecommendedModels;
-                
-                // 获取当前配置的模型名
+                // 为了保持简单，只显示当前选择的模型，不允许更改
                 var currentModelName = Translator.Setting?.OllamaConfig?.ModelName ?? "qwen3:4b-instruct-2507-q4_K_M";
                 
-                // 确保ComboBox显示正确的值
-                if (OllamaConfig.RecommendedModels.ContainsKey(currentModelName))
+                // 设置为只有一个选项（当前模型）
+                var singleModelList = new Dictionary<string, string>
                 {
-                    // 如果在推荐列表中，设置SelectedValue
-                    ModelNameComboBox.SelectedValue = currentModelName;
-                }
-                else
-                {
-                    // 如果不在推荐列表中，设置为自定义文本（保持用户输入的值）
-                    ModelNameComboBox.Text = currentModelName;
-                }
+                    { currentModelName, currentModelName }
+                };
                 
-                Console.WriteLine($"InitializeModelSelector: Current model = {currentModelName}, Selected = {ModelNameComboBox.SelectedValue}, Text = {ModelNameComboBox.Text}");
+                ModelNameComboBox.ItemsSource = singleModelList;
+                ModelNameComboBox.SelectedValue = currentModelName;
+                
+                Console.WriteLine($"InitializeModelSelector: Current model = {currentModelName}");
             }
             catch (System.Exception ex)
             {
                 Console.WriteLine($"InitializeModelSelector failed: {ex.Message}");
                 // 如果初始化失败，使用默认值
-                ModelNameComboBox.Text = "qwen3:4b-instruct-2507-q4_K_M";
+                var defaultModel = "qwen3:4b-instruct-2507-q4_K_M";
+                var defaultModelList = new Dictionary<string, string>
+                {
+                    { defaultModel, defaultModel }
+                };
+                ModelNameComboBox.ItemsSource = defaultModelList;
+                ModelNameComboBox.SelectedValue = defaultModel;
             }
         }
         
@@ -78,17 +78,16 @@ namespace LiveCaptionsTranslator
             {
                 var currentModelName = Translator.Setting?.OllamaConfig?.ModelName ?? "qwen3:4b-instruct-2507-q4_K_M";
                 
-                // 刷新显示
-                if (OllamaConfig.RecommendedModels.ContainsKey(currentModelName))
+                // 更新显示列表为只包含当前模型
+                var singleModelList = new Dictionary<string, string>
                 {
-                    ModelNameComboBox.SelectedValue = currentModelName;
-                }
-                else
-                {
-                    ModelNameComboBox.Text = currentModelName;
-                }
+                    { currentModelName, currentModelName }
+                };
                 
-                Console.WriteLine($"RefreshModelSelector: Current model = {currentModelName}, SelectedValue = {ModelNameComboBox.SelectedValue}, Text = {ModelNameComboBox.Text}");
+                ModelNameComboBox.ItemsSource = singleModelList;
+                ModelNameComboBox.SelectedValue = currentModelName;
+                
+                Console.WriteLine($"RefreshModelSelector: Current model = {currentModelName}");
             }
             catch (System.Exception ex)
             {
@@ -113,9 +112,9 @@ namespace LiveCaptionsTranslator
             // 预留给未来的多配置支持
             var messageBox = new Wpf.Ui.Controls.MessageBox
             {
-                Title = "提示",
-                Content = "多配置支持功能将在未来版本中提供。",
-                CloseButtonText = "确定"
+                Title = "Notice",
+                Content = "Multiple configuration support will be available in future versions.",
+                CloseButtonText = "OK"
             };
             messageBox.ShowDialogAsync();
         }
@@ -125,9 +124,9 @@ namespace LiveCaptionsTranslator
             // 预留给未来的多配置支持
             var messageBox = new Wpf.Ui.Controls.MessageBox
             {
-                Title = "提示",
-                Content = "无法删除唯一的配置。多配置支持功能将在未来版本中提供。",
-                CloseButtonText = "确定"
+                Title = "Notice",
+                Content = "Cannot delete the only configuration. Multiple configuration support will be available in future versions.",
+                CloseButtonText = "OK"
             };
             messageBox.ShowDialogAsync();
         }
@@ -144,9 +143,9 @@ namespace LiveCaptionsTranslator
                 Translator.Setting?.Save();
                 var messageBox = new Wpf.Ui.Controls.MessageBox
                 {
-                    Title = "成功",
-                    Content = "设置已保存成功！",
-                    CloseButtonText = "确定"
+                    Title = "Success",
+                    Content = "Settings saved successfully!",
+                    CloseButtonText = "OK"
                 };
                 messageBox.ShowDialogAsync();
                 this.Close();
@@ -155,9 +154,9 @@ namespace LiveCaptionsTranslator
             {
                 var errorBox = new Wpf.Ui.Controls.MessageBox
                 {
-                    Title = "保存失败",
-                    Content = $"保存设置时出现错误：{ex.Message}",
-                    CloseButtonText = "确定"
+                    Title = "Save Failed",
+                    Content = $"Error occurred while saving settings: {ex.Message}",
+                    CloseButtonText = "OK"
                 };
                 errorBox.ShowDialogAsync();
             }

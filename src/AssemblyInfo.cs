@@ -1,11 +1,11 @@
-﻿using System.Reflection;
+﻿﻿using System.Reflection;
 using System.Runtime.Versioning;
 using System.Windows;
 
 // Version information - These will be replaced by build scripts
 [assembly: AssemblyVersion("1.0.1.0")]
-[assembly: AssemblyFileVersion("1.0.1.280")]
-[assembly: AssemblyInformationalVersion("1.0.1+280")]
+[assembly: AssemblyFileVersion("1.0.1.281")]
+[assembly: AssemblyInformationalVersion("1.0.1+281")]
 
 // Assembly metadata
 [assembly: AssemblyTitle("DellLiveCaptionsTranslator")]
@@ -18,9 +18,9 @@ using System.Windows;
 [assembly: AssemblyCulture("")]
 
 // Build information - These will be set by the build system
-[assembly: AssemblyMetadata("GitCommitHash", "74bfb504d99e1cde9eefef52f4b6c7956c3d6af5")]
+[assembly: AssemblyMetadata("GitCommitHash", "47573ec01f157e9f611437ccd9415f70f698b143")]
 [assembly: AssemblyMetadata("GitBranch", "master")]
-[assembly: AssemblyMetadata("BuildTimestamp", "2025-10-12T15:13:35Z")]
+[assembly: AssemblyMetadata("BuildTimestamp", "2025-10-12T17:20:03Z")]
 [assembly: AssemblyMetadata("BuildConfiguration", "Release")]
 
 [assembly: SupportedOSPlatform("windows7.0")]
@@ -32,6 +32,12 @@ using System.Windows;
                                                 //(used if a resource is not found in the page,
                                                 // app, or any theme specific resource dictionaries)
 )]
+
+
+
+
+
+
 
 
 

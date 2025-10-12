@@ -7,7 +7,8 @@
                 Height="500"
                 WindowStartupLocation="CenterOwner"
                 ResizeMode="NoResize"
-                ShowInTaskbar="False">
+                ShowInTaskbar="False"
+                Icon="/images/AppIcon.ico">
     
     <ui:FluentWindow.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisConverter" />

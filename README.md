@@ -1,14 +1,14 @@
-# LiveCaptions Translator - Dell Local Edition
+# DellLiveCaptionsTranslator - Professional Edition
 
 ## Overview
 
-**✨ LiveCaptions Translator = Windows Live Captions + Local AI Translation ✨**
+**✨ DellLiveCaptionsTranslator = Windows Live Captions + Local AI Translation ✨**
 
-This is Dell's optimized local edition of LiveCaptions Translator, providing seamless real-time speech translation without requiring external APIs or internet connectivity. It leverages Windows' built-in Live Captions combined with local AI models via Ollama for private, secure, and efficient translation.
+A professional real-time speech translation solution that combines Windows' built-in Live Captions with local AI models via Ollama for private, secure, and efficient translation. Developed by Ai-All-You-Need-Platform Pte. Ltd.
 
 **🚀 Quick Start:** Download from releases and launch instantly!
 
-**🔒 Privacy First:** All translation happens locally on your Dell machine - no data leaves your device.
+**🔒 Privacy First:** All translation happens locally on your device - no data leaves your machine.
 
 ## Key Features
 
@@ -28,7 +28,7 @@ This is Dell's optimized local edition of LiveCaptions Translator, providing sea
 ### 🎨 **Modern Interface**
 - Clean Fluent UI that matches modern Windows aesthetics
 - Automatic light/dark theme switching based on system settings
-- **Dell Branding**: Features Dell logo in splash screen
+- Professional branding and user experience
 - Multiple viewing modes: standard and compact overlay
 
 ### 🪟 **Overlay Window**
@@ -99,7 +99,7 @@ Once configured, close Windows Live Captions and start using LiveCaptions Transl
 The application will automatically:
 - Download and install Ollama if not present
 - Pull the default translation model (qwen2.5:3b)
-- Configure optimal settings for your Dell hardware
+- Configure optimal settings for your hardware
 
 ## Configuration
 
@@ -141,30 +141,40 @@ Customize the following options in the **Settings** view:
 
 ## Privacy & Security
 
-✅ **Complete Local Processing**: All translation happens on your Dell device  
+✅ **Complete Local Processing**: All translation happens on your device  
 ✅ **No Internet Required**: Works offline after initial setup  
 ✅ **No Data Collection**: Your conversations never leave your machine  
 ✅ **Secure by Design**: No external API calls or cloud dependencies  
 ✅ **Enterprise Ready**: Suitable for confidential business communications  
 
-## Troubleshooting
+## Support and Contact
 
-### Common Issues
+### Company Information
+**Ai-All-You-Need-Platform Pte. Ltd.**  
+Official Website: [https://aiallyouneed.dev](https://aiallyouneed.dev)
+
+### Troubleshooting
+
+#### Common Issues
 - **Model Download Fails**: Check internet connection during initial setup
 - **Performance Issues**: Ensure adequate RAM and close unnecessary applications
 - **Live Captions Not Working**: Verify Windows version and accessibility settings
 - **Translation Delays**: Adjust API interval in settings for better performance
 
-### Support Resources
+#### Support Resources
 - Check logs in application data folder
 - Verify Ollama service status in Task Manager
 - Ensure Windows Live Captions is properly configured
-- Contact Dell support for hardware-specific optimizations
+- Visit our official website for documentation and support
 
 ## Technical Notes
 
 - Built with .NET 8.0 and WPF-UI framework
 - Uses Intel IPEX-LLM for hardware acceleration
-- Supports ARM64 architecture for future Dell devices
+- Supports ARM64 architecture for future compatibility
 - Implements SQLite for efficient local data storage
 - Features automatic error recovery and model management
+
+---
+
+**Copyright © 2024 Ai-All-You-Need-Platform Pte. Ltd. All rights reserved.**

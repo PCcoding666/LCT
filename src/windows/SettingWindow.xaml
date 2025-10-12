@@ -15,6 +15,7 @@
     ui:Design.Foreground="{DynamicResource TextFillColorPrimaryBrush}"
     WindowStartupLocation="CenterOwner"
     ResizeMode="NoResize"
+    Icon="/images/AppIcon.ico"
     mc:Ignorable="d">
 
     <Grid>
@@ -80,7 +81,8 @@
                                      SelectedValue="{Binding OllamaConfig.ModelName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      SelectedValuePath="Key"
                                      DisplayMemberPath="Value"
-                                     IsEditable="True"/>
+                                     IsEditable="False"/>
+                            <TextBlock Text="(Model selection feature coming soon)" Margin="0,5,0,0" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" FontStyle="Italic"/>
                         </StackPanel>
                         
                         <!-- 端口 -->
@@ -89,14 +91,16 @@
                             <ui:TextBox Text="{Binding OllamaConfig.Port, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                         </StackPanel>
                         
-                        <!-- 主机地址 -->
+                        <!-- 主机地址 - 隐藏 -->
+                        <!--
                         <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,15">
                             <TextBlock Text="Host Address" Margin="0,0,0,5" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                             <ui:TextBox Text="{Binding OllamaConfig.Host, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                         </StackPanel>
+                        -->
                         
                         <!-- Temperature -->
-                        <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,0,10,15">
+                        <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,10,15">
                             <TextBlock Text="Temperature" Margin="0,0,0,5" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                             <ui:NumberBox x:Name="TemperatureNumberBox" 
                                          Value="{Binding OllamaConfig.Temperature, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
@@ -106,7 +110,7 @@
                         </StackPanel>
                         
                         <!-- 超时设置 -->
-                        <StackPanel Grid.Row="2" Grid.Column="1" Margin="10,0,0,15">
+                        <StackPanel Grid.Row="1" Grid.Column="1" Margin="10,0,0,15">
                             <TextBlock Text="Timeout (seconds)" Margin="0,0,0,5" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                             <ui:NumberBox x:Name="TimeoutNumberBox" 
                                          Value="{Binding OllamaConfig.TimeoutSeconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 

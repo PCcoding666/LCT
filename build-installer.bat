@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 echo =======================================================
-echo Building LiveCaptions Translator with Version Management
+echo Building DellLiveCaptionsTranslator with Version Management
 echo =======================================================
 
 :: Configuration

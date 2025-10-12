@@ -1,4 +1,4 @@
-; NSIS Script for LiveCaptions Translator with Version Management
+; NSIS Script for DellLiveCaptionsTranslator with Version Management
 ; Auto-generated version support
 
 !include "MUI2.nsh"
@@ -10,7 +10,7 @@
 
 # --- Version and Application Information ---
 !define APP_NAME "DellLiveCaptionsTranslator-v1.0.1"
-!define COMPANY_NAME "Dell"
+!define COMPANY_NAME "Ai-All-You-Need-Platform"
 ; APP_VERSION can be overridden from command line
 !ifndef APP_VERSION
   !define APP_VERSION "1.0.0" ; Default version if not provided
@@ -63,15 +63,13 @@ VIAddVersionKey "OriginalFilename" "${INSTALLER_NAME}"
 ; !define MUI_WELCOMEFINISHPAGE_BITMAP "${PROJECT_ROOT}\images\installer-welcome.bmp" ; Optional: 164x314 pixels
 
 # --- Custom Pages ---
-!define MUI_WELCOMEPAGE_TITLE "Welcome to ${APP_NAME} v${APP_VERSION} Setup"
-!define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of ${APP_NAME}.\r\n\r\n${APP_NAME} is a real-time speech translation tool that works with Windows LiveCaptions to provide live translation of spoken content.\r\n\r\nClick Next to continue."
+!define MUI_WELCOMEPAGE_TITLE "Welcome to DellLiveCaptionsTranslator Setup"
+!define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of DellLiveCaptionsTranslator.$\r$\n$\r$\nDellLiveCaptionsTranslator is a professional real-time speech translation solution that works with Windows LiveCaptions to provide live translation of spoken content.$\r$\n$\r$\nClick Next to continue."
 
-!define MUI_FINISHPAGE_TITLE "${APP_NAME} v${APP_VERSION} Installation Complete"
-!define MUI_FINISHPAGE_TEXT "${APP_NAME} has been successfully installed on your computer.\r\n\r\nClick Finish to close this wizard."
+!define MUI_FINISHPAGE_TITLE "DellLiveCaptionsTranslator Installation Complete"
+!define MUI_FINISHPAGE_TEXT "DellLiveCaptionsTranslator has been successfully installed on your computer.$\r$\n$\r$\nClick Finish to close this wizard."
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${EXE_NAME}"
-!define MUI_FINISHPAGE_RUN_TEXT "Launch ${APP_NAME} now"
-!define MUI_FINISHPAGE_LINK "Visit the project website"
-!define MUI_FINISHPAGE_LINK_LOCATION "https://github.com/SakiRinn/LiveCaptions-Translator"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch DellLiveCaptionsTranslator now"
 
 # --- Pages ---
 !insertmacro MUI_PAGE_WELCOME
@@ -131,7 +129,7 @@ Section "Main Application" SecMain
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "UninstallString" '"$INSTDIR\uninstall.exe"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayIcon" "$INSTDIR\${EXE_NAME}"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "URLInfoAbout" "https://github.com/SakiRinn/LiveCaptions-Translator"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "URLInfoAbout" "https://aiallyouneed.dev"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "InstallLocation" "$INSTDIR"
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "NoModify" 1
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "NoRepair" 1

@@ -12,6 +12,7 @@
     ui:Design.Background="{DynamicResource ApplicationBackgroundBrush}"
     ui:Design.Foreground="{DynamicResource TextFillColorPrimaryBrush}"
     ExtendsContentIntoTitleBar="True"
+    Icon="/images/AppIcon.ico"
     ResizeMode="NoResize"
     WindowBackdropType="Mica"
     WindowStartupLocation="CenterScreen"
@@ -36,19 +37,19 @@
         </ui:TitleBar>
 
         <StackPanel Grid.Row="1" Background="{ui:ThemeResource SystemFillColorNeutralBackgroundBrush}">
-            <Image Source="../resources/dell_logo.png" Width="100" Height="100" Margin="20,10,20,0" HorizontalAlignment="Center" />
+            <Image Source="/images/Logo.png" Width="100" Height="100" Margin="20,10,20,0" HorizontalAlignment="Center" />
             <TextBlock
                 Margin="20"
                 HorizontalAlignment="Left"
                 FontSize="24"
                 FontWeight="Bold"
-                Text="Welcome to LiveCaptions Translator!"
+                Text="Welcome to DellLiveCaptionsTranslator!"
                 TextAlignment="Left" />
             <ui:TextBlock
                 Margin="20,10,20,10"
                 TextAlignment="Left"
                 TextWrapping="Wrap">
-                <Run Text="LiveCaptions Translator is based on Windows LiveCaptions." />
+                <Run Text="DellLiveCaptionsTranslator is based on Windows LiveCaptions." />
                 <Run Text="Before your first running, you need to configure it according to the following steps:&#x0A;" />
                 <Run Text="&#x0A;1. Open Windows LiveCaptions and follow the guide to download the necessary files for on-device speech recognition and language packs." />
                 <Run Text="&#x0A;2. Click the" />
@@ -59,10 +60,11 @@
                 <Run FontWeight="Bold" Text="&quot;Hide&quot;" />
                 <Run Text="button located in the setting page of LiveCaptions Translator to hide Windows LiveCaptions.&#x0A;" />
                 <Run Text="&#x0A;The program has automatically navigated to the setting page and opened Windows LiveCaptions." />
-                <Run Text="After completing the configuration, you can switch back to the main page and enjoy real-time audio translation.&#x0A;" />
-                <Run Text="&#x0A;For more details, visit our wiki: " />
-                <Hyperlink NavigateUri="https://github.com/SakiRinn/LiveCaptions-Translator/wiki" RequestNavigate="Hyperlink_RequestNavigate">
-                    https://github.com/SakiRinn/LiveCaptions-Translator/wiki
+                <Run Text="After completing the configuration, you can switch back to the main page and enjoy real-time audio translation." />
+                <Run Text="&#x0A;" />
+                <Run Text="For support, visit our official website: " />
+                <Hyperlink NavigateUri="https://aiallyouneed.dev" RequestNavigate="Hyperlink_RequestNavigate">
+                    https://aiallyouneed.dev
                 </Hyperlink>
             </ui:TextBlock>
 

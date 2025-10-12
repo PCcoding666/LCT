@@ -19,6 +19,7 @@
     ShowInTaskbar="False"
     Topmost="True"
     WindowStyle="None"
+    Icon="/images/AppIcon.ico"
     mc:Ignorable="d">
 
     <Window.Resources>
