@@ -258,9 +258,14 @@ namespace LiveCaptionsTranslator.utils
             
             string? line;
             var lastProgressUpdate = DateTime.Now;
-            var progressUpdateInterval = TimeSpan.FromSeconds(2); // 每2秒更新一次进度
+            var progressUpdateInterval = TimeSpan.FromSeconds(1); // Update every second for better UX
             var downloadStartTime = DateTime.Now;
             var maxDownloadTime = TimeSpan.FromMinutes(30); // Maximum download time 30 minutes
+            
+            // Track download statistics
+            long lastCompletedBytes = 0;
+            var downloadSpeedHistory = new System.Collections.Generic.Queue<double>();
+            const int SPEED_HISTORY_SIZE = 5; // Average over last 5 measurements
             
             while ((line = await reader.ReadLineAsync()) != null)
             {
@@ -288,37 +293,38 @@ namespace LiveCaptionsTranslator.utils
                         switch (status)
                         {
                             case "pulling manifest":
-                                ReportAndLog("Pulling model manifest...");
+                                ReportAndLog("[Model] Pulling model manifest...");
                                 _log.Information("[MODEL-DOWNLOAD] Status: pulling manifest");
                                 break;
                                 
                             case "downloading":
-                                // Process download progress
+                                // Process download progress with speed calculation
                                 if (DateTime.Now - lastProgressUpdate >= progressUpdateInterval)
                                 {
-                                    ProcessDownloadProgress(root);
+                                    ProcessDownloadProgressEnhanced(root, ref lastCompletedBytes, downloadSpeedHistory, downloadStartTime);
                                     lastProgressUpdate = DateTime.Now;
                                 }
                                 break;
                                 
                             case "verifying sha256":
-                                ReportAndLog("Verifying model file integrity...");
+                                ReportAndLog("[Model] Verifying model file integrity...");
                                 _log.Information("[MODEL-DOWNLOAD] Status: verifying sha256");
                                 break;
                                 
                             case "writing manifest":
-                                ReportAndLog("Writing model manifest...");
+                                ReportAndLog("[Model] Writing model manifest...");
                                 _log.Information("[MODEL-DOWNLOAD] Status: writing manifest");
                                 break;
                                 
                             case "removing any unused layers":
-                                ReportAndLog("Cleaning up unused layers...");
+                                ReportAndLog("[Model] Cleaning up unused layers...");
                                 _log.Information("[MODEL-DOWNLOAD] Status: removing unused layers");
                                 break;
                                 
                             case "success":
-                                ReportAndLog("Model download successful!");
-                                _log.Information("[MODEL-DOWNLOAD] Status: success - Download completed");
+                                var totalTime = (DateTime.Now - downloadStartTime).TotalSeconds;
+                                ReportAndLog($"[Model] Download completed successfully! (Total time: {totalTime:F0}s)");
+                                _log.Information("[MODEL-DOWNLOAD] Status: success - Download completed in {TotalTime:F1} seconds", totalTime);
                                 return;
                         }
                     }
@@ -364,7 +370,7 @@ namespace LiveCaptionsTranslator.utils
                     var completedMB = completed / 1024 / 1024;
                     var totalMB = total / 1024 / 1024;
                     
-                    var progressMessage = $"Model download progress: {percentage}% ({completedMB}MB / {totalMB}MB)";
+                    var progressMessage = $"[Model] Download progress: {percentage}% ({completedMB}MB / {totalMB}MB)";
                     ReportAndLog(progressMessage);
                     _log.Information("[MODEL-DOWNLOAD] Progress: {Percentage}% ({CompletedMB}MB / {TotalMB}MB)", 
                         percentage, completedMB, totalMB);
@@ -372,14 +378,14 @@ namespace LiveCaptionsTranslator.utils
                 else if (completed > 0)
                 {
                     var completedMB = completed / 1024 / 1024;
-                    var progressMessage = $"Downloaded: {completedMB}MB";
+                    var progressMessage = $"[Model] Downloaded: {completedMB}MB";
                     ReportAndLog(progressMessage);
                     _log.Information("[MODEL-DOWNLOAD] Downloaded: {CompletedMB}MB", completedMB);
                 }
                 else
                 {
                     // Handle cases where we don't have specific bytes info
-                    ReportAndLog("Model download in progress...");
+                    ReportAndLog("[Model] Download in progress...");
                     _log.Information("[MODEL-DOWNLOAD] Download in progress (no size info available)");
                 }
             }
@@ -387,6 +393,90 @@ namespace LiveCaptionsTranslator.utils
             {
                 _log.Debug("Failed to process download progress: {Error}", ex.Message);
             }
+        }
+        
+        private void ProcessDownloadProgressEnhanced(System.Text.Json.JsonElement root, 
+            ref long lastCompletedBytes, 
+            System.Collections.Generic.Queue<double> speedHistory,
+            DateTime downloadStartTime)
+        {
+            try
+            {
+                var completed = 0L;
+                var total = 0L;
+                
+                if (root.TryGetProperty("completed", out var completedElement))
+                {
+                    completed = completedElement.GetInt64();
+                }
+                
+                if (root.TryGetProperty("total", out var totalElement))
+                {
+                    total = totalElement.GetInt64();
+                }
+                
+                if (total > 0)
+                {
+                    var percentage = (int)((double)completed / total * 100);
+                    var completedMB = (double)completed / 1024 / 1024;
+                    var totalMB = (double)total / 1024 / 1024;
+                    
+                    // Calculate download speed
+                    var elapsedSeconds = (DateTime.Now - downloadStartTime).TotalSeconds;
+                    var currentSpeed = elapsedSeconds > 0 ? (completed - lastCompletedBytes) / elapsedSeconds / 1024 / 1024 : 0;
+                    
+                    // Update speed history for smoothing
+                    if (currentSpeed > 0)
+                    {
+                        speedHistory.Enqueue(currentSpeed);
+                        if (speedHistory.Count > 5) // Keep last 5 measurements
+                        {
+                            speedHistory.Dequeue();
+                        }
+                    }
+                    
+                    // Calculate average speed
+                    var avgSpeed = speedHistory.Count > 0 ? speedHistory.Average() : currentSpeed;
+                    
+                    // Calculate ETA
+                    var remainingBytes = total - completed;
+                    var etaSeconds = avgSpeed > 0 ? remainingBytes / (avgSpeed * 1024 * 1024) : 0;
+                    var etaFormatted = etaSeconds > 0 ? FormatTimeSpan(TimeSpan.FromSeconds(etaSeconds)) : "calculating...";
+                    
+                    lastCompletedBytes = completed;
+                    
+                    var progressMessage = $"[Model] Download: {percentage}% ({completedMB:F1}MB / {totalMB:F1}MB) - Speed: {avgSpeed:F2}MB/s - ETA: {etaFormatted}";
+                    ReportAndLog(progressMessage);
+                    _log.Information("[MODEL-DOWNLOAD] Progress: {Percentage}% ({CompletedMB:F1}MB / {TotalMB:F1}MB) - Speed: {Speed:F2}MB/s - ETA: {ETA}", 
+                        percentage, completedMB, totalMB, avgSpeed, etaFormatted);
+                }
+                else if (completed > 0)
+                {
+                    var completedMB = (double)completed / 1024 / 1024;
+                    var progressMessage = $"[Model] Downloaded: {completedMB:F1}MB";
+                    ReportAndLog(progressMessage);
+                    _log.Information("[MODEL-DOWNLOAD] Downloaded: {CompletedMB:F1}MB", completedMB);
+                }
+                else
+                {
+                    ReportAndLog("[Model] Download in progress...");
+                    _log.Information("[MODEL-DOWNLOAD] Download in progress (no size info available)");
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Debug("Failed to process enhanced download progress: {Error}", ex.Message);
+            }
+        }
+        
+        private string FormatTimeSpan(TimeSpan timeSpan)
+        {
+            if (timeSpan.TotalHours >= 1)
+                return $"{(int)timeSpan.TotalHours}h {timeSpan.Minutes}m";
+            else if (timeSpan.TotalMinutes >= 1)
+                return $"{(int)timeSpan.TotalMinutes}m {timeSpan.Seconds}s";
+            else
+                return $"{(int)timeSpan.TotalSeconds}s";
         }
         
         private async Task<bool> CheckIfModelExists(string modelListJson, string modelName)

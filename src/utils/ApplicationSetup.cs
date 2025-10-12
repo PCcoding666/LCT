@@ -13,7 +13,7 @@ namespace LiveCaptionsTranslator.utils
         // Application data directory
         public static readonly string AppDataPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "LiveCaptionsTranslator"
+            "DellLiveCaptionsTranslator"
         );
 
         // Ollama related paths

@@ -32,18 +32,20 @@ namespace LiveCaptionsTranslator.utils
         {
             _httpClient = new HttpClient();
             _httpClient.Timeout = TimeSpan.FromSeconds(TIMEOUT_SECONDS);
-            _httpClient.DefaultRequestHeaders.Add("User-Agent", "LiveCaptionsTranslator");
+            _httpClient.DefaultRequestHeaders.Add("User-Agent", "DellLiveCaptionsTranslator");
             _progress = progress;
         }
 
         public async Task DownloadOllamaAsync(string destinationPath)
         {
-            _progress?.Report("开始下载 Ollama...");
+            _progress?.Report("[Ollama] Starting download...");
             
             var tempPath = destinationPath + ".temp";
             var downloadedBytes = 0L;
+            var downloadStartTime = DateTime.Now;
+            var lastProgressUpdate = DateTime.Now;
             
-            // 获取下载 URL 列表（优先使用用户自定义的 URL）
+            // Get download URL list (prioritize user-defined URL)
             var allUrls = GetDownloadUrls();
             
             foreach (var url in allUrls)
@@ -51,7 +53,7 @@ namespace LiveCaptionsTranslator.utils
                 var retryCount = 0;
                 downloadedBytes = 0L;
                 
-                _progress?.Report($"尝试从 {url} 下载...");
+                _progress?.Report($"[Ollama] Attempting download from {url.Substring(0, Math.Min(60, url.Length))}...");
                 
                 while (retryCount < MAX_RETRIES)
                 {
@@ -60,7 +62,7 @@ namespace LiveCaptionsTranslator.utils
                         if (File.Exists(tempPath))
                         {
                             downloadedBytes = new FileInfo(tempPath).Length;
-                            _progress?.Report($"发现未完成的下载，从 {downloadedBytes} 字节处继续...");
+                            _progress?.Report($"[Ollama] Resuming download from {downloadedBytes / 1024 / 1024}MB...");
                         }
 
                         using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -84,6 +86,7 @@ namespace LiveCaptionsTranslator.utils
                             fileStream.Seek(downloadedBytes, SeekOrigin.Begin);
                             var buffer = new byte[BUFFER_SIZE];
                             var isMoreToRead = true;
+                            var lastReportedPercentage = -1;
 
                             do
                             {
@@ -100,48 +103,62 @@ namespace LiveCaptionsTranslator.utils
                                 if (totalBytes != -1L)
                                 {
                                     var percentage = (int)((double)downloadedBytes / totalBytes * 100);
-                                    _progress?.Report($"下载Ollama引擎: {percentage}% ({downloadedBytes / 1024 / 1024}MB / {totalBytes / 1024 / 1024}MB)");
+                                    var now = DateTime.Now;
+                                    
+                                    // Report progress every 5% or every 2 seconds
+                                    if (percentage != lastReportedPercentage && 
+                                        (percentage % 5 == 0 || (now - lastProgressUpdate).TotalSeconds >= 2))
+                                    {
+                                        var completedMB = (double)downloadedBytes / 1024 / 1024;
+                                        var totalMB = (double)totalBytes / 1024 / 1024;
+                                        var elapsedSeconds = (now - downloadStartTime).TotalSeconds;
+                                        var speed = elapsedSeconds > 0 ? completedMB / elapsedSeconds : 0;
+                                        
+                                        _progress?.Report($"[Ollama] Download: {percentage}% ({completedMB:F1}MB / {totalMB:F1}MB) - Speed: {speed:F2}MB/s");
+                                        lastReportedPercentage = percentage;
+                                        lastProgressUpdate = now;
+                                    }
                                 }
                             }
                             while (isMoreToRead);
                         }
 
-                        // 下载完成后，将临时文件重命名为目标文件
+                        // After download completes, rename temp file to destination
                         if (File.Exists(destinationPath))
                         {
                             File.Delete(destinationPath);
                         }
                         File.Move(tempPath, destinationPath);
 
-                        _progress?.Report("下载完成！");
-                        return; // 成功下载，退出
+                        _progress?.Report("[Ollama] Download completed!");
+                        return; // Successful download, exit
                     }
                     catch (Exception ex)
                     {
                         retryCount++;
                         if (retryCount < MAX_RETRIES)
                         {
-                            _progress?.Report($"从 {url} 下载失败，正在重试 ({retryCount}/{MAX_RETRIES}): {ex.Message}");
-                            await Task.Delay(1000 * retryCount); // 递增延迟
+                            _progress?.Report($"[Ollama] Download failed, retrying ({retryCount}/{MAX_RETRIES}): {ex.Message}");
+                            await Task.Delay(1000 * retryCount); // Incremental delay
                         }
                         else
                         {
-                            _progress?.Report($"从 {url} 下载失败: {ex.Message}");
-                            break; // 退出重试循环，尝试下一个 URL
+                            _progress?.Report($"[Ollama] Download failed from this source: {ex.Message}");
+                            break; // Exit retry loop, try next URL
                         }
                     }
                 }
             }
             
-            // 所有 URL 都失败
-            throw new Exception("所有下载源都不可用，请检查网络连接或联系开发者获取更新的下载链接。");
+            // All URLs failed
+            throw new Exception("All download sources unavailable. Please check network connection or contact support for updated download links.");
         }
 
         private string[] GetDownloadUrls()
         {
             var urls = new List<string>();
             
-            // 如果用户配置了自定义 URL，优先使用
+            // If user configured custom URL, use it first
             try
             {
                 var customUrl = Translator.Setting?.OllamaConfig?.CustomDownloadUrl;
@@ -152,10 +169,10 @@ namespace LiveCaptionsTranslator.utils
             }
             catch
             {
-                // 忽略配置读取错误
+                // Ignore configuration read errors
             }
             
-            // 添加默认链接
+            // Add default links
             urls.Add(INTEL_OLLAMA_URL);
             urls.AddRange(BACKUP_URLS);
             
@@ -164,23 +181,24 @@ namespace LiveCaptionsTranslator.utils
 
         public async Task<bool> ValidateDownloadAsync(string filePath)
         {
-            _progress?.Report("验证下载文件...");
+            _progress?.Report("[Ollama] Validating download...");
             
             if (!File.Exists(filePath))
             {
-                _progress?.Report("下载文件不存在！");
+                _progress?.Report("[Ollama] Downloaded file not found!");
                 return false;
             }
 
             try
             {
                 using var fileStream = File.OpenRead(filePath);
-                // TODO: 添加文件校验逻辑（如果Intel提供了校验和）
+                // TODO: Add file validation logic (if Intel provides checksums)
+                _progress?.Report("[Ollama] File validation passed.");
                 return true;
             }
             catch (Exception ex)
             {
-                _progress?.Report($"文件验证失败: {ex.Message}");
+                _progress?.Report($"[Ollama] File validation failed: {ex.Message}");
                 return false;
             }
         }

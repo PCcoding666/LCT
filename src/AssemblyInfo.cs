@@ -4,23 +4,23 @@ using System.Windows;
 
 // Version information - These will be replaced by build scripts
 [assembly: AssemblyVersion("1.0.1.0")]
-[assembly: AssemblyFileVersion("1.0.1.279")]
-[assembly: AssemblyInformationalVersion("1.0.1+279")]
+[assembly: AssemblyFileVersion("1.0.1.280")]
+[assembly: AssemblyInformationalVersion("1.0.1+280")]
 
 // Assembly metadata
-[assembly: AssemblyTitle("LiveCaptions Translator")]
-[assembly: AssemblyDescription("A real-time speech translation tool based on Windows LiveCaptions")]
+[assembly: AssemblyTitle("DellLiveCaptionsTranslator")]
+[assembly: AssemblyDescription("Dell Real-time Speech Translation Tool based on Windows LiveCaptions")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("SakiRinn and Contributors")]
-[assembly: AssemblyProduct("LiveCaptions Translator")]
-[assembly: AssemblyCopyright("Copyright Â© 2024 SakiRinn and other contributors")]
+[assembly: AssemblyCompany("Dell Technologies")]
+[assembly: AssemblyProduct("DellLiveCaptionsTranslator")]
+[assembly: AssemblyCopyright("Copyright © 2024 Dell Technologies")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
 // Build information - These will be set by the build system
-[assembly: AssemblyMetadata("GitCommitHash", "cced326aa320c69a30b9e8f87b4d46bb8b7b0f81")]
+[assembly: AssemblyMetadata("GitCommitHash", "74bfb504d99e1cde9eefef52f4b6c7956c3d6af5")]
 [assembly: AssemblyMetadata("GitBranch", "master")]
-[assembly: AssemblyMetadata("BuildTimestamp", "2025-10-11T09:56:07Z")]
+[assembly: AssemblyMetadata("BuildTimestamp", "2025-10-12T15:13:35Z")]
 [assembly: AssemblyMetadata("BuildConfiguration", "Release")]
 
 [assembly: SupportedOSPlatform("windows7.0")]
@@ -32,6 +32,10 @@ using System.Windows;
                                                 //(used if a resource is not found in the page,
                                                 // app, or any theme specific resource dictionaries)
 )]
+
+
+
+
 
 
 

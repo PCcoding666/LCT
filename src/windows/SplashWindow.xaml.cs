@@ -47,24 +47,30 @@ namespace LiveCaptionsTranslator.windows
                 // Update main status text
                 StatusText.Text = status;
 
-                // Handle model download progress specifically
-                if (status.Contains("Model download progress:"))
+                // Handle both Ollama and model download progress
+                if (status.Contains("[Model] Download:") || status.Contains("Model download progress:"))
                 {
                     HandleModelDownloadProgress(status);
                     return; // Don't update step status for progress updates
                 }
+                else if (status.Contains("[Ollama] Download:"))
+                {
+                    HandleOllamaDownloadProgress(status);
+                    return; // Don't update step status for progress updates
+                }
                 
                 // Show/hide model download progress bar
-                if (status.Contains("starting download") || status.Contains("Starting download"))
+                if (status.Contains("starting download") || status.Contains("Starting download") || status.Contains("[Model] Pulling"))
                 {
                     _isModelDownloading = true;
                     ModelDownloadProgressBar.Visibility = Visibility.Visible;
                     ModelDownloadProgressBar.Value = 0;
                 }
-                else if (status.Contains("download completed") || status.Contains("download successful"))
+                else if (status.Contains("download completed") || status.Contains("download successful") || status.Contains("Download completed successfully"))
                 {
                     _isModelDownloading = false;
                     ModelDownloadProgressBar.Visibility = Visibility.Collapsed;
+                    ModelDownloadProgressBar.Value = 100;
                 }
 
                 // Determine step index based on status message
@@ -220,34 +226,158 @@ namespace LiveCaptionsTranslator.windows
         {
             try
             {
-                // Extract percentage from status message
-                // Expected format: "Model download progress: 45% (123MB / 456MB)"
-                var percentageStart = status.IndexOf(": ") + 2;
-                var percentageEnd = status.IndexOf('%');
+                // Handle both old and new progress formats
+                // New format: "[Model] Download: 45% (123.5MB / 456.7MB) - Speed: 2.34MB/s - ETA: 2m 15s"
+                // Old format: "Model download progress: 45% (123MB / 456MB)"
                 
-                if (percentageStart > 1 && percentageEnd > percentageStart)
+                int percentage = 0;
+                string progressDetails = "";
+                
+                // Try new format first
+                if (status.Contains("[Model] Download:"))
                 {
-                    var percentageStr = status.Substring(percentageStart, percentageEnd - percentageStart);
-                    if (int.TryParse(percentageStr, out int percentage))
+                    var percentageStart = status.IndexOf(": ") + 2;
+                    var percentageEnd = status.IndexOf('%', percentageStart);
+                    
+                    if (percentageStart > 1 && percentageEnd > percentageStart)
                     {
-                        ModelDownloadProgressBar.Value = Math.Min(100, Math.Max(0, percentage));
-                        
-                        // Update progress text to show download progress
-                        var mbInfo = "";
-                        var mbStart = status.IndexOf('(');
-                        var mbEnd = status.IndexOf(')', mbStart);
-                        if (mbStart > -1 && mbEnd > mbStart)
+                        var percentageStr = status.Substring(percentageStart, percentageEnd - percentageStart);
+                        if (int.TryParse(percentageStr, out percentage))
                         {
-                            mbInfo = " - " + status.Substring(mbStart + 1, mbEnd - mbStart - 1);
+                            // Extract detailed info (MB/MB, speed, ETA)
+                            var detailsStart = status.IndexOf('(');
+                            var detailsEnd = status.LastIndexOf(')');
+                            if (detailsStart > -1 && detailsEnd > detailsStart)
+                            {
+                                // Get everything between first ( and last )
+                                var fullDetails = status.Substring(detailsStart + 1, detailsEnd - detailsStart - 1);
+                                
+                                // Extract MB info and speed/ETA
+                                var parts = status.Split(new[] { " - " }, StringSplitOptions.None);
+                                if (parts.Length >= 2)
+                                {
+                                    // Get MB info from first part
+                                    var mbStart = parts[0].IndexOf('(');
+                                    var mbEnd = parts[0].IndexOf(')', mbStart);
+                                    if (mbStart > -1 && mbEnd > mbStart)
+                                    {
+                                        var mbInfo = parts[0].Substring(mbStart + 1, mbEnd - mbStart - 1);
+                                        progressDetails = mbInfo;
+                                    }
+                                    
+                                    // Add speed if available
+                                    if (parts.Length >= 2 && parts[1].Contains("Speed:"))
+                                    {
+                                        var speedInfo = parts[1].Replace("Speed:", "").Trim();
+                                        progressDetails += $" @ {speedInfo}";
+                                    }
+                                    
+                                    // Add ETA if available
+                                    if (parts.Length >= 3 && parts[2].Contains("ETA:"))
+                                    {
+                                        var etaInfo = parts[2].Replace("ETA:", "").Trim();
+                                        progressDetails += $" ETA: {etaInfo}";
+                                    }
+                                }
+                            }
                         }
-                        
-                        ProgressText.Text = $"{percentage}%{mbInfo}";
+                    }
+                }
+                else // Try old format
+                {
+                    var percentageStart = status.IndexOf(": ") + 2;
+                    var percentageEnd = status.IndexOf('%');
+                    
+                    if (percentageStart > 1 && percentageEnd > percentageStart)
+                    {
+                        var percentageStr = status.Substring(percentageStart, percentageEnd - percentageStart);
+                        if (int.TryParse(percentageStr, out percentage))
+                        {
+                            var mbStart = status.IndexOf('(');
+                            var mbEnd = status.IndexOf(')', mbStart);
+                            if (mbStart > -1 && mbEnd > mbStart)
+                            {
+                                progressDetails = status.Substring(mbStart + 1, mbEnd - mbStart - 1);
+                            }
+                        }
+                    }
+                }
+                
+                // Update UI
+                if (percentage > 0)
+                {
+                    ModelDownloadProgressBar.Value = Math.Min(100, Math.Max(0, percentage));
+                    ProgressText.Text = $"{percentage}%";
+                    
+                    if (!string.IsNullOrEmpty(progressDetails))
+                    {
+                        // Show details in status text
+                        StatusText.Text = $"Downloading model: {progressDetails}";
                     }
                 }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Error parsing download progress: {ex.Message}");
+            }
+        }
+        
+        private void HandleOllamaDownloadProgress(string status)
+        {
+            try
+            {
+                // Format: "[Ollama] Download: 45% (123.5MB / 456.7MB) - Speed: 2.34MB/s"
+                int percentage = 0;
+                string progressDetails = "";
+                
+                var percentageStart = status.IndexOf(": ") + 2;
+                var percentageEnd = status.IndexOf('%', percentageStart);
+                
+                if (percentageStart > 1 && percentageEnd > percentageStart)
+                {
+                    var percentageStr = status.Substring(percentageStart, percentageEnd - percentageStart);
+                    if (int.TryParse(percentageStr, out percentage))
+                    {
+                        // Extract detailed info
+                        var parts = status.Split(new[] { " - " }, StringSplitOptions.None);
+                        if (parts.Length >= 1)
+                        {
+                            // Get MB info from first part
+                            var mbStart = parts[0].IndexOf('(');
+                            var mbEnd = parts[0].IndexOf(')', mbStart);
+                            if (mbStart > -1 && mbEnd > mbStart)
+                            {
+                                var mbInfo = parts[0].Substring(mbStart + 1, mbEnd - mbStart - 1);
+                                progressDetails = mbInfo;
+                            }
+                            
+                            // Add speed if available
+                            if (parts.Length >= 2 && parts[1].Contains("Speed:"))
+                            {
+                                var speedInfo = parts[1].Replace("Speed:", "").Trim();
+                                progressDetails += $" @ {speedInfo}";
+                            }
+                        }
+                    }
+                }
+                
+                // Update UI
+                if (percentage > 0)
+                {
+                    // Update overall progress bar for Ollama installation step
+                    var stepProgress = 20 + (percentage * 30 / 100); // Ollama is roughly 30% of total process
+                    ProgressBar.Value = Math.Min(100, Math.Max(0, stepProgress));
+                    ProgressText.Text = $"{percentage}%";
+                    
+                    if (!string.IsNullOrEmpty(progressDetails))
+                    {
+                        StatusText.Text = $"Downloading Ollama engine: {progressDetails}";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error parsing Ollama download progress: {ex.Message}");
             }
         }
     }

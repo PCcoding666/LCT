@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿using System;
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿using System;
 using System.Threading;
 using System.Windows;
 using LiveCaptionsTranslator.utils;
@@ -10,7 +10,7 @@ namespace LiveCaptionsTranslator
 {
     public partial class App : Application
     {
-        private const string AppMutexName = "LiveCaptionsTranslator-7E8A1B2C-F0A9-4AA4-A8AF-71354C4D5C2B";
+        private const string AppMutexName = "DellLiveCaptionsTranslator-7E8A1B2C-F0A9-4AA4-A8AF-71354C4D5C2B";
         private Mutex? _mutex;
 
         private SplashWindow? _splashWindow;
@@ -21,7 +21,7 @@ namespace LiveCaptionsTranslator
             // Initialize logger
             var logPath = System.IO.Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "LiveCaptionsTranslator",
+                "DellLiveCaptionsTranslator",
                 "logs",
                 "log-.txt"
             );

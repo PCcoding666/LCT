@@ -68,7 +68,7 @@ namespace LiveCaptionsTranslator.Utils
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 var copyrightAttr = assembly.GetCustomAttribute<AssemblyCopyrightAttribute>();
-                return copyrightAttr?.Copyright ?? "Copyright © 2024 SakiRinn and other contributors";
+                return copyrightAttr?.Copyright ?? "Copyright © 2024 Dell Technologies";
             }
         }
         
@@ -81,7 +81,7 @@ namespace LiveCaptionsTranslator.Utils
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 var companyAttr = assembly.GetCustomAttribute<AssemblyCompanyAttribute>();
-                return companyAttr?.Company ?? "SakiRinn and Contributors";
+                return companyAttr?.Company ?? "Dell Technologies";
             }
         }
         
@@ -94,7 +94,7 @@ namespace LiveCaptionsTranslator.Utils
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 var productAttr = assembly.GetCustomAttribute<AssemblyProductAttribute>();
-                return productAttr?.Product ?? "LiveCaptions Translator";
+                return productAttr?.Product ?? "DellLiveCaptionsTranslator";
             }
         }
         
@@ -107,7 +107,7 @@ namespace LiveCaptionsTranslator.Utils
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 var titleAttr = assembly.GetCustomAttribute<AssemblyTitleAttribute>();
-                return titleAttr?.Title ?? "LiveCaptions Translator";
+                return titleAttr?.Title ?? "DellLiveCaptionsTranslator";
             }
         }
         

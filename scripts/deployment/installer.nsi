@@ -9,8 +9,8 @@
 !insertmacro GetSize
 
 # --- Version and Application Information ---
-!define APP_NAME "LiveCaptions Translator"
-!define COMPANY_NAME "SakiRinn and Contributors"
+!define APP_NAME "DellLiveCaptionsTranslator-v1.0.1"
+!define COMPANY_NAME "Dell"
 ; APP_VERSION can be overridden from command line
 !ifndef APP_VERSION
   !define APP_VERSION "1.0.0" ; Default version if not provided
@@ -50,7 +50,7 @@ VIAddVersionKey "CompanyName" "${COMPANY_NAME}"
 VIAddVersionKey "FileDescription" "Real-time speech translation tool based on Windows LiveCaptions"
 VIAddVersionKey "FileVersion" "${APP_VERSION}"
 VIAddVersionKey "ProductVersion" "${APP_VERSION}"
-VIAddVersionKey "LegalCopyright" "Copyright © 2024 SakiRinn and other contributors"
+VIAddVersionKey "LegalCopyright" "Copyright © 2024 Dell Technologies"
 VIAddVersionKey "OriginalFilename" "${INSTALLER_NAME}"
 
 # --- Interface Settings ---

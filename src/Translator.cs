@@ -150,7 +150,7 @@ namespace LiveCaptionsTranslator
                 // Use same first run check logic as App.xaml.cs
                 string firstRunFlagPath = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "LiveCaptionsTranslator",
+                    "DellLiveCaptionsTranslator",
                     "first_run.flag");
                 
                 FirstUseFlag = !File.Exists(firstRunFlagPath);
