@@ -5,6 +5,7 @@ using System.IO.Compression;
 using System.Net.Http;
 using System.Reflection;
 using System.Threading.Tasks;
+using Serilog;
 
 namespace LiveCaptionsTranslator.utils
 {
@@ -72,25 +73,25 @@ namespace LiveCaptionsTranslator.utils
             try
             {
                 // Download Ollama
-                progress?.Report("Preparing to download Ollama engine...");
+                ReportProgress(progress, "Preparing to download Ollama engine...");
                 var downloader = new OllamaDownloader(progress);
                 await downloader.DownloadOllamaAsync(zipPath);
 
                 // Validate download
-                progress?.Report("Download completed, validating file...");
+                ReportProgress(progress, "Download completed, validating file...");
                 if (!await downloader.ValidateDownloadAsync(zipPath))
                 {
                     throw new Exception("Download file validation failed");
                 }
-                progress?.Report("File validation successful.");
+                ReportProgress(progress, "File validation successful.");
 
                 // Extract files
-                progress?.Report("Extracting Ollama...");
+                ReportProgress(progress, "Extracting Ollama...");
                 using (var archive = ZipFile.OpenRead(zipPath))
                 {
                     archive.ExtractToDirectory(OllamaPath, true);
                 }
-                progress?.Report("Extraction completed.");
+                ReportProgress(progress, "Extraction completed.");
 
                 // Ensure ollama.exe has execution permissions
                 var ollamaExePath = GetOllamaExecutablePath();
@@ -102,7 +103,7 @@ namespace LiveCaptionsTranslator.utils
                 // Write version file for subsequent startup verification
                 File.WriteAllText(VersionRecordFile, EXPECTED_OLLAMA_VERSION);
 
-                progress?.Report("Ollama engine installation completed!");
+                ReportProgress(progress, "Ollama engine installation completed!");
             }
             catch (HttpRequestException httpEx) when (httpEx.Message.Contains("404"))
             {
@@ -112,12 +113,12 @@ namespace LiveCaptionsTranslator.utils
                     "2. 稍后重试启动应用\n" +
                     "3. 联系开发者获取最新版本\n\n" +
                     $"技术详情：{httpEx.Message}";
-                progress?.Report(userFriendlyMessage);
+                ReportProgress(progress, userFriendlyMessage);
                 throw new ApplicationException(userFriendlyMessage, httpEx);
             }
             catch (Exception ex)
             {
-                progress?.Report($"Installation failed: {ex.Message}");
+                ReportProgress(progress, $"Installation failed: {ex.Message}");
                 throw;
             }
             finally
@@ -135,6 +136,15 @@ namespace LiveCaptionsTranslator.utils
                     }
                 }
             }
+        }
+        
+        /// <summary>
+        /// Helper method to report progress and log to file simultaneously
+        /// </summary>
+        private static void ReportProgress(IProgress<string>? progress, string message)
+        {
+            progress?.Report(message);
+            Log.Information("[SETUP] {Message}", message);
         }
 
         /// <summary>
@@ -165,17 +175,17 @@ namespace LiveCaptionsTranslator.utils
         {
             try
             {
-                progress?.Report("Creating directory structure...");
+                ReportProgress(progress, "Creating directory structure...");
                 EnsureDirectoryStructure();
 
-                progress?.Report("Starting download and installation of Ollama...");
+                ReportProgress(progress, "Starting download and installation of Ollama...");
                 await ExtractOllamaAsync(progress);
 
-                progress?.Report("Ollama environment setup completed.");
+                ReportProgress(progress, "Ollama environment setup completed.");
             }
             catch (Exception ex)
             {
-                progress?.Report($"First-time setup failed: {ex.Message}");
+                ReportProgress(progress, $"First-time setup failed: {ex.Message}");
                 throw new ApplicationException("First-time setup failed.", ex);
             }
         }

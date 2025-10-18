@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Serilog;
 
 namespace LiveCaptionsTranslator.utils
 {
@@ -27,6 +28,15 @@ namespace LiveCaptionsTranslator.utils
         private const int MAX_RETRIES = 3;
         private const int TIMEOUT_SECONDS = 300; // 5分钟超时
         private const int BUFFER_SIZE = 8192;
+        
+        /// <summary>
+        /// Helper method to report progress and log to file simultaneously
+        /// </summary>
+        private void ReportProgress(string message)
+        {
+            _progress?.Report(message);
+            Log.Information("[OLLAMA-DOWNLOAD] {Message}", message);
+        }
 
         public OllamaDownloader(IProgress<string>? progress = null)
         {
@@ -38,7 +48,7 @@ namespace LiveCaptionsTranslator.utils
 
         public async Task DownloadOllamaAsync(string destinationPath)
         {
-            _progress?.Report("[Ollama] Starting download...");
+            ReportProgress("[Ollama] Starting download...");
             
             var tempPath = destinationPath + ".temp";
             var downloadedBytes = 0L;
@@ -53,7 +63,7 @@ namespace LiveCaptionsTranslator.utils
                 var retryCount = 0;
                 downloadedBytes = 0L;
                 
-                _progress?.Report($"[Ollama] Attempting download from {url.Substring(0, Math.Min(60, url.Length))}...");
+                ReportProgress($"[Ollama] Attempting download from {url.Substring(0, Math.Min(60, url.Length))}...");
                 
                 while (retryCount < MAX_RETRIES)
                 {
@@ -62,7 +72,7 @@ namespace LiveCaptionsTranslator.utils
                         if (File.Exists(tempPath))
                         {
                             downloadedBytes = new FileInfo(tempPath).Length;
-                            _progress?.Report($"[Ollama] Resuming download from {downloadedBytes / 1024 / 1024}MB...");
+                            ReportProgress($"[Ollama] Resuming download from {downloadedBytes / 1024 / 1024}MB...");
                         }
 
                         using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -114,7 +124,7 @@ namespace LiveCaptionsTranslator.utils
                                         var elapsedSeconds = (now - downloadStartTime).TotalSeconds;
                                         var speed = elapsedSeconds > 0 ? completedMB / elapsedSeconds : 0;
                                         
-                                        _progress?.Report($"[Ollama] Download: {percentage}% ({completedMB:F1}MB / {totalMB:F1}MB) - Speed: {speed:F2}MB/s");
+                                        ReportProgress($"[Ollama] Download: {percentage}% ({completedMB:F1}MB / {totalMB:F1}MB) - Speed: {speed:F2}MB/s");
                                         lastReportedPercentage = percentage;
                                         lastProgressUpdate = now;
                                     }
@@ -130,7 +140,7 @@ namespace LiveCaptionsTranslator.utils
                         }
                         File.Move(tempPath, destinationPath);
 
-                        _progress?.Report("[Ollama] Download completed!");
+                        ReportProgress("[Ollama] Download completed!");
                         return; // Successful download, exit
                     }
                     catch (Exception ex)
@@ -138,12 +148,12 @@ namespace LiveCaptionsTranslator.utils
                         retryCount++;
                         if (retryCount < MAX_RETRIES)
                         {
-                            _progress?.Report($"[Ollama] Download failed, retrying ({retryCount}/{MAX_RETRIES}): {ex.Message}");
+                            ReportProgress($"[Ollama] Download failed, retrying ({retryCount}/{MAX_RETRIES}): {ex.Message}");
                             await Task.Delay(1000 * retryCount); // Incremental delay
                         }
                         else
                         {
-                            _progress?.Report($"[Ollama] Download failed from this source: {ex.Message}");
+                            ReportProgress($"[Ollama] Download failed from this source: {ex.Message}");
                             break; // Exit retry loop, try next URL
                         }
                     }
@@ -181,11 +191,11 @@ namespace LiveCaptionsTranslator.utils
 
         public async Task<bool> ValidateDownloadAsync(string filePath)
         {
-            _progress?.Report("[Ollama] Validating download...");
+            ReportProgress("[Ollama] Validating download...");
             
             if (!File.Exists(filePath))
             {
-                _progress?.Report("[Ollama] Downloaded file not found!");
+                ReportProgress("[Ollama] Downloaded file not found!");
                 return false;
             }
 
@@ -193,12 +203,12 @@ namespace LiveCaptionsTranslator.utils
             {
                 using var fileStream = File.OpenRead(filePath);
                 // TODO: Add file validation logic (if Intel provides checksums)
-                _progress?.Report("[Ollama] File validation passed.");
+                ReportProgress("[Ollama] File validation passed.");
                 return true;
             }
             catch (Exception ex)
             {
-                _progress?.Report($"[Ollama] File validation failed: {ex.Message}");
+                ReportProgress($"[Ollama] File validation failed: {ex.Message}");
                 return false;
             }
         }

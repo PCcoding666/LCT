@@ -62,6 +62,15 @@ namespace LiveCaptionsTranslator.utils
         private static string _downloadStatus = "";
         
         /// <summary>
+        /// Helper method to report progress and log to file simultaneously
+        /// </summary>
+        private static void ReportProgress(IProgress<string>? progress, string message)
+        {
+            progress?.Report(message);
+            Log.Information("[OLLAMA] {Message}", message);
+        }
+        
+        /// <summary>
         /// Get the configured model name from user settings
         /// Falls back to qwen3:4b-instruct-2507-q4_K_M if no configuration is available
         /// </summary>
@@ -182,28 +191,27 @@ namespace LiveCaptionsTranslator.utils
         {
             try
             {
-                progress?.Report("开始启动Ollama服务...");
+                ReportProgress(progress, "开始启动Ollama服务...");
                 Log.Information("🚀 OllamaGuardian.StartServer() 开始启动流程");
 
                 StopServer(progress);
 
-                progress?.Report("检查Ollama引擎安装状态...");
                 if (!ApplicationSetup.IsCorrectVersionInstalled())
                 {
-                    progress?.Report("Ollama 未正确安装或版本不匹配，请重新启动应用以触发自动安装。");
+                    ReportProgress(progress, "Ollama 未正确安装或版本不匹配，请重新启动应用以触发自动安装。");
                     return false;
                 }
-                progress?.Report("Ollama引擎检查通过。");
+                ReportProgress(progress, "Ollama引擎检查通过。");
 
                 var exePath = ApplicationSetup.GetOllamaExecutablePath();
-                progress?.Report($"Ollama可执行文件: {exePath}");
+                ReportProgress(progress, $"Ollama可执行文件: {exePath}");
                 if (!File.Exists(exePath))
                 {
-                    progress?.Report("错误: Ollama可执行文件不存在。");
+                    ReportProgress(progress, "错误: Ollama可执行文件不存在。");
                     return false;
                 }
 
-                progress?.Report("配置Ollama环境变量 (GPU加速)...");
+                ReportProgress(progress, "配置Ollama环境变量 (GPU加速)...");
                 var startInfo = new ProcessStartInfo
                 {
                     FileName = exePath,
@@ -216,57 +224,63 @@ namespace LiveCaptionsTranslator.utils
                 };
 
                 startInfo.EnvironmentVariables["OLLAMA_MODELS"] = ApplicationSetup.ModelPath;
-                startInfo.EnvironmentVariables["OLLAMA_HOST"] = "127.0.0.1:11434";
+                
+                // 从配置中动态获取Host和Port，确保与客户端连接配置一致
+                var config = Translator.Setting.OllamaConfig as OllamaConfig;
+                var host = config?.Host ?? "127.0.0.1";
+                var port = config?.Port ?? 11434;
+                startInfo.EnvironmentVariables["OLLAMA_HOST"] = $"{host}:{port}";
+                
                 startInfo.EnvironmentVariables["OLLAMA_NUM_GPU"] = "999";
                 startInfo.EnvironmentVariables["ZES_ENABLE_SYSMAN"] = "1";
                 startInfo.EnvironmentVariables["SYCL_CACHE_PERSISTENT"] = "1";
 
-                progress?.Report("正在启动Ollama服务器进程...");
+                ReportProgress(progress, "正在启动Ollama服务器进程...");
                 ollamaProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-                ollamaProcess.ErrorDataReceived += (s, e) => { if(e.Data != null) progress?.Report($"[Ollama Error] {e.Data}"); };
-                ollamaProcess.OutputDataReceived += (s, e) => { if(e.Data != null) progress?.Report($"[Ollama] {e.Data}"); };
+                ollamaProcess.ErrorDataReceived += (s, e) => { if(e.Data != null) ReportProgress(progress, $"[Ollama Error] {e.Data}"); };
+                ollamaProcess.OutputDataReceived += (s, e) => { if(e.Data != null) ReportProgress(progress, $"[Ollama] {e.Data}"); };
 
                 ollamaProcess.Start();
                 ollamaProcess.BeginErrorReadLine();
                 ollamaProcess.BeginOutputReadLine();
-                progress?.Report($"Ollama服务器进程已启动，PID: {ollamaProcess.Id}");
+                ReportProgress(progress, $"Ollama服务器进程已启动，PID: {ollamaProcess.Id}");
 
-                progress?.Report("等待Ollama服务响应...");
+                ReportProgress(progress, "等待Ollama服务响应...");
                 var startTime = DateTime.Now;
                 while ((DateTime.Now - startTime).TotalSeconds < MAX_STARTUP_WAIT_SECONDS)
                 {
                     if (IsServerOnline(progress))
                     {
-                        progress?.Report("Ollama服务已在线。");
+                        ReportProgress(progress, "Ollama服务已在线。");
                         if (DownloadAndInitializeModel(progress))
                         {
-                            progress?.Report("模型加载成功，正在进行最终验证...");
+                            ReportProgress(progress, "模型加载成功，正在进行最终验证...");
                             if (TestModel(progress))
                             {
-                                progress?.Report("Ollama服务完全就绪！");
+                                ReportProgress(progress, "Ollama服务完全就绪！");
                                 return true;
                             }
                         }
-                        progress?.Report("模型初始化失败。");
+                        ReportProgress(progress, "模型初始化失败。");
                         return false;
                     }
                     Thread.Sleep(HEALTH_CHECK_INTERVAL_MS);
                 }
 
-                progress?.Report("Ollama服务器启动超时。");
+                ReportProgress(progress, "Ollama服务器启动超时。");
                 StopServer(progress);
                 return false;
             }
             catch (Exception ex)
             {
-                progress?.Report($"启动Ollama服务器时发生致命错误: {ex.Message}");
+                ReportProgress(progress, $"启动Ollama服务器时发生致命错误: {ex.Message}");
                 return false;
             }
         }
 
         public static void StopServer(IProgress<string>? progress = null)
         {
-            progress?.Report("正在停止所有Ollama进程...");
+            ReportProgress(progress, "正在停止所有Ollama进程...");
             try
             {
                 var processes = Process.GetProcessesByName(OLLAMA_PROCESS_NAME);
@@ -275,17 +289,17 @@ namespace LiveCaptionsTranslator.utils
                     try
                     {
                         process.Kill();
-                        progress?.Report($"已终止进程 PID: {process.Id}");
+                        ReportProgress(progress, $"已终止进程 PID: {process.Id}");
                     }
                     catch (Exception ex)
                     {
-                        progress?.Report($"终止进程 PID: {process.Id} 失败: {ex.Message}");
+                        ReportProgress(progress, $"终止进程 PID: {process.Id} 失败: {ex.Message}");
                     }
                 }
             }
             catch (Exception ex)
             {
-                progress?.Report($"查找Ollama进程失败: {ex.Message}");
+                ReportProgress(progress, $"查找Ollama进程失败: {ex.Message}");
             }
             ollamaProcess = null;
         }
@@ -295,19 +309,19 @@ namespace LiveCaptionsTranslator.utils
             try
             {
                 var modelName = GetConfiguredModelName();
-                progress?.Report($"开始下载并初始化模型 {modelName}...");
+                ReportProgress(progress, $"开始下载并初始化模型 {modelName}...");
                 if (IsModelLoaded(progress))
                 {
-                    progress?.Report("模型已存在，跳过下载。");
+                    ReportProgress(progress, "模型已存在，跳过下载。");
                     return true;
                 }
 
-                progress?.Report("模型不存在，开始从网络拉取...");
+                ReportProgress(progress, "模型不存在，开始从网络拉取...");
                 return DownloadModelWithProgress(progress);
             }
             catch (Exception ex)
             {
-                progress?.Report($"下载和初始化模型失败: {ex.Message}");
+                ReportProgress(progress, $"下载和初始化模型失败: {ex.Message}");
                 return false;
             }
         }
@@ -315,7 +329,7 @@ namespace LiveCaptionsTranslator.utils
         private static bool DownloadModelWithProgress(IProgress<string>? progress = null)
         {
             var modelName = GetConfiguredModelName();
-            progress?.Report($"触发模型 {modelName} 下载... (这可能需要很长时间)");
+            ReportProgress(progress, $"触发模型 {modelName} 下载... (这可能需要很长时间)");
             using (var client = new HttpClient())
             {
                 client.Timeout = TimeSpan.FromSeconds(HTTP_CLIENT_TIMEOUT_SECONDS);
@@ -328,7 +342,7 @@ namespace LiveCaptionsTranslator.utils
                     {
                         if (!response.IsSuccessStatusCode)
                         {
-                            progress?.Report($"模型拉取请求失败: {response.StatusCode}");
+                            ReportProgress(progress, $"模型拉取请求失败: {response.StatusCode}");
                             return false;
                         }
 
@@ -338,10 +352,10 @@ namespace LiveCaptionsTranslator.utils
                             string? line;
                             while ((line = reader.ReadLine()) != null)
                             {
-                                progress?.Report($"[下载] {line}");
+                                ReportProgress(progress, $"[下载] {line}");
                                 if (line.Contains("success", StringComparison.OrdinalIgnoreCase))
                                 {
-                                    progress?.Report("模型文件下载完成。");
+                                    ReportProgress(progress, "模型文件下载完成。");
                                     return true; // 等待加载和最终测试
                                 }
                             }
@@ -350,7 +364,7 @@ namespace LiveCaptionsTranslator.utils
                 }
                 catch (Exception ex)
                 { 
-                    progress?.Report($"下载模型时出错: {ex.Message}");
+                    ReportProgress(progress, $"下载模型时出错: {ex.Message}");
                     return false;
                 }
             }
@@ -361,7 +375,7 @@ namespace LiveCaptionsTranslator.utils
         {
             try
             {
-                progress?.Report("正在测试模型可用性...");
+                ReportProgress(progress, "正在测试模型可用性...");
                 using var client = new HttpClient();
                 client.Timeout = TimeSpan.FromSeconds(30);
                 var modelName = GetConfiguredModelName();
@@ -371,18 +385,18 @@ namespace LiveCaptionsTranslator.utils
 
                 if (response.IsSuccessStatusCode)
                 {
-                    progress?.Report("模型测试成功！");
+                    ReportProgress(progress, "模型测试成功！");
                     return true;
                 }
                 else
                 {
-                    progress?.Report($"模型测试失败: {response.StatusCode}");
+                    ReportProgress(progress, $"模型测试失败: {response.StatusCode}");
                     return false;
                 }
             }
             catch (Exception ex)
             {
-                progress?.Report($"模型测试时发生异常: {ex.Message}");
+                ReportProgress(progress, $"模型测试时发生异常: {ex.Message}");
                 return false;
             }
         }
@@ -399,13 +413,13 @@ namespace LiveCaptionsTranslator.utils
                     var content = response.Content.ReadAsStringAsync().Result;
                     var modelName = GetConfiguredModelName();
                     bool loaded = content.Contains(modelName);
-                    progress?.Report($"检查本地模型: {(loaded ? "已存在" : "未找到")}");
+                    ReportProgress(progress, $"检查本地模型: {(loaded ? "已存在" : "未找到")}");
                     return loaded;
                 }
             }
             catch (Exception ex)
             {
-                progress?.Report($"检查本地模型失败: {ex.Message}");
+                ReportProgress(progress, $"检查本地模型失败: {ex.Message}");
             }
             return false;
         }
