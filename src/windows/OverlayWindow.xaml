@@ -19,7 +19,7 @@
     ShowInTaskbar="False"
     Topmost="True"
     WindowStyle="None"
-    Icon="/images/AppIcon.ico"
+    Icon="/images/LCT_logo.ico"
     mc:Ignorable="d">
 
     <Window.Resources>

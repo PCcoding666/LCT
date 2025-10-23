@@ -40,7 +40,7 @@ if ($portInfo) {
 # Step 2: Clean application data directories
 Write-Host "`nStep 2: Cleaning application data directories..." -ForegroundColor Cyan
 
-$appDataPath = "$env:LOCALAPPDATA\LiveCaptionsTranslator"
+$appDataPath = "$env:LOCALAPPDATA\LCT"
 $ollamaPath = "$appDataPath\ollama"
 $modelsPath = "$appDataPath\models"
 $downloadsPath = "$appDataPath\downloads"
@@ -168,7 +168,7 @@ Write-Host "4. Monitor progress in the splash screen" -ForegroundColor Cyan
 
 Write-Host "`nIf issues persist:" -ForegroundColor Yellow
 Write-Host "- Run: .\diagnose-startup-issue-en.ps1" -ForegroundColor Cyan
-Write-Host "- Check logs in: $env:LOCALAPPDATA\LiveCaptionsTranslator\logs" -ForegroundColor Cyan
+Write-Host "- Check logs in: $env:LOCALAPPDATA\LCT\logs" -ForegroundColor Cyan
 Write-Host "- Consider using a VPN if download fails" -ForegroundColor Cyan
 
 $startChoice = Read-Host "`nWould you like to start the application now? (y/N)"

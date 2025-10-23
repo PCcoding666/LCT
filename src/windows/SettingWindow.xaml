@@ -15,7 +15,7 @@
     ui:Design.Foreground="{DynamicResource TextFillColorPrimaryBrush}"
     WindowStartupLocation="CenterOwner"
     ResizeMode="NoResize"
-    Icon="/images/AppIcon.ico"
+    Icon="/images/LCT_logo.ico"
     mc:Ignorable="d">
 
     <Grid>

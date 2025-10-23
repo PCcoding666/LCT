@@ -4,7 +4,7 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
-Write-Host "Dell LiveCaptions Translator (Local Edition) 离线资源配置" -ForegroundColor Cyan
+Write-Host "LCT (LiveCaptions Translator) - Local Edition 离线资源配置" -ForegroundColor Cyan
 Write-Host "=======================================" -ForegroundColor Cyan
 
 # 检查离线资源目录是否存在
@@ -13,8 +13,8 @@ if (!(Test-Path $OfflineResourcesPath)) {
     Exit 1
 }
 
-# 获取应用数据目录路径 - Dell Local Edition
-$appDataPath = [System.IO.Path]::Combine($env:LOCALAPPDATA, "Dell LiveCaptions Translator")
+# 获取应用数据目录路径 - LCT Local Edition
+$appDataPath = [System.IO.Path]::Combine($env:LOCALAPPDATA, "LCT")
 $ollamaPath = [System.IO.Path]::Combine($appDataPath, "ollama")
 $modelPath = [System.IO.Path]::Combine($appDataPath, "models")
 

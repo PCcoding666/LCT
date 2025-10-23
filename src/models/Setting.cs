@@ -15,7 +15,7 @@ namespace LiveCaptionsTranslator.models
         public static readonly string FILENAME = "setting.json";
         public static string SettingPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), 
-            "DellLiveCaptionsTranslator", 
+            "LCT", 
             FILENAME
         );
 

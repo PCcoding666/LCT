@@ -8,7 +8,7 @@
                 WindowStartupLocation="CenterOwner"
                 ResizeMode="NoResize"
                 ShowInTaskbar="False"
-                Icon="/images/AppIcon.ico">
+                Icon="/images/LCT_logo.ico">
     
     <ui:FluentWindow.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisConverter" />

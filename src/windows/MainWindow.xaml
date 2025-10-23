@@ -6,14 +6,14 @@
     xmlns:local="clr-namespace:LiveCaptionsTranslator"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
-    Title="DellLiveCaptionsTranslator"
+    Title="LCT (LiveCaptions Translator)"
     Width="750"
     Height="170"
     MinWidth="750"
     MinHeight="170"
     Background="Transparent"
     ExtendsContentIntoTitleBar="True"
-    Icon="/images/AppIcon.ico"
+    Icon="/images/LCT_logo.ico"
     LocationChanged="MainWindow_LocationChanged"
     ResizeMode="CanResizeWithGrip"
     SizeChanged="MainWindow_SizeChanged"
@@ -35,7 +35,7 @@
                 Height="27"
                 ShowMaximize="False">
                 <ui:TitleBar.Header>
-                    <ui:TextBlock Padding="15,0,0,0" VerticalAlignment="Center">DellLiveCaptionsTranslator</ui:TextBlock>
+                    <ui:TextBlock Padding="15,0,0,0" VerticalAlignment="Center">LCT (LiveCaptions Translator)</ui:TextBlock>
                 </ui:TitleBar.Header>
                 <ui:TitleBar.TrailingContent>
                     <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">

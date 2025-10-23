@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 echo =======================================================
-echo Building DellLiveCaptionsTranslator with Version Management
+echo Building LCT (LiveCaptions Translator) with Version Management
 echo =======================================================
 
 :: Configuration
@@ -161,7 +161,7 @@ echo Output: %OUTPUT_NAME%
 :: Step 6: Compile installer with NSIS
 echo.
 echo Step 6: Compiling installer with NSIS...
-set OUTPUT_NAME=DellLiveCaptionsTranslator-v%VERSION_NUMBER%-Setup.exe
+set OUTPUT_NAME=LCT-v%VERSION_NUMBER%-Setup.exe
 %NSIS_PATH% /DPROJECT_ROOT="%cd%" /DAPP_VERSION="%VERSION_NUMBER%" /DOUTPUT_NAME="%OUTPUT_NAME%" "%INSTALLER_SCRIPT%"
 if %errorlevel% neq 0 (
     echo.

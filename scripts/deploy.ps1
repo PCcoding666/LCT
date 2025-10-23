@@ -213,7 +213,7 @@ try {
 
 ## Download
 
-- Windows Installer: LiveCaptionsTranslator-v$($versionInfo.VersionPrefix)-Setup.exe
+- Windows Installer: LCT-v$($versionInfo.VersionPrefix)-Setup.exe
 - Portable Version: Available in artifacts
 
 ## System Requirements

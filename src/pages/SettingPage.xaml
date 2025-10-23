@@ -61,7 +61,7 @@
                     <TextBlock Margin="2.5,0,0,5" VerticalAlignment="Center" Text="Target Language" />
                     <ui:Flyout x:Name="TargetLangInfoFlyout">
                         <TextBlock Width="300" TextWrapping="Wrap">
-                            <Run Text="For Dell Local Edition (Ollama), you can use any language name or code." />
+                            <Run Text="For LCT Local Edition (Ollama), you can use any language name or code." />
                             <Run FontWeight="Bold" Text="&#x0A;&#x0A;Examples:" />
                             <Run Text="Chinese, zh-CN, Japanese, ja, French, fr, etc." />
                         </TextBlock>

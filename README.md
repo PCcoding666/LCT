@@ -1,8 +1,8 @@
-# DellLiveCaptionsTranslator - Professional Edition
+# LCT (LiveCaptions Translator) - Professional Edition
 
 ## Overview
 
-**✨ DellLiveCaptionsTranslator = Windows Live Captions + Local AI Translation ✨**
+**✨ LCT (LiveCaptions Translator) = Windows Live Captions + Local AI Translation ✨**
 
 A professional real-time speech translation solution that combines Windows' built-in Live Captions with local AI models via Ollama for private, secure, and efficient translation. Developed by Ai-All-You-Need-Platform Pte. Ltd.
 
@@ -67,34 +67,48 @@ A professional real-time speech translation solution that combines Windows' buil
 
 > ⚠️ **Important**: This tool is based on Windows Live Captions, available since **Windows 11 22H2**.
 
-## Quick Setup Guide
+## Getting Started
 
-> ⚠️ **Important**: You must complete these steps before first running LiveCaptions Translator.
+> ⚠️ **IMPORTANT:** Complete the following setup before running LCT for the first time.
+>
+> For more details, see Microsoft's guide: [Using live captions to better understand audio](https://support.microsoft.com/en-us/windows/use-live-captions-to-better-understand-audio-b52da59c-14b8-4031-aeeb-f6a47e6055df)
 
 ### Step 1: Verify Windows Live Captions Availability
 
-Confirm Live Captions is available on your system using any of these methods:
-- Toggle **Live captions** in Quick Settings
-- Press **Win + Ctrl + L**
-- Access via **Quick Settings** > **Accessibility** > **Live captions**
-- Open **Start** > **All apps** > **Accessibility** > **Live captions**
-- Navigate to **Settings** > **Accessibility** > **Captions** and enable **Live captions**
+Ensure Live Captions is available on your system through any of these methods:
 
-### Step 2: Configure Windows Live Captions
+- Toggle **Live captions** in the Quick Settings panel
+- Use the keyboard shortcut **Win + Ctrl + L**
+- Navigate to **Quick Settings** > **Accessibility** > **Live captions**
+- Access from **Start** > **All apps** > **Accessibility** > **Live captions**
+- Go to **Settings** > **Accessibility** > **Captions** and toggle on **Live captions**
 
-On first launch, Windows Live Captions will:
-1. Request consent to process speech data on your device
-2. Prompt you to download language files for on-device speech recognition
+### Step 2: Initial Live Captions Configuration
 
-After starting Windows Live Captions:
-1. Click the **⚙️gear** icon to open settings
-2. Select **Position** > **Overlay on screen**
+When you first launch Windows Live Captions, it will:
+1. Request permission to process voice data locally on your device
+2. Prompt you to download the necessary language files for on-device speech recognition
 
-> ⚠️ **Critical!** This prevents display bugs when Live Captions is hidden.
+After the initial setup, configure the following settings:
+1. Click the **⚙️ gear** icon in Live Captions to open settings
+2. In **Change language**, select your **source language** (the language to be recognized)
+3. Under **Position**, select **Overlaid on screen**
 
-### Step 3: Launch LiveCaptions Translator
+> ⚠️ **Critical:** The position setting is required to prevent display issues when Live Captions runs in the background.
 
-Once configured, close Windows Live Captions and start using LiveCaptions Translator! 🎉
+### Step 3: Enable Microphone Audio (Optional)
+
+To enable real-time translation of your own speech through the microphone:
+
+1. In Live Captions, click the **⚙️ gear** icon
+2. Go to **Preferences**
+3. Check **Include microphone audio**
+
+This allows LCT to capture and translate both system audio and your microphone input simultaneously.
+
+### Step 4: Launch LCT
+
+After completing the configuration, close Windows Live Captions and start LiveCaptions Translator! 🎉
 
 The application will automatically:
 - Download and install Ollama if not present

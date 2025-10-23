@@ -1,10 +1,10 @@
 @echo off
 :: 将此文件添加到 /scripts/deployment/startup.bat
-echo Dell LiveCaptions Translator (Local Edition)
+echo LCT (LiveCaptions Translator) - Local Edition
 echo =========================================
 echo 正在检查Ollama理路...
 
-REM 检查Ollama服务 - Dell Local Edition 只使用Ollama
+REM 检查Ollama服务 - LCT Local Edition 只使用Ollama
 tasklist /FI "IMAGENAME eq ollama.exe" | find "ollama.exe" > nul
 if errorlevel 1 (
     echo 正在启动Ollama服务...

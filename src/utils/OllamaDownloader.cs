@@ -42,7 +42,7 @@ namespace LiveCaptionsTranslator.utils
         {
             _httpClient = new HttpClient();
             _httpClient.Timeout = TimeSpan.FromSeconds(TIMEOUT_SECONDS);
-            _httpClient.DefaultRequestHeaders.Add("User-Agent", "DellLiveCaptionsTranslator");
+            _httpClient.DefaultRequestHeaders.Add("User-Agent", "LCT");
             _progress = progress;
         }
 

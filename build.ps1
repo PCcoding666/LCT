@@ -188,7 +188,7 @@ try {
             & \".\\build-installer.bat\" @installerArgs
             
             if ($LASTEXITCODE -eq 0) {
-                $installerName = \"LiveCaptionsTranslator-v$versionNumber-Setup.exe\"
+                $installerName = "LCT-v$versionNumber-Setup.exe"
                 if (Test-Path $installerName) {
                     $size = (Get-Item $installerName).Length
                     $sizeMB = [math]::Round($size / 1MB, 2)

@@ -64,7 +64,7 @@ namespace LiveCaptionsTranslator.windows
                 
                 if (key != null)
                 {
-                    key.SetValue("DellLiveCaptionsTranslator", 
+                    key.SetValue("LCT", 
                         System.Reflection.Assembly.GetExecutingAssembly().Location);
                     key.Close();
                 }

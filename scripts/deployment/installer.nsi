@@ -1,4 +1,4 @@
-; NSIS Script for DellLiveCaptionsTranslator with Version Management
+; NSIS Script for LCT (LiveCaptions Translator) with Version Management
 ; Auto-generated version support
 
 !include "MUI2.nsh"
@@ -9,7 +9,7 @@
 !insertmacro GetSize
 
 # --- Version and Application Information ---
-!define APP_NAME "DellLiveCaptionsTranslator-v1.0.1"
+!define APP_NAME "LCT"
 !define COMPANY_NAME "Ai-All-You-Need-Platform"
 ; APP_VERSION can be overridden from command line
 !ifndef APP_VERSION
@@ -37,7 +37,7 @@
   !define PATCH_VERSION "0"
 !endif
 
-Name "${APP_NAME} v${APP_VERSION}"
+Name "${APP_NAME} (LiveCaptions Translator) v${APP_VERSION}"
 OutFile "${INSTALLER_NAME}"
 InstallDir "$PROGRAMFILES64\${COMPANY_NAME}\${APP_NAME}"
 InstallDirRegKey HKLM "Software\${COMPANY_NAME}\${APP_NAME}" "InstallDir"
@@ -50,26 +50,26 @@ VIAddVersionKey "CompanyName" "${COMPANY_NAME}"
 VIAddVersionKey "FileDescription" "Real-time speech translation tool based on Windows LiveCaptions"
 VIAddVersionKey "FileVersion" "${APP_VERSION}"
 VIAddVersionKey "ProductVersion" "${APP_VERSION}"
-VIAddVersionKey "LegalCopyright" "Copyright © 2024 Dell Technologies"
+VIAddVersionKey "LegalCopyright" "Copyright © 2024 Ai-All-You-Need-Platform Pte. Ltd."
 VIAddVersionKey "OriginalFilename" "${INSTALLER_NAME}"
 
 # --- Interface Settings ---
 !define MUI_ABORTWARNING
-!define MUI_ICON "${PROJECT_ROOT}\src\LiveCaptions-Translator.ico"
-!define MUI_UNICON "${PROJECT_ROOT}\src\LiveCaptions-Translator.ico"
+!define MUI_ICON "${PROJECT_ROOT}\images\LCT_logo.ico"
+!define MUI_UNICON "${PROJECT_ROOT}\images\LCT_logo.ico"
 ; Optional: Header and welcome images (commented out if files don't exist)
 ; !define MUI_HEADERIMAGE
 ; !define MUI_HEADERIMAGE_BITMAP "${PROJECT_ROOT}\images\installer-header.bmp" ; Optional: 150x57 pixels
 ; !define MUI_WELCOMEFINISHPAGE_BITMAP "${PROJECT_ROOT}\images\installer-welcome.bmp" ; Optional: 164x314 pixels
 
 # --- Custom Pages ---
-!define MUI_WELCOMEPAGE_TITLE "Welcome to DellLiveCaptionsTranslator Setup"
-!define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of DellLiveCaptionsTranslator.$\r$\n$\r$\nDellLiveCaptionsTranslator is a professional real-time speech translation solution that works with Windows LiveCaptions to provide live translation of spoken content.$\r$\n$\r$\nClick Next to continue."
+!define MUI_WELCOMEPAGE_TITLE "Welcome to LCT (LiveCaptions Translator) Setup"
+!define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of LCT (LiveCaptions Translator).$\r$\n$\r$\nLCT is a professional real-time speech translation solution that works with Windows LiveCaptions to provide live translation of spoken content.$\r$\n$\r$\nClick Next to continue."
 
-!define MUI_FINISHPAGE_TITLE "DellLiveCaptionsTranslator Installation Complete"
-!define MUI_FINISHPAGE_TEXT "DellLiveCaptionsTranslator has been successfully installed on your computer.$\r$\n$\r$\nClick Finish to close this wizard."
+!define MUI_FINISHPAGE_TITLE "LCT (LiveCaptions Translator) Installation Complete"
+!define MUI_FINISHPAGE_TEXT "LCT (LiveCaptions Translator) has been successfully installed on your computer.$\r$\n$\r$\nClick Finish to close this wizard."
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${EXE_NAME}"
-!define MUI_FINISHPAGE_RUN_TEXT "Launch DellLiveCaptionsTranslator now"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch LCT (LiveCaptions Translator) now"
 
 # --- Pages ---
 !insertmacro MUI_PAGE_WELCOME
@@ -115,15 +115,15 @@ Section "Main Application" SecMain
     ; Create shortcuts
     DetailPrint "Creating shortcuts..."
     CreateDirectory "$SMPROGRAMS\${COMPANY_NAME}"
-    CreateShortCut "$SMPROGRAMS\${COMPANY_NAME}\${APP_NAME}.lnk" "$INSTDIR\${EXE_NAME}" "" "$INSTDIR\${EXE_NAME}" 0
-    CreateShortCut "$SMPROGRAMS\${COMPANY_NAME}\Uninstall ${APP_NAME}.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
+    CreateShortCut "$SMPROGRAMS\${COMPANY_NAME}\LCT (LiveCaptions Translator).lnk" "$INSTDIR\${EXE_NAME}" "" "$INSTDIR\${EXE_NAME}" 0
+    CreateShortCut "$SMPROGRAMS\${COMPANY_NAME}\Uninstall LCT.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
     
     ; Desktop shortcut (optional)
-    CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${EXE_NAME}" "" "$INSTDIR\${EXE_NAME}" 0
+    CreateShortCut "$DESKTOP\LCT (LiveCaptions Translator).lnk" "$INSTDIR\${EXE_NAME}" "" "$INSTDIR\${EXE_NAME}" 0
     
     ; Register with Windows Add/Remove Programs
     DetailPrint "Registering with Windows Add/Remove Programs..."
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayName" "${APP_NAME}"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayName" "LCT (LiveCaptions Translator)"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayVersion" "${APP_VERSION}"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "Publisher" "${COMPANY_NAME}"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "UninstallString" '"$INSTDIR\uninstall.exe"'
@@ -210,10 +210,10 @@ Section "Uninstall"
     
     ; Remove shortcuts
     DetailPrint "Removing shortcuts..."
-    Delete "$SMPROGRAMS\${COMPANY_NAME}\${APP_NAME}.lnk"
-    Delete "$SMPROGRAMS\${COMPANY_NAME}\Uninstall ${APP_NAME}.lnk"
+    Delete "$SMPROGRAMS\${COMPANY_NAME}\LCT (LiveCaptions Translator).lnk"
+    Delete "$SMPROGRAMS\${COMPANY_NAME}\Uninstall LCT.lnk"
     RMDir "$SMPROGRAMS\${COMPANY_NAME}"
-    Delete "$DESKTOP\${APP_NAME}.lnk"
+    Delete "$DESKTOP\LCT (LiveCaptions Translator).lnk"
     
     ; Remove registry entries
     DetailPrint "Removing registry entries..."
@@ -232,7 +232,7 @@ SectionEnd
 
 # --- Component Descriptions ---
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-    !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "Core application files for ${APP_NAME}. This component is required."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "Core application files for LCT (LiveCaptions Translator). This component is required."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecVCRedist} "Microsoft Visual C++ 2015-2022 Redistributable (x64). Required for the AI engine (Ollama). Will be skipped if already installed."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "Additional desktop integration features and optional enhancements."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
@@ -241,7 +241,7 @@ SectionEnd
 Function .onInit
     ; Check Windows version
     ${IfNot} ${AtLeastWin10}
-        MessageBox MB_OK "${APP_NAME} requires Windows 10 or later."
+        MessageBox MB_OK "LCT (LiveCaptions Translator) requires Windows 10 or later."
         Abort
     ${EndIf}
     
@@ -251,7 +251,7 @@ Function .onInit
     
     ; Existing installation found
     ReadRegStr $R1 HKLM "Software\${COMPANY_NAME}\${APP_NAME}" "Version"
-    MessageBox MB_YESNOCANCEL "${APP_NAME} $R1 is already installed.\r\n\r\nDo you want to upgrade to version ${APP_VERSION}?" /SD IDYES IDYES continue_install IDNO exit_installer
+    MessageBox MB_YESNOCANCEL "LCT (LiveCaptions Translator) $R1 is already installed.\r\n\r\nDo you want to upgrade to version ${APP_VERSION}?" /SD IDYES IDYES continue_install IDNO exit_installer
     Abort
     
     exit_installer:
@@ -264,7 +264,7 @@ Function .onInit
 FunctionEnd
 
 Function un.onInit
-    MessageBox MB_YESNO "Are you sure you want to uninstall ${APP_NAME}?" /SD IDYES IDYES +2
+    MessageBox MB_YESNO "Are you sure you want to uninstall LCT (LiveCaptions Translator)?" /SD IDYES IDYES +2
     Abort
 FunctionEnd
 

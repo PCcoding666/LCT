@@ -1,7 +1,7 @@
 <Window x:Class="LiveCaptionsTranslator.windows.SplashWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="DellLiveCaptionsTranslator" 
+        Title="LCT (LiveCaptions Translator)" 
         Height="450" 
         Width="650"
         MinHeight="350"
@@ -10,7 +10,7 @@
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanResize"
         Background="#1e1e1e"
-        Icon="/images/AppIcon.ico">
+        Icon="/images/LCT_logo.ico">
     
     <Grid>
         <StackPanel VerticalAlignment="Center" Margin="20">
@@ -19,9 +19,9 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <Image Source="/images/Logo.png" Width="50" Height="50" Margin="0,0,15,0"/>
+                <Image Source="/images/LCT_logo.png" Width="50" Height="50" Margin="0,0,15,0"/>
                 <TextBlock Grid.Column="1" 
-                           Text="DellLiveCaptionsTranslator"
+                           Text="LCT (LiveCaptions Translator)"
                            Foreground="White"
                            FontSize="24"
                            HorizontalAlignment="Left"
