@@ -3,9 +3,9 @@ using System.Runtime.Versioning;
 using System.Windows;
 
 // Version information - These will be replaced by build scripts
-[assembly: AssemblyVersion("1.0.1.0")]
-[assembly: AssemblyFileVersion("1.0.1.285")]
-[assembly: AssemblyInformationalVersion("1.0.1+285")]
+[assembly: AssemblyVersion("1.0.2.0")]
+[assembly: AssemblyFileVersion("1.0.2.286")]
+[assembly: AssemblyInformationalVersion("1.0.2+286")]
 
 // Assembly metadata
 [assembly: AssemblyTitle("LCT (LiveCaptions Translator)")]
@@ -18,9 +18,9 @@ using System.Windows;
 [assembly: AssemblyCulture("")]
 
 // Build information - These will be set by the build system
-[assembly: AssemblyMetadata("GitCommitHash", "a12f5b478c78ea1f4d429d78b7ff431183eb37b7")]
+[assembly: AssemblyMetadata("GitCommitHash", "50b49838779cdc13c412542fc7960de717178524")]
 [assembly: AssemblyMetadata("GitBranch", "master")]
-[assembly: AssemblyMetadata("BuildTimestamp", "2025-10-23T03:42:01Z")]
+[assembly: AssemblyMetadata("BuildTimestamp", "2025-10-30T12:05:46Z")]
 [assembly: AssemblyMetadata("BuildConfiguration", "Release")]
 
 [assembly: SupportedOSPlatform("windows7.0")]
@@ -32,6 +32,9 @@ using System.Windows;
                                                 //(used if a resource is not found in the page,
                                                 // app, or any theme specific resource dictionaries)
 )]
+
+
+
 
 
 

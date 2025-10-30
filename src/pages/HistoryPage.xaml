@@ -182,6 +182,20 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
+
+                <DataGridTemplateColumn Width="0.2*" Header="Action">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <ui:Button
+                                Appearance="Transparent"
+                                Click="DeleteRow_Click"
+                                Icon="{ui:SymbolIcon Delete12, Filled=False}"
+                                MouseOverBackground="#07000000"
+                                Tag="{Binding Id}"
+                                ToolTip="Delete" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
             </DataGrid.Columns>
         </DataGrid>
         <ui:SnackbarPresenter x:Name="SnackbarHost" Grid.Row="0" />

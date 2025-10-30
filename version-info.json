@@ -1,12 +1,12 @@
 ﻿{
-    "BuildNumber":  285,
+    "BuildNumber":  286,
     "GitBranch":  "master",
-    "GitCommitHash":  "a12f5b478c78ea1f4d429d78b7ff431183eb37b7",
-    "InformationalVersion":  "1.0.1+285",
-    "FileVersion":  "1.0.1.285",
-    "BuildTimestamp":  "2025-10-23T03:42:01Z",
-    "AssemblyVersion":  "1.0.1.0",
+    "GitCommitHash":  "50b49838779cdc13c412542fc7960de717178524",
+    "InformationalVersion":  "1.0.2+286",
+    "FileVersion":  "1.0.2.286",
+    "BuildTimestamp":  "2025-10-30T12:05:46Z",
+    "AssemblyVersion":  "1.0.2.0",
     "BuildConfiguration":  "Release",
-    "VersionPrefix":  "1.0.1",
+    "VersionPrefix":  "1.0.2",
     "VersionSuffix":  ""
 }

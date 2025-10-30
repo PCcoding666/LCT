@@ -63,7 +63,6 @@ namespace LiveCaptionsTranslator
 
         private async void Delete_click(object sender, RoutedEventArgs e)
         {
-            /*
             var dialogHostContainer = (Application.Current.MainWindow as MainWindow)?.DialogHostContainer;
 
             var dialog = new ContentDialog
@@ -91,9 +90,43 @@ namespace LiveCaptionsTranslator
                 currentPage = 1;
                 await SQLiteHistoryLogger.ClearHistory();
                 await LoadHistory();
+                Snackbar_Show("Success", "All history has been deleted");
             }
-            */
-            await Task.CompletedTask;
+        }
+
+        private async void DeleteRow_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Wpf.Ui.Controls.Button button || button.Tag is not long entryId)
+                return;
+
+            var dialogHostContainer = (Application.Current.MainWindow as MainWindow)?.DialogHostContainer;
+
+            var dialog = new ContentDialog
+            {
+                Title = new TextBlock
+                {
+                    Text = "Delete this record?",
+                    FontSize = 18,
+                    FontWeight = FontWeights.Regular
+                },
+                Content = "This operation cannot be undone!",
+                PrimaryButtonText = "Yes",
+                CloseButtonText = "No",
+                DefaultButton = ContentDialogButton.Close,
+                DialogHost = dialogHostContainer,
+                Padding = new Thickness(8, 4, 8, 8),
+            };
+
+            dialogHostContainer.Visibility = Visibility.Visible;
+            var result = await dialog.ShowAsync();
+            dialogHostContainer.Visibility = Visibility.Collapsed;
+
+            if (result == ContentDialogResult.Primary)
+            {
+                await SQLiteHistoryLogger.DeleteHistoryById(entryId);
+                await LoadHistory();
+                Snackbar_Show("Success", "Record has been deleted");
+            }
         }
 
         private async void maxRow_SelectionChanged(object sender, SelectionChangedEventArgs e)

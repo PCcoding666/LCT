@@ -116,7 +116,7 @@ namespace LiveCaptionsTranslator.utils
             }
 
             using (var command = new SqliteCommand(@$"
-                SELECT Timestamp, SourceText, TranslatedText, TargetLanguage, ApiUsed
+                SELECT Id, Timestamp, SourceText, TranslatedText, TargetLanguage, ApiUsed
                 FROM TranslationHistory
                 WHERE SourceText LIKE '%{searchText}%' OR TranslatedText LIKE '%{searchText}%'
                 ORDER BY Timestamp DESC
@@ -140,6 +140,7 @@ namespace LiveCaptionsTranslator.utils
                     }
                     history.Add(new TranslationHistoryEntry
                     {
+                        Id = reader.GetInt64(reader.GetOrdinal("Id")),
                         Timestamp = localTime.ToString("MM/dd HH:mm"),
                         TimestampFull = localTime.ToString("MM/dd/yy, HH:mm:ss"),
                         SourceText = reader.GetString(reader.GetOrdinal("SourceText")),
@@ -195,7 +196,7 @@ namespace LiveCaptionsTranslator.utils
         public static async Task<TranslationHistoryEntry?> LoadLastTranslation(CancellationToken token = default)
         {
             string selectQuery = @"
-                SELECT Timestamp, SourceText, TranslatedText, TargetLanguage, ApiUsed
+                SELECT Id, Timestamp, SourceText, TranslatedText, TargetLanguage, ApiUsed
                 FROM TranslationHistory
                 ORDER BY Id DESC
                 LIMIT 1";
@@ -209,6 +210,7 @@ namespace LiveCaptionsTranslator.utils
                     DateTime localTime = DateTimeOffset.FromUnixTimeSeconds((long)Convert.ToDouble(unixTime)).LocalDateTime;
                     return new TranslationHistoryEntry
                     {
+                        Id = reader.GetInt64(reader.GetOrdinal("Id")),
                         Timestamp = localTime.ToString("MM/dd HH:mm"),
                         TimestampFull = localTime.ToString("MM/dd/yy, HH:mm:ss"),
                         SourceText = reader.GetString(reader.GetOrdinal("SourceText")),
@@ -232,12 +234,34 @@ namespace LiveCaptionsTranslator.utils
             }
         }
 
+        public static async Task DeleteHistoryById(long id, CancellationToken token = default)
+        {
+            await _dbSemaphore.WaitAsync(token);
+            try
+            {
+                string deleteQuery = "DELETE FROM TranslationHistory WHERE Id = @Id";
+                using (var command = new SqliteCommand(deleteQuery, GetConnection()))
+                {
+                    command.Parameters.AddWithValue("@Id", id);
+                    await command.ExecuteNonQueryAsync(token);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SQLiteHistoryLogger.DeleteHistoryById error: {ex.Message}");
+            }
+            finally
+            {
+                _dbSemaphore.Release();
+            }
+        }
+
         public static async Task ExportToCSV(string filePath, CancellationToken token = default)
         {
             var history = new List<TranslationHistoryEntry>();
 
             string selectQuery = @"
-                SELECT Timestamp, SourceText, TranslatedText, TargetLanguage, ApiUsed
+                SELECT Id, Timestamp, SourceText, TranslatedText, TargetLanguage, ApiUsed
                 FROM TranslationHistory
                 ORDER BY Timestamp DESC";
 
@@ -250,6 +274,7 @@ namespace LiveCaptionsTranslator.utils
                     DateTime localTime = DateTimeOffset.FromUnixTimeSeconds((long)Convert.ToDouble(unixTime)).LocalDateTime;
                     history.Add(new TranslationHistoryEntry
                     {
+                        Id = reader.GetInt64(reader.GetOrdinal("Id")),
                         Timestamp = localTime.ToString("MM/dd HH:mm"),
                         TimestampFull = localTime.ToString("MM/dd/yy, HH:mm:ss"),
                         SourceText = reader.GetString(reader.GetOrdinal("SourceText")),

@@ -2,6 +2,7 @@
 {
     public class TranslationHistoryEntry
     {
+        public long Id { get; set; }
         public required string Timestamp { get; set; }
         public required string TimestampFull { get; set; }
         public required string SourceText { get; set; }
