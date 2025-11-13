@@ -10,7 +10,7 @@
 
 # --- Version and Application Information ---
 !define APP_NAME "LCT"
-!define COMPANY_NAME "Ai-All-You-Need-Platform"
+!define COMPANY_NAME "INOVAS TECH PTE.LTD."
 ; APP_VERSION can be overridden from command line
 !ifndef APP_VERSION
   !define APP_VERSION "1.0.0" ; Default version if not provided
@@ -50,7 +50,7 @@ VIAddVersionKey "CompanyName" "${COMPANY_NAME}"
 VIAddVersionKey "FileDescription" "Real-time speech translation tool based on Windows LiveCaptions"
 VIAddVersionKey "FileVersion" "${APP_VERSION}"
 VIAddVersionKey "ProductVersion" "${APP_VERSION}"
-VIAddVersionKey "LegalCopyright" "Copyright © 2024 Ai-All-You-Need-Platform Pte. Ltd."
+VIAddVersionKey "LegalCopyright" "Copyright © 2024 INOVAS TECH PTE.LTD."
 VIAddVersionKey "OriginalFilename" "${INSTALLER_NAME}"
 
 # --- Interface Settings ---

@@ -68,7 +68,7 @@ namespace LiveCaptionsTranslator.Utils
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 var copyrightAttr = assembly.GetCustomAttribute<AssemblyCopyrightAttribute>();
-                return copyrightAttr?.Copyright ?? "Copyright © 2024 Ai-All-You-Need-Platform Pte. Ltd.";
+                return copyrightAttr?.Copyright ?? "Copyright © 2024 INOVAS TECH PTE.LTD.";
             }
         }
         
@@ -81,7 +81,7 @@ namespace LiveCaptionsTranslator.Utils
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 var companyAttr = assembly.GetCustomAttribute<AssemblyCompanyAttribute>();
-                return companyAttr?.Company ?? "Ai-All-You-Need-Platform Pte. Ltd.";
+                return companyAttr?.Company ?? "INOVAS TECH PTE.LTD.";
             }
         }
         

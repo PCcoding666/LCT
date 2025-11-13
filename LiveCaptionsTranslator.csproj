@@ -30,8 +30,8 @@
 
 		<Title>LCT (LiveCaptions Translator)</Title>
 		<Description>Professional real-time speech translation solution for enterprise and individual users</Description>
-		<Copyright>Copyright (c) 2024 Ai-All-You-Need-Platform Pte. Ltd.</Copyright>
-		<Authors>Ai-All-You-Need-Platform Pte. Ltd.</Authors>
+		<Copyright>Copyright (c) 2024 INOVAS TECH PTE.LTD.</Copyright>
+		<Authors>INOVAS TECH PTE.LTD.</Authors>
 		<ApplicationIcon>images\LCT_logo.ico</ApplicationIcon>
 
 		<Platforms>AnyCPU;ARM64</Platforms>

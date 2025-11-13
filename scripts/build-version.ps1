@@ -3,7 +3,7 @@
 
 param(
     [string]$ProjectRoot = ".",
-    [string]$VersionPrefix = "1.0.1",
+    [string]$VersionPrefix = "1.0.3",
     [string]$VersionSuffix = "",
     [string]$BuildConfiguration = "Release",
     [switch]$UseGitInfo = $true

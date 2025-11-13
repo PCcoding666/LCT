@@ -7,73 +7,74 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     Title="InfoPage"
+    d:DesignHeight="450"
+    d:DesignWidth="800"
     mc:Ignorable="d">
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <ui:Card Margin="20" Padding="25">
-            <StackPanel>
-                <!-- 公司Logo -->
-                <Image 
-                    Source="/images/Logo.png" 
-                    Width="80" 
-                    Height="80" 
-                    Margin="0,0,0,15"
-                    HorizontalAlignment="Center"/>
-                
-                <!-- 应用标题 -->
-                <TextBlock 
-                    Text="LCT (LiveCaptions Translator)"
-                    FontSize="20" 
-                    FontWeight="Bold" 
-                    Margin="0,0,0,20"
-                    HorizontalAlignment="Center"/>
-                
-                <!-- 版本信息 -->
-                <ui:Card Margin="0,0,0,15" Padding="15">
-                    <StackPanel>
-                        <TextBlock Text="Version Information" FontWeight="Bold" Margin="0,0,0,10"/>
-                        <TextBlock Text="Version: 1.0.1 Professional Edition" Margin="0,0,0,5"/>
-                        <TextBlock Text="Build Date: 2025/10/12" Margin="0,0,0,5"/>
-                        <TextBlock Text="Translation Engine: Ollama" Margin="0,0,0,5"/>
-                    </StackPanel>
-                </ui:Card>
-                
-                <!-- 功能特性 -->
-                <ui:Card Margin="0,0,0,15" Padding="15">
-                    <StackPanel>
-                        <TextBlock Text="Features" FontWeight="Bold" Margin="0,0,0,10"/>
-                        <TextBlock Text="• Real-time translation using Ollama local AI" Margin="0,0,0,5"/>
-                        <TextBlock Text="• Integration with Windows Live Captions" Margin="0,0,0,5"/>
-                        <TextBlock Text="• Context-aware translation" Margin="0,0,0,5"/>
-                        <TextBlock Text="• Customizable overlay window" Margin="0,0,0,5"/>
-                        <TextBlock Text="• Translation history management" Margin="0,0,0,5"/>
-                    </StackPanel>
-                </ui:Card>
-                
-                <!-- 公司信息 -->
-                <ui:Card Margin="0,0,0,15" Padding="15">
-                    <StackPanel>
-                        <TextBlock Text="Company Information" FontWeight="Bold" Margin="0,0,0,10"/>
-                        <TextBlock Text="Ai-All-You-Need-Platform Pte. Ltd." Margin="0,0,0,5"/>
-                        <TextBlock Text="Official Website: " Margin="0,0,0,5">
-                            <Run Text="Official Website: "/>
-                            <Hyperlink NavigateUri="https://aiallyouneed.dev" RequestNavigate="Hyperlink_RequestNavigate">
-                                https://aiallyouneed.dev
-                            </Hyperlink>
-                        </TextBlock>
-                    </StackPanel>
-                </ui:Card>
-                
-                <!-- 关于 -->
-                <ui:Card Padding="15">
-                    <StackPanel>
-                        <TextBlock Text="About" FontWeight="Bold" Margin="0,0,0,10"/>
-                        <TextBlock Text="This professional edition provides local AI-powered translation" Margin="0,0,0,5"/>
-                        <TextBlock Text="capabilities using Ollama, ensuring privacy and performance." Margin="0,0,0,5"/>
-                        <TextBlock Text="© 2024 Ai-All-You-Need-Platform Pte. Ltd. All rights reserved." Margin="0,10,0,0" FontStyle="Italic"/>
-                    </StackPanel>
-                </ui:Card>
-            </StackPanel>
-        </ui:Card>
-    </ScrollViewer>
+    <Grid>
+        <ScrollViewer 
+            VerticalScrollBarVisibility="Auto" 
+            HorizontalScrollBarVisibility="Disabled"
+            Padding="0,0,10,0">
+            <ui:Card Margin="20" Padding="25">
+                <StackPanel>
+                    <!-- 公司Logo -->
+                    <Image 
+                        Source="/images/Logo.png" 
+                        Width="80" 
+                        Height="80" 
+                        Margin="0,0,0,15"
+                        HorizontalAlignment="Center"/>
+                    
+                    <!-- 应用标题 -->
+                    <TextBlock 
+                        Text="LCT (LiveCaptions Translator)"
+                        FontSize="20" 
+                        FontWeight="Bold" 
+                        Margin="0,0,0,20"
+                        HorizontalAlignment="Center"/>
+                    
+                    <!-- 版本信息 -->
+                    <ui:Card Margin="0,0,0,15" Padding="15">
+                        <StackPanel>
+                            <TextBlock Text="Version Information" FontWeight="Bold" Margin="0,0,0,10"/>
+                            <TextBlock Text="Version: 1.0.3 Professional Edition" Margin="0,0,0,5"/>
+                            <TextBlock Text="Build Date: 2025/11/13" Margin="0,0,0,5"/>
+                            <TextBlock Text="Translation Engine: Ollama" Margin="0,0,0,5"/>
+                        </StackPanel>
+                    </ui:Card>
+                    
+                    <!-- 功能特性 -->
+                    <ui:Card Margin="0,0,0,15" Padding="15">
+                        <StackPanel>
+                            <TextBlock Text="Features" FontWeight="Bold" Margin="0,0,0,10"/>
+                            <TextBlock Text="• Real-time translation using Ollama local AI" Margin="0,0,0,5"/>
+                            <TextBlock Text="• Integration with Windows Live Captions" Margin="0,0,0,5"/>
+                            <TextBlock Text="• Context-aware translation" Margin="0,0,0,5"/>
+                            <TextBlock Text="• Customizable overlay window" Margin="0,0,0,5"/>
+                            <TextBlock Text="• Translation history management" Margin="0,0,0,5"/>
+                        </StackPanel>
+                    </ui:Card>
+                    
+                    <!-- 公司信息 -->
+                    <ui:Card Margin="0,0,0,15" Padding="15">
+                        <StackPanel>
+                            <TextBlock Text="Company Information" FontWeight="Bold" Margin="0,0,0,10"/>
+                            <TextBlock Text="INOVAS TECH PTE.LTD." Margin="0,0,0,5"/>
+                        </StackPanel>
+                    </ui:Card>
+                    
+                    <!-- 关于 -->
+                    <ui:Card Padding="15">
+                        <StackPanel>
+                            <TextBlock Text="About" FontWeight="Bold" Margin="0,0,0,10"/>
+                            <TextBlock Text="This professional edition provides local AI-powered translation" Margin="0,0,0,5"/>
+                            <TextBlock Text="capabilities using Ollama, ensuring privacy and performance." Margin="0,0,0,5"/>
+                            <TextBlock Text="© 2024 INOVAS TECH PTE.LTD. All rights reserved." Margin="0,10,0,0" FontStyle="Italic"/>
+                        </StackPanel>
+                    </ui:Card>
+                </StackPanel>
+            </ui:Card>
+        </ScrollViewer>
+    </Grid>
 </Page>

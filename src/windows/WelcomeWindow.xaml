@@ -95,12 +95,6 @@
                     <Run Text="&#x0A;&#x0A;🎉 " />
                     <Run FontWeight="Bold" Text="Ready to Start!" />
                     <Run Text=" The program has automatically opened Windows Live Captions and navigated to the settings page. After configuration, return to the main page to enjoy real-time translation!" />
-                    
-                    <Run Text="&#x0A;&#x0A;" />
-                    <Run Text="Official website: " />
-                    <Hyperlink NavigateUri="https://aiallyouneed.dev" RequestNavigate="Hyperlink_RequestNavigate">
-                        https://aiallyouneed.dev
-                    </Hyperlink>
                 </ui:TextBlock>
 
                 <ui:Button

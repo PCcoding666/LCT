@@ -1,26 +1,26 @@
-﻿﻿using System.Reflection;
+﻿﻿﻿﻿using System.Reflection;
 using System.Runtime.Versioning;
 using System.Windows;
 
 // Version information - These will be replaced by build scripts
-[assembly: AssemblyVersion("1.0.2.0")]
-[assembly: AssemblyFileVersion("1.0.2.286")]
-[assembly: AssemblyInformationalVersion("1.0.2+286")]
+[assembly: AssemblyVersion("1.0.3.0")]
+[assembly: AssemblyFileVersion("1.0.3.287")]
+[assembly: AssemblyInformationalVersion("1.0.3+287")]
 
 // Assembly metadata
 [assembly: AssemblyTitle("LCT (LiveCaptions Translator)")]
 [assembly: AssemblyDescription("Real-time Speech Translation Tool based on Windows LiveCaptions")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("Ai-All-You-Need-Platform Pte. Ltd.")]
+[assembly: AssemblyCompany("INOVAS TECH PTE.LTD.")]
 [assembly: AssemblyProduct("LCT (LiveCaptions Translator)")]
-[assembly: AssemblyCopyright("Copyright © 2024 Ai-All-You-Need-Platform Pte. Ltd.")]
+[assembly: AssemblyCopyright("Copyright © 2024 INOVAS TECH PTE.LTD.")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
 // Build information - These will be set by the build system
-[assembly: AssemblyMetadata("GitCommitHash", "50b49838779cdc13c412542fc7960de717178524")]
+[assembly: AssemblyMetadata("GitCommitHash", "0ab1eac657a12483a4bc0659a694bae211895734")]
 [assembly: AssemblyMetadata("GitBranch", "master")]
-[assembly: AssemblyMetadata("BuildTimestamp", "2025-10-30T12:05:46Z")]
+[assembly: AssemblyMetadata("BuildTimestamp", "2025-11-13T14:38:20Z")]
 [assembly: AssemblyMetadata("BuildConfiguration", "Release")]
 
 [assembly: SupportedOSPlatform("windows7.0")]
@@ -32,6 +32,10 @@ using System.Windows;
                                                 //(used if a resource is not found in the page,
                                                 // app, or any theme specific resource dictionaries)
 )]
+
+
+
+
 
 
 
