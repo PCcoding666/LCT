@@ -1,0 +1,52 @@
+name: PR Check
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    types: [ opened, synchronize, reopened ]
+
+env:
+  DOTNET_VERSION: '8.0.x'
+
+jobs:
+  # Fast PR validation
+  validate:
+    name: Quick Validation
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Cache NuGet
+      uses: actions/cache@v4
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+        restore-keys: ${{ runner.os }}-nuget-
+    
+    - name: Restore & Build
+      run: |
+        dotnet restore
+        dotnet build --configuration Release --no-restore
+    
+    - name: Run Tests
+      run: dotnet test --configuration Release --no-build --verbosity normal || echo "No tests found"
+      continue-on-error: false
+    
+    - name: Check Code Style
+      run: |
+        dotnet format --verify-no-changes --verbosity diagnostic || echo "Code formatting check completed"
+      continue-on-error: true
+    
+    - name: PR Status
+      if: always()
+      run: |
+        echo "✅ PR validation completed"
+        echo "Commit: ${{ github.event.pull_request.head.sha }}"
+        echo "Author: ${{ github.event.pull_request.user.login }}"

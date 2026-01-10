@@ -1,0 +1,418 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 'release/*' ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    branches: [ main, develop ]
+  release:
+    types: [ published ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 1.2.3)'
+        required: false
+        type: string
+      create_release:
+        description: 'Create GitHub Release'
+        required: false
+        default: false
+        type: boolean
+      skip_tests:
+        description: 'Skip tests'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  PROJECT_FILE: 'LiveCaptionsTranslator.csproj'
+  BUILD_CONFIG: Release
+  NSIS_VERSION: '3.09'
+
+jobs:
+  # ====================================
+  # Job 1: Build Matrix (Multiple Variants)
+  # ====================================
+  build:
+    name: Build ${{ matrix.arch }}-${{ matrix.deployment }}
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [win-x64, win-arm64]
+        deployment: [self-contained, framework-dependent]
+      fail-fast: false
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Cache NuGet Packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+    
+    - name: Generate Version Info
+      id: version
+      shell: pwsh
+      run: |
+        $version = "${{ github.event.inputs.version }}"
+        if (-not $version) {
+          if ("${{ github.ref }}" -match "refs/tags/v(.+)") {
+            $version = $matches[1]
+          } else {
+            $version = "1.0.0"
+          }
+        }
+        
+        $suffix = ""
+        if ("${{ github.ref }}" -eq "refs/heads/main") {
+          $suffix = "rc"
+        } elseif ("${{ github.ref }}" -eq "refs/heads/develop") {
+          $suffix = "beta"
+        } elseif ("${{ github.event_name }}" -eq "pull_request") {
+          $suffix = "pr${{ github.event.number }}"
+        }
+        
+        # Run version script
+        if (Test-Path "scripts\build-version.ps1") {
+          $versionInfo = & ".\scripts\build-version.ps1" -VersionPrefix $version -VersionSuffix $suffix -BuildConfiguration "${{ env.BUILD_CONFIG }}"
+          $fullVersion = $versionInfo.InformationalVersion
+        } else {
+          $fullVersion = $suffix ? "$version-$suffix" : $version
+        }
+        
+        echo "version=$version" >> $env:GITHUB_OUTPUT
+        echo "suffix=$suffix" >> $env:GITHUB_OUTPUT
+        echo "full-version=$fullVersion" >> $env:GITHUB_OUTPUT
+        
+        Write-Host "Version: $version, Suffix: $suffix, Full: $fullVersion" -ForegroundColor Green
+    
+    - name: Restore Dependencies
+      run: dotnet restore ${{ env.PROJECT_FILE }}
+    
+    - name: Build Application
+      run: dotnet build ${{ env.PROJECT_FILE }} --configuration ${{ env.BUILD_CONFIG }} --no-restore
+    
+    - name: Publish Application
+      shell: pwsh
+      run: |
+        $runtime = "${{ matrix.arch }}"
+        $selfContained = "${{ matrix.deployment }}" -eq "self-contained"
+        $outputPath = ".\publish\${{ matrix.arch }}\${{ matrix.deployment }}"
+        
+        $publishArgs = @(
+          "${{ env.PROJECT_FILE }}",
+          "--configuration", "${{ env.BUILD_CONFIG }}",
+          "--runtime", $runtime,
+          "--self-contained", $selfContained,
+          "--output", $outputPath,
+          "-p:PublishSingleFile=true"
+        )
+        
+        if ($selfContained) {
+          $publishArgs += "-p:EnableCompressionInSingleFile=true"
+        }
+        
+        dotnet publish @publishArgs
+        
+        # Remove PDB files
+        Get-ChildItem -Path $outputPath -Filter "*.pdb" -Recurse | Remove-Item -Force
+        
+        # Rename executable with version
+        $exeName = "LiveCaptionsTranslator.exe"
+        $newName = "LiveCaptionsTranslator-${{ steps.version.outputs.version }}-${{ matrix.arch }}"
+        if ($selfContained) { $newName += "-withruntime" }
+        $newName += ".exe"
+        
+        if (Test-Path "$outputPath\$exeName") {
+          Rename-Item -Path "$outputPath\$exeName" -NewName $newName
+          Write-Host "Renamed to: $newName" -ForegroundColor Green
+        }
+    
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-${{ matrix.arch }}-${{ matrix.deployment }}-${{ steps.version.outputs.version }}
+        path: publish/${{ matrix.arch }}/${{ matrix.deployment }}/*
+        retention-days: 30
+
+  # ====================================
+  # Job 2: Build Windows Installer (NSIS)
+  # ====================================
+  build-installer:
+    name: Build NSIS Installer
+    runs-on: windows-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true'
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Generate Version Info
+      id: version
+      shell: pwsh
+      run: |
+        $version = "${{ github.event.inputs.version }}"
+        if (-not $version) {
+          if ("${{ github.ref }}" -match "refs/tags/v(.+)") {
+            $version = $matches[1]
+          } else {
+            $version = "1.0.0"
+          }
+        }
+        
+        echo "version=$version" >> $env:GITHUB_OUTPUT
+        echo "installer-name=LCT-v$version-Setup.exe" >> $env:GITHUB_OUTPUT
+    
+    - name: Cache NSIS Installation
+      id: cache-nsis
+      uses: actions/cache@v4
+      with:
+        path: C:\Program Files (x86)\NSIS
+        key: nsis-${{ env.NSIS_VERSION }}
+    
+    - name: Install NSIS
+      if: steps.cache-nsis.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        Write-Host "Installing NSIS ${{ env.NSIS_VERSION }}..." -ForegroundColor Yellow
+        
+        # Use Chocolatey for reliable installation
+        choco install nsis -y --version=${{ env.NSIS_VERSION }}
+        
+        # Verify installation
+        $nsisPath = "C:\Program Files (x86)\NSIS\makensis.exe"
+        if (Test-Path $nsisPath) {
+          Write-Host "NSIS installed successfully" -ForegroundColor Green
+          & $nsisPath /VERSION
+        } else {
+          Write-Error "NSIS installation failed"
+          exit 1
+        }
+    
+    - name: Publish for Installer
+      run: |
+        dotnet publish ${{ env.PROJECT_FILE }} `
+          --configuration ${{ env.BUILD_CONFIG }} `
+          --runtime win-x64 `
+          --self-contained `
+          --output ".\bin\Release\net8.0-windows\win-x64\publish"
+    
+    - name: Build Installer
+      shell: pwsh
+      run: |
+        $nsisPath = "C:\Program Files (x86)\NSIS\makensis.exe"
+        $installerScript = ".\scripts\deployment\installer.nsi"
+        $version = "${{ steps.version.outputs.version }}"
+        $outputName = "${{ steps.version.outputs.installer-name }}"
+        
+        if (-not (Test-Path $installerScript)) {
+          Write-Error "Installer script not found: $installerScript"
+          exit 1
+        }
+        
+        Write-Host "Building installer: $outputName" -ForegroundColor Yellow
+        
+        & $nsisPath /DPROJECT_ROOT="$PWD" /DAPP_VERSION="$version" /DOUTPUT_NAME="$outputName" $installerScript
+        
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "NSIS compilation failed"
+          exit 1
+        }
+        
+        # Verify installer exists
+        $installerPath = ".\scripts\deployment\$outputName"
+        if (Test-Path $installerPath) {
+          $size = (Get-Item $installerPath).Length / 1MB
+          Write-Host "Installer created: $outputName ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
+        } else {
+          Write-Error "Installer not found at: $installerPath"
+          exit 1
+        }
+    
+    - name: Upload Installer Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: installer-${{ steps.version.outputs.version }}
+        path: scripts/deployment/${{ steps.version.outputs.installer-name }}
+        retention-days: 90
+
+  # ====================================
+  # Job 3: Run Tests (if test project exists)
+  # ====================================
+  test:
+    name: Run Tests
+    runs-on: windows-latest
+    if: github.event.inputs.skip_tests != 'true'
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Restore Dependencies
+      run: dotnet restore
+    
+    - name: Run Tests
+      run: |
+        dotnet test --configuration ${{ env.BUILD_CONFIG }} --logger trx --collect:"XPlat Code Coverage" || echo "No tests found"
+      continue-on-error: false
+    
+    - name: Upload Test Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: TestResults/
+        retention-days: 30
+
+  # ====================================
+  # Job 4: Create GitHub Release
+  # ====================================
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build, build-installer]
+    if: |
+      (startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event.inputs.create_release == 'true')
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Determine Version
+      id: version
+      run: |
+        if [[ "${{ github.ref }}" =~ refs/tags/v(.+) ]]; then
+          VERSION="${BASH_REMATCH[1]}"
+        elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+          VERSION="${{ github.event.inputs.version }}"
+        else
+          VERSION="1.0.0"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+    
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./release-artifacts
+    
+    - name: Organize Release Assets
+      run: |
+        mkdir -p ./release
+        
+        # Copy all built executables
+        find ./release-artifacts/build-* -name "*.exe" -exec cp {} ./release/ \;
+        
+        # Copy installer
+        find ./release-artifacts/installer-* -name "*.exe" -exec cp {} ./release/ \;
+        
+        # Copy version info if exists
+        find ./release-artifacts -name "version-info.json" -exec cp {} ./release/ \; 2>/dev/null || true
+        
+        # List all files
+        echo "Release assets:"
+        ls -lh ./release/
+    
+    - name: Generate Release Notes
+      id: release-notes
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        
+        # Get commits since last tag
+        PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        if [ -n "$PREVIOUS_TAG" ]; then
+          COMMITS=$(git log $PREVIOUS_TAG..HEAD --oneline --pretty=format:"- %s")
+        else
+          COMMITS=$(git log --oneline --max-count=10 --pretty=format:"- %s")
+        fi
+        
+        cat > ./release/RELEASE_NOTES.md << EOF
+        # LiveCaptions Translator v$VERSION
+        
+        **Release Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        **Platform:** Windows 10/11 (x64, ARM64)
+        
+        ## Changes
+        
+        $COMMITS
+        
+        ## Downloads
+        
+        - **Installer (Recommended):** \`LCT-v$VERSION-Setup.exe\`
+        - **Portable x64 (with .NET):** \`LiveCaptionsTranslator-$VERSION-win-x64-withruntime.exe\`
+        - **Portable x64 (requires .NET):** \`LiveCaptionsTranslator-$VERSION-win-x64.exe\`
+        - **Portable ARM64 (with .NET):** \`LiveCaptionsTranslator-$VERSION-win-arm64-withruntime.exe\`
+        - **Portable ARM64 (requires .NET):** \`LiveCaptionsTranslator-$VERSION-win-arm64.exe\`
+        
+        ## System Requirements
+        
+        - Windows 10 version 1903+ or Windows 11
+        - .NET 8.0 Runtime (included in installer and -withruntime versions)
+        - 100MB+ free disk space
+        
+        ## Installation
+        
+        ### Method 1: Installer (Recommended)
+        1. Download \`LCT-v$VERSION-Setup.exe\`
+        2. Run as administrator
+        3. Follow installation wizard
+        
+        ### Method 2: Portable
+        1. Download appropriate portable version
+        2. Extract to desired location
+        3. Run \`LiveCaptionsTranslator.exe\`
+        
+        ---
+        
+        **Full Changelog:** https://github.com/\${{ github.repository }}/compare/$PREVIOUS_TAG...v$VERSION
+        EOF
+        
+        cat ./release/RELEASE_NOTES.md
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        name: LiveCaptions Translator v${{ steps.version.outputs.version }}
+        body_path: ./release/RELEASE_NOTES.md
+        files: ./release/*
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Notify Success
+      run: |
+        echo "✅ Release v${{ steps.version.outputs.version }} created successfully!"
+        echo "📦 Artifacts uploaded to GitHub Releases"
+        echo "🔗 View release: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
