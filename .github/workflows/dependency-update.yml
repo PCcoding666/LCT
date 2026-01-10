@@ -49,13 +49,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: '📦 Dependency Updates Available',
-              body: `## Outdated Packages Report
-
-\`\`\`
-${report}
-\`\`\`
-
-🤖 Automated check on ${new Date().toISOString()}`,
+              body: '## Outdated Packages Report\n\n```\n' + report + '\n```\n\n🤖 Automated check on ' + new Date().toISOString(),
               labels: ['dependencies', 'automated']
             });
           }
