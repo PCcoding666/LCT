@@ -2,7 +2,7 @@ name: PR Check
 
 on:
   pull_request:
-    branches: [ master, develop ]
+    branches: [ master, develop, ci-cd-optimization ]
     types: [ opened, synchronize, reopened ]
 
 env:

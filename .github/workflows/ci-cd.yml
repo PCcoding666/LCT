@@ -2,7 +2,7 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ master, develop, 'release/*' ]
+    branches: [ master, develop, 'release/*', ci-cd-optimization ]
     paths-ignore:
       - '**.md'
       - 'docs/**'
