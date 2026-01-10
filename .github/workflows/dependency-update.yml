@@ -45,11 +45,21 @@ jobs:
           const report = fs.readFileSync('outdated-packages.txt', 'utf8');
           
           if (report.includes('has updates')) {
-            github.rest.issues.create({
+            const bodyText = [
+              '## Outdated Packages Report',
+              '',
+              '```',
+              report,
+              '```',
+              '',
+              'Automated check on ' + new Date().toISOString()
+            ].join('\n');
+            
+            await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: '📦 Dependency Updates Available',
-              body: '## Outdated Packages Report\n\n```\n' + report + '\n```\n\n🤖 Automated check on ' + new Date().toISOString(),
+              title: 'Dependency Updates Available',
+              body: bodyText,
               labels: ['dependencies', 'automated']
             });
           }
