@@ -281,7 +281,11 @@ jobs:
     
     - name: Run Tests
       run: |
-        dotnet test --configuration ${{ env.BUILD_CONFIG }} --logger trx --collect:"XPlat Code Coverage" || echo "No tests found"
+        if (Test-Path "**/*Tests.csproj" -PathType Leaf) {
+          dotnet test --configuration ${{ env.BUILD_CONFIG }} --logger trx --collect:"XPlat Code Coverage"
+        } else {
+          Write-Host "No test projects found, skipping tests" -ForegroundColor Yellow
+        }
       continue-on-error: false
     
     - name: Upload Test Results
@@ -291,6 +295,7 @@ jobs:
         name: test-results
         path: TestResults/
         retention-days: 30
+        if-no-files-found: ignore
 
   # ====================================
   # Job 4: Create GitHub Release
