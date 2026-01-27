@@ -277,11 +277,13 @@ jobs:
         dotnet-version: ${{ env.DOTNET_VERSION }}
     
     - name: Restore Dependencies
-      run: dotnet restore
+      run: dotnet restore ${{ env.PROJECT_FILE }}
     
     - name: Run Tests
+      shell: pwsh
       run: |
-        if (Test-Path "**/*Tests.csproj" -PathType Leaf) {
+        $testProjects = Get-ChildItem -Path . -Filter "*Tests.csproj" -Recurse
+        if ($testProjects) {
           dotnet test --configuration ${{ env.BUILD_CONFIG }} --logger trx --collect:"XPlat Code Coverage"
         } else {
           Write-Host "No test projects found, skipping tests" -ForegroundColor Yellow
