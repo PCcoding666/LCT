@@ -1,5 +1,9 @@
 name: CI/CD Pipeline
 
+permissions:
+  contents: write
+  actions: read
+
 on:
   push:
     branches: [ master, develop, 'release/*', ci-cd-optimization ]
