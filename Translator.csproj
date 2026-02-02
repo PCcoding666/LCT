@@ -1,3 +1,0 @@
-[33m580f087[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m, [m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m)[m 修复 Ollama 下载 404 错误问题
-[33m2ae8d2f[m feat: Initial project setup
-[33m1a96373[m fix: filter prefix in LLM-based context
