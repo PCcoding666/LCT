@@ -4,22 +4,37 @@ import SwiftUI
 @main
 struct LCTMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @State private var showWelcome: Bool = {
+        return !AppSettings.hasCompletedSetup
+    }()
     
     var body: some Scene {
         // Main Window
         WindowGroup {
-            MainView()
+            ZStack {
+                if showWelcome {
+                    WelcomeView {
+                        AppSettings.markSetupComplete()
+                        print("[LCTMacApp] Setup completed, showing MainView")
+                        DispatchQueue.main.async {
+                            showWelcome = false
+                        }
+                    }
+                    .transition(.opacity)
+                } else {
+                    MainView()
+                        .transition(.opacity)
+                        .onAppear {
+                            print("[LCTMacApp] MainView appeared")
+                        }
+                }
+            }
+            .animation(.easeInOut(duration: 0.3), value: showWelcome)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
+        .defaultPosition(.center)
         .commands {
-            // App commands
-            CommandGroup(after: .appInfo) {
-                Button("Check for Updates...") {
-                    // TODO: Implement update check
-                }
-                .keyboardShortcut("U", modifiers: [.command])
-            }
             
             // Edit commands
             CommandGroup(after: .pasteboard) {

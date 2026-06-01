@@ -1,19 +1,67 @@
 import SwiftUI
 import AppKit
+import CoreGraphics
+@preconcurrency import ScreenCaptureKit
+import os
+
+/// Custom output stream that writes to a log file
+private struct FileLogStream: TextOutputStream {
+    let fileHandle: FileHandle
+    mutating func write(_ string: String) {
+        if let data = string.data(using: .utf8) {
+            fileHandle.write(data)
+        }
+    }
+}
+
+nonisolated(unsafe) private var _logStream: FileLogStream?
+
+/// Global log function that writes to both console and file
+func appLog(_ message: String) {
+    let line = "\(message)\n"
+    if var stream = _logStream {
+        stream.write(line)
+    }
+    // Also write to stderr for terminal debugging
+    fputs(line, stderr)
+}
 
 /// Application delegate for handling app lifecycle events
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var overlayWindow: NSWindow?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        print("LCT for macOS launched successfully")
+        // Setup log file
+        let logPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/LCTMac.log")
+        FileManager.default.createFile(atPath: logPath.path, contents: nil)
+        if let fh = FileHandle(forWritingAtPath: logPath.path) {
+            fh.truncateFile(atOffset: 0)
+            _logStream = FileLogStream(fileHandle: fh)
+        }
+        
+        appLog("LCT for macOS launched successfully — log: \(logPath.path)")
+        
+        // Ensure the app is recognized as a foreground GUI application
+        // This is critical for SPM-built executables that aren't inside a .app bundle
+        NSApp.setActivationPolicy(.regular)
         
         // Setup status bar item (optional)
         setupStatusBarItem()
         
         // Request necessary permissions
         requestPermissions()
+        
+        // Activate the app and bring window to front
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            // Ensure the main window is visible
+            if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
     }
     
     func applicationWillTerminate(_ notification: Notification) {
@@ -58,18 +106,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Permissions
     
     private func requestPermissions() {
-        Task {
-            // Check screen capture permission (needed for ScreenCaptureKit)
-            // This will trigger the permission dialog if not already granted
-            do {
-                _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-                print("Screen capture permission granted")
-            } catch {
-                print("Screen capture permission not granted: \(error)")
-            }
-            
-            // Microphone permission will be requested when first used
+        // 使用 CGPreflightScreenCaptureAccess 检查权限
+        // 这比 SCShareableContent 更稳定，不会触发 RPDaemonProxy 错误
+        let hasScreenCapturePermission = CGPreflightScreenCaptureAccess()
+        
+        if hasScreenCapturePermission {
+            print("Screen capture permission granted")
+        } else {
+            print("Screen capture permission not yet granted. Will request when needed.")
+            // 不要在启动时请求权限，让用户点击 Start 时再请求
         }
+        
+        // Microphone permission will be requested when first used
     }
     
     // MARK: - Cleanup
@@ -120,7 +168,3 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.terminate(nil)
     }
 }
-
-// MARK: - SCShareableContent Import
-
-import ScreenCaptureKit

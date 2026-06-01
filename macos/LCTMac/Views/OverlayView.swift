@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Foundation
 
 /// Overlay window for floating transcription display
 struct OverlayView: View {
@@ -13,24 +14,50 @@ struct OverlayView: View {
                 overlayHeader
             }
             
-            // Recent segments with speaker labels
-            ForEach(viewModel.recentSegments.suffix(3)) { segment in
-                OverlaySegmentView(segment: segment)
+            // Recent translations (last N pairs)
+            ForEach(Array(viewModel.recentTranslations.suffix(2).enumerated()), id: \.offset) { index, pair in
+                OverlayTranslationPair(
+                    original: pair.original,
+                    translated: pair.translated,
+                    fontSize: viewModel.settings.overlayFontSize,
+                    isOld: index < viewModel.recentTranslations.suffix(2).count - 1
+                )
             }
             
-            // Divider
-            if !viewModel.currentTranslatedText.isEmpty {
-                Rectangle()
-                    .fill(Color.white.opacity(0.3))
-                    .frame(height: 1)
+            // Current original being translated (real-time)
+            if !viewModel.currentOriginalText.isEmpty {
+                Text(viewModel.currentOriginalText)
+                    .font(.system(size: viewModel.settings.overlayFontSize - 1))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(2)
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.black.opacity(0.4))
+                    )
             }
             
-            // Translated text
-            if !viewModel.currentTranslatedText.isEmpty {
-                Text(viewModel.currentTranslatedText)
-                    .font(.system(size: viewModel.settings.overlayFontSize, weight: .medium))
-                    .foregroundStyle(.white)
-                    .lineLimit(3)
+            // Streaming translation (real-time with typing effect)
+            if !viewModel.streamingTranslatedText.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    // Streaming output
+                    HStack(alignment: .bottom, spacing: 4) {
+                        Text(viewModel.streamingTranslatedText)
+                            .font(.system(size: viewModel.settings.overlayFontSize, weight: .medium))
+                            .foregroundStyle(.cyan)
+                            .lineLimit(3)
+                        
+                        // Typing dots
+                        OverlayTypingDots()
+                    }
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.white.opacity(0.1))
+                )
             }
             
             // Latency indicator
@@ -95,53 +122,67 @@ struct OverlayView: View {
     }
 }
 
-/// Individual segment in overlay
-struct OverlaySegmentView: View {
-    let segment: TranscriptionResult
+/// Translation pair in overlay
+struct OverlayTranslationPair: View {
+    let original: String
+    let translated: String
+    let fontSize: Double
+    let isOld: Bool
     
     var body: some View {
-        HStack(alignment: .top, spacing: 6) {
-            // Speaker badge
-            if let speaker = segment.speaker {
-                Text(speakerInitial(speaker))
-                    .font(.caption2)
-                    .fontWeight(.bold)
-                    .foregroundStyle(.white)
-                    .frame(width: 18, height: 18)
-                    .background(speakerColor(speaker))
-                    .clipShape(Circle())
-            }
+        VStack(alignment: .leading, spacing: 4) {
+            Text(original)
+                .font(.system(size: fontSize - 1))
+                .foregroundStyle(.white.opacity(isOld ? 0.5 : 0.7))
+                .lineLimit(2)
             
-            // Text
-            Text(segment.text)
-                .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(segment.isVolatile ? 0.6 : 0.9))
+            Text(translated)
+                .font(.system(size: fontSize, weight: .medium))
+                .foregroundStyle(isOld ? .white.opacity(0.6) : .white)
                 .lineLimit(2)
         }
+        .opacity(isOld ? 0.6 : 1.0)
     }
+}
+
+/// Typing dots animation for overlay
+struct OverlayTypingDots: View {
+    @State private var dotIndex = 0
+    @State private var timer: Timer?
     
-    private func speakerInitial(_ speaker: String) -> String {
-        if speaker.contains("Speaker") {
-            let number = speaker.replacingOccurrences(of: "Speaker ", with: "")
-            return number
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(Color.cyan)
+                    .frame(width: 3, height: 3)
+                    .opacity(dotIndex == index ? 1.0 : 0.3)
+            }
         }
-        return String(speaker.prefix(1)).uppercased()
-    }
-    
-    private func speakerColor(_ speaker: String) -> Color {
-        // Generate consistent color from speaker name
-        let hash = abs(speaker.hashValue)
-        let colors: [Color] = [.blue, .green, .orange, .purple, .pink, .teal]
-        return colors[hash % colors.count]
+        .onAppear {
+            timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [self] _ in
+                Task { @MainActor in
+                    dotIndex = (dotIndex + 1) % 3
+                }
+            }
+        }
+        .onDisappear {
+            timer?.invalidate()
+            timer = nil
+        }
     }
 }
 
 // MARK: - Overlay Window Controller
 
 /// Controller for managing the overlay window
+@MainActor
 class OverlayWindowController: NSObject, ObservableObject {
     private var overlayWindow: NSPanel?
     private var viewModel: TranscriptionViewModel?
+    private var dragStartLocation: NSPoint?
+    private var resizeStartLocation: NSPoint?
+    private var startFrame: NSRect?
     
     @Published var isVisible: Bool = false
     
@@ -159,6 +200,7 @@ class OverlayWindowController: NSObject, ObservableObject {
     
     /// Hide the overlay window
     func hide() {
+        saveWindowPosition()
         overlayWindow?.orderOut(nil)
         isVisible = false
     }
@@ -177,8 +219,8 @@ class OverlayWindowController: NSObject, ObservableObject {
         
         // Create window
         let window = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 200),
-            styleMask: [.nonactivatingPanel, .titled, .closable, .fullSizeContentView],
+            contentRect: NSRect(x: 0, y: 0, width: viewModel.settings.overlayWidth, height: viewModel.settings.overlayHeight),
+            styleMask: [.nonactivatingPanel, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -187,18 +229,52 @@ class OverlayWindowController: NSObject, ObservableObject {
         window.isFloatingPanel = true
         window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        window.isMovableByWindowBackground = true
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.backgroundColor = .clear
         window.isOpaque = false
         window.hasShadow = true
+        window.isMovable = true
+        window.acceptsMouseMovedEvents = true
+        
+        // Set click-through
+        updateClickThrough(window)
         
         // Set content
         let overlayView = OverlayView(viewModel: viewModel)
         window.contentView = NSHostingView(rootView: overlayView)
         
         // Position window
+        restoreWindowPosition(window)
+        
+        // Track window movements
+        setupWindowTracking(window)
+        
+        self.overlayWindow = window
+    }
+    
+    /// Update click-through setting
+    private func updateClickThrough(_ window: NSPanel) {
+        guard let viewModel = viewModel else { return }
+        window.ignoresMouseEvents = viewModel.settings.overlayClickThrough
+    }
+    
+    /// Restore saved window position
+    private func restoreWindowPosition(_ window: NSPanel) {
+        guard let viewModel = viewModel else { return }
+        let settings = viewModel.settings
+        
+        // Use saved position if available and valid
+        if settings.overlayPositionX != 0.0 && settings.overlayPositionY != 0.0 {
+            if NSScreen.screens.contains(where: { screen in
+                screen.visibleFrame.contains(NSPoint(x: settings.overlayPositionX, y: settings.overlayPositionY))
+            }) {
+                window.setFrameOrigin(NSPoint(x: settings.overlayPositionX, y: settings.overlayPositionY))
+                return
+            }
+        }
+        
+        // Default position: top right corner
         if let screen = NSScreen.main {
             let screenRect = screen.visibleFrame
             let windowRect = window.frame
@@ -206,8 +282,49 @@ class OverlayWindowController: NSObject, ObservableObject {
             let y = screenRect.maxY - windowRect.height - 20
             window.setFrameOrigin(NSPoint(x: x, y: y))
         }
+    }
+    
+    /// Save current window position
+    @MainActor
+    private func saveWindowPosition() {
+        guard let window = overlayWindow,
+              let viewModel = viewModel else { return }
         
-        self.overlayWindow = window
+        let frame = window.frame
+        viewModel.settings.overlayPositionX = frame.origin.x
+        viewModel.settings.overlayPositionY = frame.origin.y
+        viewModel.settings.overlayWidth = frame.size.width
+        viewModel.settings.overlayHeight = frame.size.height
+        viewModel.settings.save()
+    }
+    
+    /// Setup window tracking for drag and resize
+    private func setupWindowTracking(_ window: NSPanel) {
+        // Track window moves
+        let moveObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.saveWindowPosition()
+            }
+        }
+        
+        // Track window resizes
+        let resizeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.saveWindowPosition()
+            }
+        }
+        
+        // Store observers (need to be released properly in production)
+        objc_setAssociatedObject(window, "moveObserver", moveObserver, .OBJC_ASSOCIATION_RETAIN)
+        objc_setAssociatedObject(window, "resizeObserver", resizeObserver, .OBJC_ASSOCIATION_RETAIN)
     }
     
     /// Update window position
@@ -218,39 +335,42 @@ class OverlayWindowController: NSObject, ObservableObject {
     /// Update window size
     func setSize(_ size: NSSize) {
         overlayWindow?.setContentSize(size)
+        saveWindowPosition()
+    }
+    
+    /// Reload overlay settings (call when settings change)
+    func reloadSettings() {
+        guard let window = overlayWindow,
+              let viewModel = viewModel else { return }
+        
+        // Update click-through
+        updateClickThrough(window)
+        
+        // Update window level
+        window.level = viewModel.settings.overlayStayOnTop ? .floating : .normal
+        
+        // Update position if settings changed
+        let currentFrame = window.frame
+        if currentFrame.size.width != viewModel.settings.overlayWidth ||
+           currentFrame.size.height != viewModel.settings.overlayHeight {
+            window.setContentSize(NSSize(width: viewModel.settings.overlayWidth, height: viewModel.settings.overlayHeight))
+        }
     }
     
     /// Close and release the window
     func close() {
+        saveWindowPosition()
+        
+        // Remove observers
+        if let moveObserver = objc_getAssociatedObject(overlayWindow as Any, "moveObserver") {
+            NotificationCenter.default.removeObserver(moveObserver)
+        }
+        if let resizeObserver = objc_getAssociatedObject(overlayWindow as Any, "resizeObserver") {
+            NotificationCenter.default.removeObserver(resizeObserver)
+        }
+        
         overlayWindow?.close()
         overlayWindow = nil
         isVisible = false
     }
-}
-
-// MARK: - Preview
-
-#Preview {
-    let viewModel = TranscriptionViewModel()
-    
-    // Add sample data
-    let sampleSegments = [
-        TranscriptionResult(
-            text: "Hello, how are you doing today?",
-            speaker: "Speaker 1",
-            startTime: 0,
-            endTime: 2.5
-        ),
-        TranscriptionResult(
-            text: "I'm doing great, thanks for asking!",
-            speaker: "Speaker 2",
-            startTime: 2.5,
-            endTime: 5.0
-        )
-    ]
-    
-    return OverlayView(viewModel: viewModel)
-        .frame(width: 400)
-        .padding()
-        .background(Color.black.opacity(0.5))
 }

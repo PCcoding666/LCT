@@ -122,21 +122,16 @@ class OllamaService: ObservableObject {
         }
     }
     
-    /// Translate text using Ollama
-    func translate(text: String, context: [TranslationEntry] = []) async throws -> (String, Int) {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return ("", 0)
-        }
-        
-        let startTime = Date()
-        isTranslating = true
-        defer { isTranslating = false }
-        
-        guard let url = URL(string: settings.ollamaAPIEndpoint) else {
-            throw OllamaError.invalidURL
-        }
-        
-        // Build messages with context
+    /// Build messages for TranslateGemma model (uses ISO language codes, different format)
+    private func buildTranslateGemmaMessages(text: String, context: [TranslationEntry]) -> [OllamaMessage] {
+        // TranslateGemma expects a specific format: <2xx> where xx is the target language ISO code
+        let targetCode = settings.targetLanguage.isoCode
+        let prompt = "<2\(targetCode)> \(text)"
+        return [OllamaMessage(role: "user", content: prompt)]
+    }
+    
+    /// Build messages for standard chat models
+    private func buildStandardMessages(text: String, context: [TranslationEntry]) -> [OllamaMessage] {
         var messages: [OllamaMessage] = [
             OllamaMessage(role: "system", content: settings.translationPrompt)
         ]
@@ -151,12 +146,37 @@ class OllamaService: ObservableObject {
         
         // Add current text to translate
         messages.append(OllamaMessage(role: "user", content: "🔤 \(text) 🔤"))
+        return messages
+    }
+    
+    /// Translate text using Ollama
+    func translate(text: String, context: [TranslationEntry] = []) async throws -> (String, Int) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return ("", 0)
+        }
+        
+        let startTime = Date()
+        isTranslating = true
+        defer { isTranslating = false }
+        
+        guard let url = URL(string: settings.ollamaAPIEndpoint) else {
+            throw OllamaError.invalidURL
+        }
+        
+        // Build messages based on model type
+        let messages: [OllamaMessage]
+        switch settings.translationModelType {
+        case .translateGemma:
+            messages = buildTranslateGemmaMessages(text: text, context: context)
+        case .standard:
+            messages = buildStandardMessages(text: text, context: context)
+        }
         
         let request = OllamaChatRequest(
             model: settings.ollamaModel,
             messages: messages,
             stream: false,
-            temperature: settings.ollamaTemperature,
+            temperature: settings.translationModelType == .translateGemma ? 0.1 : settings.ollamaTemperature,
             keepAlive: "5m"
         )
         
@@ -192,6 +212,87 @@ class OllamaService: ObservableObject {
             
             lastError = nil
             return (translatedText, latencyMs)
+            
+        } catch let error as OllamaError {
+            lastError = error.localizedDescription
+            throw error
+        } catch is URLError {
+            lastError = "Connection refused. Is Ollama running?"
+            throw OllamaError.serverNotRunning
+        } catch {
+            lastError = error.localizedDescription
+            throw OllamaError.networkError(error)
+        }
+    }
+    
+    /// Translate text using streaming for better UX (lower perceived latency)
+    func translateStreaming(text: String, context: [TranslationEntry] = [], onToken: @escaping (String) -> Void) async throws -> Int {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return 0
+        }
+        
+        let startTime = Date()
+        isTranslating = true
+        defer { isTranslating = false }
+        
+        guard let url = URL(string: settings.ollamaAPIEndpoint) else {
+            throw OllamaError.invalidURL
+        }
+        
+        // Build messages based on model type
+        let messages: [OllamaMessage]
+        switch settings.translationModelType {
+        case .translateGemma:
+            messages = buildTranslateGemmaMessages(text: text, context: context)
+        case .standard:
+            messages = buildStandardMessages(text: text, context: context)
+        }
+        
+        let request = OllamaChatRequest(
+            model: settings.ollamaModel,
+            messages: messages,
+            stream: true,  // Enable streaming
+            temperature: settings.translationModelType == .translateGemma ? 0.1 : settings.ollamaTemperature,
+            keepAlive: "5m"
+        )
+        
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try JSONEncoder().encode(request)
+        
+        do {
+            let (asyncBytes, response) = try await session.bytes(for: urlRequest)
+            
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                throw OllamaError.invalidResponse
+            }
+            
+            // Process streaming response
+            for try await line in asyncBytes.lines {
+                guard !Task.isCancelled else { break }
+                
+                guard let data = line.data(using: .utf8),
+                      let chunk = try? JSONDecoder().decode(OllamaChatResponse.self, from: data) else {
+                    continue
+                }
+                
+                if let content = chunk.message?.content, !content.isEmpty {
+                    // Clean and emit token
+                    let cleanContent = content.replacingOccurrences(of: "🔤", with: "")
+                    if !cleanContent.isEmpty {
+                        onToken(cleanContent)
+                    }
+                }
+                
+                if chunk.done {
+                    break
+                }
+            }
+            
+            let latencyMs = Int(Date().timeIntervalSince(startTime) * 1000)
+            lastError = nil
+            return latencyMs
             
         } catch let error as OllamaError {
             lastError = error.localizedDescription

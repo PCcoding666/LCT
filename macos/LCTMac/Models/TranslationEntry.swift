@@ -1,7 +1,7 @@
 import Foundation
 
 /// Represents a translation entry with source and translated text
-struct TranslationEntry: Identifiable, Codable, Equatable {
+struct TranslationEntry: Identifiable, Codable, Equatable, Hashable {
     let id: UUID
     let sourceText: String
     let translatedText: String

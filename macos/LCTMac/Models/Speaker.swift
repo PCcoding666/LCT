@@ -62,7 +62,7 @@ class SpeakerManager: ObservableObject {
     
     /// Update speaker label
     func updateLabel(for id: String, newLabel: String) {
-        if var speaker = speakers[id] {
+        if let speaker = speakers[id] {
             speakers[id] = Speaker(id: id, label: newLabel, color: speaker.color)
         }
     }

@@ -1,58 +1,63 @@
 import Foundation
+import AppKit
 
-/// Speech recognition engine type
-enum SpeechEngine: String, Codable, CaseIterable, Identifiable {
-    case whisper = "whisper"
-    case speechAnalyzer = "speechAnalyzer"
+/// Supported source languages for speech recognition
+enum SourceLanguage: String, Codable, CaseIterable, Identifiable {
+    case english = "en-US"
+    case englishUK = "en-GB"
+    case chinese = "zh-CN"
+    case chineseTW = "zh-TW"
+    case japanese = "ja-JP"
+    case korean = "ko-KR"
+    case spanish = "es-ES"
+    case french = "fr-FR"
+    case german = "de-DE"
+    case russian = "ru-RU"
+    case portuguese = "pt-BR"
+    case italian = "it-IT"
+    case arabic = "ar-SA"
+    case hindi = "hi-IN"
     
     var id: String { rawValue }
     
     var displayName: String {
         switch self {
-        case .whisper:
-            return "Whisper + Pyannote (Speaker Diarization)"
-        case .speechAnalyzer:
-            return "Apple SpeechAnalyzer (macOS 26+)"
+        case .english: return "English (US)"
+        case .englishUK: return "English (UK)"
+        case .chinese: return "Chinese (Simplified)"
+        case .chineseTW: return "Chinese (Traditional)"
+        case .japanese: return "Japanese"
+        case .korean: return "Korean"
+        case .spanish: return "Spanish"
+        case .french: return "French"
+        case .german: return "German"
+        case .russian: return "Russian"
+        case .portuguese: return "Portuguese (Brazil)"
+        case .italian: return "Italian"
+        case .arabic: return "Arabic"
+        case .hindi: return "Hindi"
         }
     }
     
-    var description: String {
-        switch self {
-        case .whisper:
-            return "Open source, supports speaker diarization, requires Python"
-        case .speechAnalyzer:
-            return "Native Apple API, faster but requires macOS 26+"
-        }
-    }
-}
-
-/// Whisper model size options
-enum WhisperModelSize: String, Codable, CaseIterable, Identifiable {
-    case tiny = "tiny"
-    case base = "base"
-    case small = "small"
-    case medium = "medium"
-    case large = "large"
-    
-    var id: String { rawValue }
-    
-    var displayName: String {
-        switch self {
-        case .tiny: return "Tiny (39MB)"
-        case .base: return "Base (74MB) - Recommended"
-        case .small: return "Small (244MB)"
-        case .medium: return "Medium (769MB)"
-        case .large: return "Large (1.5GB)"
-        }
+    var locale: Locale {
+        Locale(identifier: rawValue)
     }
     
-    var estimatedMemoryGB: Double {
+    /// ISO 639-1 language code for TranslateGemma
+    var isoCode: String {
         switch self {
-        case .tiny: return 1.0
-        case .base: return 1.0
-        case .small: return 2.0
-        case .medium: return 5.0
-        case .large: return 10.0
+        case .english, .englishUK: return "en"
+        case .chinese, .chineseTW: return "zh"
+        case .japanese: return "ja"
+        case .korean: return "ko"
+        case .spanish: return "es"
+        case .french: return "fr"
+        case .german: return "de"
+        case .russian: return "ru"
+        case .portuguese: return "pt"
+        case .italian: return "it"
+        case .arabic: return "ar"
+        case .hindi: return "hi"
         }
     }
 }
@@ -88,6 +93,44 @@ enum TargetLanguage: String, Codable, CaseIterable, Identifiable {
         case .portuguese: return "Português"
         }
     }
+    
+    /// ISO 639-1 language code for TranslateGemma
+    var isoCode: String {
+        switch self {
+        case .chinese: return "zh"
+        case .english: return "en"
+        case .japanese: return "ja"
+        case .korean: return "ko"
+        case .spanish: return "es"
+        case .french: return "fr"
+        case .german: return "de"
+        case .russian: return "ru"
+        case .arabic: return "ar"
+        case .portuguese: return "pt"
+        }
+    }
+}
+
+/// Translation model type
+enum TranslationModelType: String, Codable, CaseIterable, Identifiable {
+    case standard = "standard"          // Standard chat models (qwen, llama, etc.)
+    case translateGemma = "translategemma"  // Google TranslateGemma model
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .standard: return "Standard (Chat)"
+        case .translateGemma: return "TranslateGemma"
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .standard: return "Use general chat models with translation prompts"
+        case .translateGemma: return "Google's specialized translation model (55 languages)"
+        }
+    }
 }
 
 /// Application settings model
@@ -97,21 +140,21 @@ struct AppSettings: Codable, Equatable {
     var captureMicrophone: Bool = true
     
     // MARK: - Speech Recognition Settings
-    var preferredEngine: SpeechEngine = .whisper
-    var whisperModelSize: WhisperModelSize = .base
-    var enableDiarization: Bool = true
+    var sourceLanguage: SourceLanguage = .english
     
     // MARK: - Ollama Settings
     var ollamaHost: String = "localhost"
     var ollamaPort: Int = 11434
-    var ollamaModel: String = "qwen2.5:3b"
+    var ollamaModel: String = "qwen3:4b-instruct-2507-q4_K_M"
     var ollamaTimeout: Int = 30
     var ollamaTemperature: Double = 0.3
     
     // MARK: - Translation Settings
     var targetLanguage: TargetLanguage = .chinese
+    var translationModelType: TranslationModelType = .standard
     var contextAware: Bool = true
     var maxContextEntries: Int = 5
+    var customPrompt: String = ""
     
     // MARK: - UI Settings
     var showOverlay: Bool = true
@@ -119,10 +162,17 @@ struct AppSettings: Codable, Equatable {
     var overlayFontSize: Double = 14.0
     var showLatency: Bool = true
     var maxDisplayCards: Int = 5
+    var captionLogMax: Int = 3
     
-    // MARK: - Advanced Settings
-    var pythonPath: String = "/usr/bin/python3"
-    var huggingFaceToken: String = ""
+    // MARK: - Overlay Advanced Settings
+    var overlayPositionX: Double = 0.0
+    var overlayPositionY: Double = 0.0
+    var overlayWidth: Double = 400.0
+    var overlayHeight: Double = 200.0
+    var overlayTextColor: String = "#FFFFFF"
+    var overlayBackgroundColor: String = "#000000"
+    var overlayClickThrough: Bool = false
+    var overlayStayOnTop: Bool = true
     
     // MARK: - Computed Properties
     
@@ -137,6 +187,22 @@ struct AppSettings: Codable, Equatable {
     // MARK: - Persistence
     
     private static let settingsKey = "LCTMacSettings"
+    private static let setupCompleteKey = "LCTMacSetupComplete"
+    
+    /// Check if initial setup has been completed
+    static var hasCompletedSetup: Bool {
+        UserDefaults.standard.bool(forKey: setupCompleteKey)
+    }
+    
+    /// Mark initial setup as complete
+    static func markSetupComplete() {
+        UserDefaults.standard.set(true, forKey: setupCompleteKey)
+    }
+    
+    /// Reset setup flag (for testing)
+    static func resetSetupFlag() {
+        UserDefaults.standard.removeObject(forKey: setupCompleteKey)
+    }
     
     /// Save settings to UserDefaults
     func save() {
@@ -160,24 +226,86 @@ struct AppSettings: Codable, Equatable {
         defaultSettings.save()
         return defaultSettings
     }
+    
+    // MARK: - Color Helper
+    
+    /// Convert hex color string to NSColor
+    var overlayTextColorNS: NSColor {
+        NSColor(hex: overlayTextColor) ?? NSColor.white
+    }
+    
+    /// Convert hex background color to NSColor with opacity
+    var overlayBackgroundColorNS: NSColor {
+        NSColor(hex: overlayBackgroundColor)?.withAlphaComponent(overlayOpacity) ?? NSColor.black.withAlphaComponent(overlayOpacity)
+    }
+}
+
+// MARK: - Hex Color Extension
+
+extension NSColor {
+    /// Create NSColor from hex string
+    convenience init?(hex: String) {
+        var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
+        
+        var rgb: UInt64 = 0
+        
+        guard Scanner(string: hexSanitized).scanHexInt64(&rgb) else { return nil }
+        
+        let length = hexSanitized.count
+        let r, g, b, a: Double
+        
+        if length == 6 {
+            r = Double((rgb & 0xFF0000) >> 16) / 255.0
+            g = Double((rgb & 0x00FF00) >> 8) / 255.0
+            b = Double(rgb & 0x0000FF) / 255.0
+            a = 1.0
+        } else if length == 8 {
+            r = Double((rgb & 0xFF000000) >> 24) / 255.0
+            g = Double((rgb & 0x00FF0000) >> 16) / 255.0
+            b = Double((rgb & 0x0000FF00) >> 8) / 255.0
+            a = Double(rgb & 0x000000FF) / 255.0
+        } else {
+            return nil
+        }
+        
+        self.init(red: r, green: g, blue: b, alpha: a)
+    }
+    
+    /// Convert NSColor to hex string
+    func toHexString() -> String {
+        guard let components = cgColor.components, components.count >= 3 else {
+            return "#FFFFFF"
+        }
+        
+        let r = Int(round(components[0] * 255))
+        let g = Int(round(components[1] * 255))
+        let b = Int(round(components[2] * 255))
+        
+        return String(format: "#%02X%02X%02X", r, g, b)
+    }
 }
 
 // MARK: - Translation Prompt Template
 
 extension AppSettings {
+    /// Default translation prompt
+    static let defaultPrompt = """
+        You are a professional simultaneous interpreter. Translate the text enclosed in 🔤 markers to {TARGET_LANGUAGE}.
+        
+        CRITICAL RULES:
+        1. Output ONLY the translated text, never the original text
+        2. Handle incomplete sentences naturally and professionally
+        3. Preserve technical terms, company names, and proper nouns accurately
+        4. Maintain appropriate tone and formality
+        5. For unclear speech, provide the most likely interpretation
+        
+        OUTPUT FORMAT: Single line translation only, remove all 🔤 markers, no explanations.
+        """
+    
     /// Get the system prompt for Ollama translation
     var translationPrompt: String {
-        """
-        You are a professional translator. Translate the following text to \(targetLanguage.displayName).
-        
-        Rules:
-        1. Only output the translation, no explanations
-        2. Maintain the original meaning and tone
-        3. Keep proper nouns unchanged when appropriate
-        4. Handle informal speech naturally
-        5. If the text is already in \(targetLanguage.displayName), output it unchanged
-        
-        Translate:
-        """
+        let template = customPrompt.isEmpty ? Self.defaultPrompt : customPrompt
+        return template.replacingOccurrences(of: "{TARGET_LANGUAGE}", with: targetLanguage.displayName)
     }
 }

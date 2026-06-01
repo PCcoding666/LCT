@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 // LCT for macOS - Swift Package Configuration
 
 import PackageDescription
@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "LCTMac",
     platforms: [
-        .macOS(.v15)
+        .macOS(.v13)
     ],
     products: [
         .executable(name: "LCTMac", targets: ["LCTMac"])
@@ -22,14 +22,20 @@ let package = Package(
                 .product(name: "SQLite", package: "SQLite.swift")
             ],
             path: "LCTMac",
-            resources: [
-                .process("Resources")
+            exclude: ["LCTMac.entitlements", "Info.plist"],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "LCTMac/Info.plist"
+                ])
             ]
         ),
         .testTarget(
             name: "LCTMacTests",
             dependencies: ["LCTMac"],
-            path: "Tests"
+            path: "Tests/LCTMacTests"
         )
     ]
 )

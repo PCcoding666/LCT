@@ -1,19 +1,22 @@
 import SwiftUI
 
-/// History view displaying past translations
+/// History view displaying past translations from SQLite persistence
 struct HistoryView: View {
-    let entries: [TranslationEntry]
+    @ObservedObject var viewModel: TranscriptionViewModel
     
     @Environment(\.dismiss) private var dismiss
     @State private var searchText = ""
     @State private var selectedEntry: TranslationEntry?
+    @State private var persistentEntries: [TranslationEntry] = []
+    @State private var isLoading = true
+    @State private var showDeleteConfirmation = false
     
-    private var filteredEntries: [TranslationEntry] {
+    private var displayEntries: [TranslationEntry] {
         if searchText.isEmpty {
-            return entries.reversed()
+            return persistentEntries
         }
         let lowercasedSearch = searchText.lowercased()
-        return entries.reversed().filter {
+        return persistentEntries.filter {
             $0.sourceText.lowercased().contains(lowercasedSearch) ||
             $0.translatedText.lowercased().contains(lowercasedSearch)
         }
@@ -29,7 +32,7 @@ struct HistoryView: View {
                 
                 Spacer()
                 
-                Text("\(entries.count) entries")
+                Text("\(persistentEntries.count) entries")
                     .foregroundStyle(.secondary)
                 
                 Button("Done") {
@@ -65,24 +68,43 @@ struct HistoryView: View {
             Divider()
             
             // Entry list
-            if filteredEntries.isEmpty {
+            if isLoading {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Loading history...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if displayEntries.isEmpty {
                 emptyState
             } else {
-                List(filteredEntries, selection: $selectedEntry) { entry in
+                List(displayEntries, selection: $selectedEntry) { entry in
                     HistoryEntryRow(entry: entry)
                         .tag(entry)
+                        .contextMenu {
+                            Button("Copy") { copyEntry(entry) }
+                            Button("Delete", role: .destructive) {
+                                deleteEntry(entry)
+                            }
+                        }
                 }
                 .listStyle(.inset)
             }
             
             Divider()
             
-            // Footer with export button
+            // Footer with export and clear buttons
             HStack {
                 Button(action: exportToCSV) {
-                    Label("Export to CSV", systemImage: "square.and.arrow.up")
+                    Label("Export CSV", systemImage: "square.and.arrow.up")
                 }
-                .disabled(entries.isEmpty)
+                .disabled(persistentEntries.isEmpty)
+                
+                Button(role: .destructive, action: { showDeleteConfirmation = true }) {
+                    Label("Clear All", systemImage: "trash")
+                }
+                .disabled(persistentEntries.isEmpty)
                 
                 Spacer()
                 
@@ -90,11 +112,27 @@ struct HistoryView: View {
                     Button(action: { copyEntry(selected) }) {
                         Label("Copy Selected", systemImage: "doc.on.doc")
                     }
+                    
+                    Button(role: .destructive, action: { deleteEntry(selected) }) {
+                        Label("Delete", systemImage: "trash")
+                    }
                 }
             }
             .padding()
         }
-        .frame(width: 600, height: 500)
+        .frame(width: 650, height: 550)
+        .task {
+            await loadHistory()
+        }
+        .alert("Clear All History?", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear All", role: .destructive) {
+                viewModel.clearPersistentHistory()
+                persistentEntries.removeAll()
+            }
+        } message: {
+            Text("This will permanently delete all translation history. This action cannot be undone.")
+        }
     }
     
     private var emptyState: some View {
@@ -114,9 +152,22 @@ struct HistoryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
+    private func loadHistory() async {
+        isLoading = true
+        persistentEntries = await viewModel.loadPersistentHistory(limit: 500)
+        isLoading = false
+    }
+    
+    private func deleteEntry(_ entry: TranslationEntry) {
+        viewModel.deletePersistentEntry(entry)
+        persistentEntries.removeAll { $0.id == entry.id }
+        if selectedEntry?.id == entry.id {
+            selectedEntry = nil
+        }
+    }
+    
     private func exportToCSV() {
-        let history = TranslationHistory(entries: entries)
-        let csv = history.exportToCSV()
+        guard let csv = viewModel.exportHistoryCSV() else { return }
         
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.commaSeparatedText]
@@ -196,23 +247,4 @@ struct HistoryEntryRow: View {
         }
         .padding(.vertical, 4)
     }
-}
-
-#Preview {
-    HistoryView(entries: [
-        TranslationEntry(
-            sourceText: "Hello, how are you?",
-            translatedText: "你好，你怎么样？",
-            speaker: "Speaker 1",
-            targetLanguage: "Chinese",
-            latencyMs: 150
-        ),
-        TranslationEntry(
-            sourceText: "I'm doing great, thanks!",
-            translatedText: "我很好，谢谢！",
-            speaker: "Speaker 2",
-            targetLanguage: "Chinese",
-            latencyMs: 120
-        )
-    ])
 }
