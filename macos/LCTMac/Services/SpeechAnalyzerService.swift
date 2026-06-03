@@ -1,6 +1,39 @@
 import Foundation
 import Speech
 import AVFoundation
+import os
+
+/// Thread-safe container for state shared between @MainActor and audio threads.
+/// Uses os_unfair_lock for low-overhead synchronization.
+private final class SharedSpeechState: @unchecked Sendable {
+    private var _lock = os_unfair_lock()
+    private var _isRunning: Bool = false
+    private var _bufferCount: Int = 0
+    private var _request: SFSpeechAudioBufferRecognitionRequest?
+    
+    var isRunning: Bool {
+        get { os_unfair_lock_lock(&_lock); defer { os_unfair_lock_unlock(&_lock) }; return _isRunning }
+        set { os_unfair_lock_lock(&_lock); defer { os_unfair_lock_unlock(&_lock) }; _isRunning = newValue }
+    }
+    
+    var bufferCount: Int {
+        get { os_unfair_lock_lock(&_lock); defer { os_unfair_lock_unlock(&_lock) }; return _bufferCount }
+        set { os_unfair_lock_lock(&_lock); defer { os_unfair_lock_unlock(&_lock) }; _bufferCount = newValue }
+    }
+    
+    /// Atomically increment buffer count and return new value
+    func incrementBufferCount() -> Int {
+        os_unfair_lock_lock(&_lock)
+        defer { os_unfair_lock_unlock(&_lock) }
+        _bufferCount += 1
+        return _bufferCount
+    }
+    
+    var request: SFSpeechAudioBufferRecognitionRequest? {
+        get { os_unfair_lock_lock(&_lock); defer { os_unfair_lock_unlock(&_lock) }; return _request }
+        set { os_unfair_lock_lock(&_lock); defer { os_unfair_lock_unlock(&_lock) }; _request = newValue }
+    }
+}
 
 /// Apple speech recognition service using SFSpeechRecognizer
 @MainActor
@@ -15,20 +48,13 @@ class SpeechAnalyzerService: ObservableObject {
     
     // MARK: - Private Properties
     private var speechRecognizer: SFSpeechRecognizer?
-    // Mark as nonisolated(unsafe) to allow thread-safe access from appendAudioBuffer
-    // SFSpeechAudioBufferRecognitionRequest.append() is thread-safe according to Apple documentation
-    nonisolated(unsafe) private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var lastTranscript: String = ""
     private var lastFinalTranscript: String = ""
     private var sessionStartTime: Date = Date()
-    // Flag to track running state for nonisolated access
-    nonisolated(unsafe) private var _isRunningFlag: Bool = false
-    // Debug: buffer counter to verify audio is flowing
-    nonisolated(unsafe) private var _bufferCount: Int = 0
-    // Audio format converter for sample rate conversion (e.g., 48kHz → 16kHz)
-    nonisolated(unsafe) private var _audioConverter: AVAudioConverter?
-    nonisolated(unsafe) private var _targetFormat: AVAudioFormat?
+    
+    // Thread-safe shared state accessible from both @MainActor and audio threads
+    private let sharedState = SharedSpeechState()
     
     // MARK: - Initialization
     
@@ -143,7 +169,7 @@ class SpeechAnalyzerService: ObservableObject {
         let nativeFormat = request.nativeAudioFormat
         appLog("[SpeechAnalyzerService] Recognition request native format: \(nativeFormat.sampleRate)Hz, \(nativeFormat.channelCount)ch")
         
-        recognitionRequest = request
+        sharedState.request = request
         sessionStartTime = Date()
         lastTranscript = ""
         lastFinalTranscript = ""
@@ -151,37 +177,37 @@ class SpeechAnalyzerService: ObservableObject {
         // Start recognition task
         appLog("[SpeechAnalyzerService] Starting recognition task on main thread...")
         
-        let weakSelf = self
-        recognitionTask = recognizer.recognitionTask(with: request) { result, error in
+        recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
-                weakSelf.handleRecognitionResult(result: result, error: error)
+                self?.handleRecognitionResult(result: result, error: error)
             }
         }
         
         isRunning = true
-        _isRunningFlag = true
-        _bufferCount = 0
+        sharedState.isRunning = true
+        sharedState.bufferCount = 0
         lastError = nil
         appLog("[SpeechAnalyzerService] ✅ Recognition started successfully")
     }
     
     /// Append audio buffer to recognition request - can be called from any thread
+    /// Thread safety is ensured by SharedSpeechState's os_unfair_lock.
     nonisolated func appendAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        guard _isRunningFlag, let request = recognitionRequest else { return }
-        _bufferCount += 1
-        if _bufferCount % 50 == 1 {
-            appLog("[SpeechAnalyzerService] 🎤 Audio buffer #\(_bufferCount) appended (format: \(buffer.format.sampleRate)Hz, \(buffer.format.channelCount)ch, frames: \(buffer.frameLength))")
+        guard sharedState.isRunning, let request = sharedState.request else { return }
+        let count = sharedState.incrementBufferCount()
+        if count % 50 == 1 {
+            appLog("[SpeechAnalyzerService] 🎤 Audio buffer #\(count) appended (format: \(buffer.format.sampleRate)Hz, \(buffer.format.channelCount)ch, frames: \(buffer.frameLength))")
         }
         request.append(buffer)
     }
     
     func stop() {
-        recognitionRequest?.endAudio()
+        sharedState.request?.endAudio()
         recognitionTask?.cancel()
         recognitionTask = nil
-        recognitionRequest = nil
+        sharedState.request = nil
         isRunning = false
-        _isRunningFlag = false
+        sharedState.isRunning = false
         lastTranscript = ""
     }
     
@@ -287,12 +313,12 @@ class SpeechAnalyzerService: ObservableObject {
         }
         
         // Capture old references before swapping
-        let oldRequest = recognitionRequest
+        let oldRequest = sharedState.request
         let oldTask = recognitionTask
         
         // Atomically swap the request pointer — appendAudioBuffer() will immediately
         // start appending to the new request from this point forward.
-        recognitionRequest = newRequest
+        sharedState.request = newRequest
         lastTranscript = ""
         
         // Now tear down the old request/task. Any buffers that were appended to oldRequest
@@ -301,10 +327,9 @@ class SpeechAnalyzerService: ObservableObject {
         oldTask?.cancel()
         
         // Start the new recognition task
-        let weakSelf = self
-        recognitionTask = recognizer.recognitionTask(with: newRequest) { result, error in
+        recognitionTask = recognizer.recognitionTask(with: newRequest) { [weak self] result, error in
             Task { @MainActor in
-                weakSelf.handleRecognitionResult(result: result, error: error)
+                self?.handleRecognitionResult(result: result, error: error)
             }
         }
     }

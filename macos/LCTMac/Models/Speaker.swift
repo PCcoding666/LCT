@@ -16,7 +16,7 @@ struct Speaker: Identifiable, Codable, Equatable, Hashable {
     /// Create speaker from pyannote label (e.g., "SPEAKER_00")
     static func from(pyannoteLabel: String) -> Speaker {
         let speakerNumber = pyannoteLabel.replacingOccurrences(of: "SPEAKER_", with: "")
-        let displayLabel = "Speaker \(Int(speakerNumber) ?? 0 + 1)"
+        let displayLabel = "Speaker \((Int(speakerNumber) ?? 0) + 1)"
         let colorIndex = (Int(speakerNumber) ?? 0) % SpeakerColor.allCases.count
         return Speaker(
             id: pyannoteLabel,
