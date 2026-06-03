@@ -52,6 +52,7 @@ class SpeechAnalyzerService: ObservableObject {
     private var lastTranscript: String = ""
     private var lastFinalTranscript: String = ""
     private var sessionStartTime: Date = Date()
+    private var currentSegmentId: UUID = UUID()
     
     // Thread-safe shared state accessible from both @MainActor and audio threads
     private let sharedState = SharedSpeechState()
@@ -171,6 +172,7 @@ class SpeechAnalyzerService: ObservableObject {
         
         sharedState.request = request
         sessionStartTime = Date()
+        currentSegmentId = UUID()
         lastTranscript = ""
         lastFinalTranscript = ""
         
@@ -250,6 +252,7 @@ class SpeechAnalyzerService: ObservableObject {
         
         // Create transcription result
         let transcription = TranscriptionResult(
+            id: currentSegmentId,
             text: transcript,
             speaker: nil,
             startTime: startTime,
@@ -319,6 +322,7 @@ class SpeechAnalyzerService: ObservableObject {
         // Atomically swap the request pointer — appendAudioBuffer() will immediately
         // start appending to the new request from this point forward.
         sharedState.request = newRequest
+        currentSegmentId = UUID()
         lastTranscript = ""
         
         // Now tear down the old request/task. Any buffers that were appended to oldRequest

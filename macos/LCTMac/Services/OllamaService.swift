@@ -165,7 +165,10 @@ class OllamaService: ObservableObject {
         
         // Build messages based on model type
         let messages: [OllamaMessage]
-        switch settings.translationModelType {
+        let isTranslateGemma = settings.ollamaModel.lowercased().contains("translategemma")
+        let modelType = isTranslateGemma ? TranslationModelType.translateGemma : settings.translationModelType
+        
+        switch modelType {
         case .translateGemma:
             messages = buildTranslateGemmaMessages(text: text, context: context)
         case .standard:
@@ -214,12 +217,15 @@ class OllamaService: ObservableObject {
             return (translatedText, latencyMs)
             
         } catch let error as OllamaError {
+            appLog("[OllamaService] ❌ OllamaError in translate: \(error.localizedDescription)")
             lastError = error.localizedDescription
             throw error
         } catch is URLError {
+            appLog("[OllamaService] ❌ URLError in translate: Connection refused")
             lastError = "Connection refused. Is Ollama running?"
             throw OllamaError.serverNotRunning
         } catch {
+            appLog("[OllamaService] ❌ Unknown error in translate: \(error.localizedDescription)")
             lastError = error.localizedDescription
             throw OllamaError.networkError(error)
         }
@@ -241,7 +247,10 @@ class OllamaService: ObservableObject {
         
         // Build messages based on model type
         let messages: [OllamaMessage]
-        switch settings.translationModelType {
+        let isTranslateGemma = settings.ollamaModel.lowercased().contains("translategemma")
+        let modelType = isTranslateGemma ? TranslationModelType.translateGemma : settings.translationModelType
+        
+        switch modelType {
         case .translateGemma:
             messages = buildTranslateGemmaMessages(text: text, context: context)
         case .standard:
@@ -295,12 +304,15 @@ class OllamaService: ObservableObject {
             return latencyMs
             
         } catch let error as OllamaError {
+            appLog("[OllamaService] ❌ OllamaError in translateStreaming: \(error.localizedDescription)")
             lastError = error.localizedDescription
             throw error
         } catch is URLError {
+            appLog("[OllamaService] ❌ URLError in translateStreaming: Connection refused")
             lastError = "Connection refused. Is Ollama running?"
             throw OllamaError.serverNotRunning
         } catch {
+            appLog("[OllamaService] ❌ Unknown error in translateStreaming: \(error.localizedDescription)")
             lastError = error.localizedDescription
             throw OllamaError.networkError(error)
         }

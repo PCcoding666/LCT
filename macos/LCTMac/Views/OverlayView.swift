@@ -14,56 +14,43 @@ struct OverlayView: View {
                 overlayHeader
             }
             
-            // Recent translations (last N pairs)
-            ForEach(Array(viewModel.recentTranslations.suffix(2).enumerated()), id: \.offset) { index, pair in
+            // Previous Segment (faded)
+            if let prev = viewModel.previousSegment, !prev.isEmpty {
                 OverlayTranslationPair(
-                    original: pair.original,
-                    translated: pair.translated,
+                    original: prev.displaySource,
+                    translated: prev.displayTranslation,
+                    fontSize: viewModel.settings.overlayFontSize - 1, // slightly smaller
+                    isOld: true
+                )
+            }
+            
+            // Active Segment
+            if let active = viewModel.activeSegment, !active.isEmpty {
+                OverlayTranslationPair(
+                    original: active.displaySource,
+                    translated: active.displayTranslation,
                     fontSize: viewModel.settings.overlayFontSize,
-                    isOld: index < viewModel.recentTranslations.suffix(2).count - 1
+                    isOld: false
                 )
             }
             
-            // Current original being translated (real-time)
-            if !viewModel.currentOriginalText.isEmpty {
-                Text(viewModel.currentOriginalText)
-                    .font(.system(size: viewModel.settings.overlayFontSize - 1))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .lineLimit(2)
-                    .padding(.vertical, 2)
-                    .padding(.horizontal, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.black.opacity(0.4))
-                    )
-            }
-            
-            // Streaming translation (real-time with typing effect)
-            if !viewModel.streamingTranslatedText.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    // Streaming output
-                    HStack(alignment: .bottom, spacing: 4) {
-                        Text(viewModel.streamingTranslatedText)
-                            .font(.system(size: viewModel.settings.overlayFontSize, weight: .medium))
-                            .foregroundStyle(.cyan)
-                            .lineLimit(3)
-                        
-                        // Typing dots
-                        OverlayTypingDots()
+            // Status and Latency
+            HStack {
+                if let active = viewModel.activeSegment {
+                    if active.state == .error, let err = active.errorMessage {
+                        statusBadge(text: "Error: \(err)", color: .red)
+                    } else if active.state == .listening {
+                        statusBadge(text: "Listening", color: .green)
+                    } else if active.state == .translating {
+                        statusBadge(text: "Translating", color: .yellow, isTranslating: true)
                     }
+                } else if viewModel.isPaused {
+                    statusBadge(text: "Paused", color: .orange)
                 }
-                .padding(.vertical, 4)
-                .padding(.horizontal, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.white.opacity(0.1))
-                )
-            }
-            
-            // Latency indicator
-            if viewModel.settings.showLatency && viewModel.lastLatencyMs > 0 {
-                HStack {
-                    Spacer()
+                
+                Spacer()
+                
+                if viewModel.settings.showLatency && viewModel.lastLatencyMs > 0 {
                     Text("\(viewModel.lastLatencyMs) ms")
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.6))
@@ -120,6 +107,24 @@ struct OverlayView: View {
         }
         .padding(.bottom, 4)
     }
+
+    private func statusBadge(text: String, color: Color, isTranslating: Bool = false) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text(text)
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.8))
+            if isTranslating {
+                OverlayTypingDots()
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Color.black.opacity(0.4))
+        .cornerRadius(4)
+    }
 }
 
 /// Translation pair in overlay
@@ -131,17 +136,26 @@ struct OverlayTranslationPair: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(original)
-                .font(.system(size: fontSize - 1))
-                .foregroundStyle(.white.opacity(isOld ? 0.5 : 0.7))
-                .lineLimit(2)
+            if !original.isEmpty {
+                Text(original)
+                    .font(.system(size: fontSize - 1))
+                    .foregroundStyle(.white.opacity(isOld ? 0.4 : 0.6))
+                    .lineLimit(2)
+            }
             
-            Text(translated)
-                .font(.system(size: fontSize, weight: .medium))
-                .foregroundStyle(isOld ? .white.opacity(0.6) : .white)
-                .lineLimit(2)
+            if !translated.isEmpty {
+                Text(translated)
+                    .font(.system(size: fontSize, weight: .medium))
+                    .foregroundStyle(isOld ? .white.opacity(0.7) : .white)
+                    .lineLimit(3)
+            }
         }
-        .opacity(isOld ? 0.6 : 1.0)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.black.opacity(isOld ? 0.2 : 0.4))
+        )
     }
 }
 

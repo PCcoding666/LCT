@@ -14,13 +14,15 @@ enum TranslationPriority: Int, Comparable {
 /// Translation task
 struct TranslationTask: Identifiable {
     let id: UUID = UUID()
+    let segmentId: UUID
     let text: String
     let context: [TranslationEntry]
     let priority: TranslationPriority
     let timestamp: Date = Date()
     let isFinal: Bool  // Whether this is a final (non-volatile) transcription
     
-    init(text: String, context: [TranslationEntry] = [], priority: TranslationPriority = .normal, isFinal: Bool = true) {
+    init(segmentId: UUID, text: String, context: [TranslationEntry] = [], priority: TranslationPriority = .normal, isFinal: Bool = true) {
+        self.segmentId = segmentId
         self.text = text
         self.context = context
         self.priority = priority
@@ -31,14 +33,16 @@ struct TranslationTask: Identifiable {
 /// Translation result
 struct TranslationQueueResult {
     let taskId: UUID
+    let segmentId: UUID
     let originalText: String
     let translatedText: String
     let latencyMs: Int
     let success: Bool
     let error: Error?
     
-    init(taskId: UUID = UUID(), originalText: String, translatedText: String, latencyMs: Int, success: Bool, error: Error? = nil) {
+    init(taskId: UUID = UUID(), segmentId: UUID, originalText: String, translatedText: String, latencyMs: Int, success: Bool, error: Error? = nil) {
         self.taskId = taskId
+        self.segmentId = segmentId
         self.originalText = originalText
         self.translatedText = translatedText
         self.latencyMs = latencyMs
@@ -58,7 +62,7 @@ class TranslationQueue: ObservableObject {
     
     // MARK: - Callbacks
     var onTranslationComplete: ((TranslationQueueResult) -> Void)?
-    var onStreamingUpdate: ((String) -> Void)?  // Called on each token during streaming
+    var onStreamingUpdate: ((UUID, String) -> Void)?  // Called on each token during streaming
     
     // MARK: - Configuration
     private let debounceInterval: TimeInterval
@@ -91,7 +95,7 @@ class TranslationQueue: ObservableObject {
     /// Enqueue a translation task
     /// If the text is volatile (partial result), it will be debounced
     /// If the text is final, it will be processed immediately
-    func enqueue(text: String, context: [TranslationEntry] = [], priority: TranslationPriority = .normal, isFinal: Bool = true) {
+    func enqueue(segmentId: UUID, text: String, context: [TranslationEntry] = [], priority: TranslationPriority = .normal, isFinal: Bool = true) {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else { return }
         
@@ -100,7 +104,7 @@ class TranslationQueue: ObservableObject {
             return
         }
         
-        let task = TranslationTask(text: trimmedText, context: context, priority: priority, isFinal: isFinal)
+        let task = TranslationTask(segmentId: segmentId, text: trimmedText, context: context, priority: priority, isFinal: isFinal)
         
         if isFinal {
             // Final results are processed immediately with high priority
@@ -210,7 +214,7 @@ class TranslationQueue: ObservableObject {
                     // Check generation: if a newer task has started, discard this stale token
                     guard self.generation == taskGeneration else { return }
                     self.streamingText += token
-                    self.onStreamingUpdate?(self.streamingText)
+                    self.onStreamingUpdate?(task.segmentId, self.streamingText)
                 }
             }
             
@@ -222,6 +226,7 @@ class TranslationQueue: ObservableObject {
             
             let result = TranslationQueueResult(
                 taskId: task.id,
+                segmentId: task.segmentId,
                 originalText: task.text,
                 translatedText: streamingText,
                 latencyMs: latencyMs,
@@ -251,6 +256,7 @@ class TranslationQueue: ObservableObject {
             let latencyMs = Int(Date().timeIntervalSince(startTime) * 1000)
             let result = TranslationQueueResult(
                 taskId: task.id,
+                segmentId: task.segmentId,
                 originalText: task.text,
                 translatedText: "[ERROR] \(error.localizedDescription)",
                 latencyMs: latencyMs,
@@ -285,6 +291,7 @@ class TranslationQueue: ObservableObject {
             
             let result = TranslationQueueResult(
                 taskId: task.id,
+                segmentId: task.segmentId,
                 originalText: task.text,
                 translatedText: translatedText,
                 latencyMs: latencyMs,
@@ -315,6 +322,7 @@ class TranslationQueue: ObservableObject {
             let latencyMs = Int(Date().timeIntervalSince(startTime) * 1000)
             let result = TranslationQueueResult(
                 taskId: task.id,
+                segmentId: task.segmentId,
                 originalText: task.text,
                 translatedText: "[ERROR] \(error.localizedDescription)",
                 latencyMs: latencyMs,

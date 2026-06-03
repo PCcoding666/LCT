@@ -21,11 +21,8 @@ struct MainView: View {
                     // Status indicators
                     statusBar
                     
-                    // Transcription cards
-                    transcriptionCards
-                    
-                    // Current translation
-                    currentTranslation
+                    // Transcript log
+                    transcriptView
                 }
                 .padding()
             }
@@ -206,118 +203,16 @@ struct MainView: View {
         }
     }
     
-    // MARK: - Transcription Cards
+    // MARK: - Transcript View
     
-    private var transcriptionCards: some View {
+    private var transcriptView: some View {
         VStack(spacing: 12) {
-            if viewModel.recentSegments.isEmpty {
+            if viewModel.segments.isEmpty {
                 emptyStateCard
             } else {
-                ForEach(viewModel.recentSegments) { segment in
-                    TranscriptionCard(segment: segment)
+                ForEach(viewModel.segments) { segment in
+                    TranscriptSegmentCard(segment: segment)
                 }
-            }
-        }
-    }
-    
-    private var emptyStateCard: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "waveform")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
-            
-            Text("No transcriptions yet")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-            
-            Text("Click Start to begin capturing audio")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(40)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        )
-    }
-    
-    // MARK: - Current Translation
-    
-    private var currentTranslation: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Section header
-            HStack {
-                Label("Translation", systemImage: "textformat")
-                    .font(.headline)
-                
-                Spacer()
-                
-                Button(action: { viewModel.copyToClipboard() }) {
-                    Image(systemName: "doc.on.doc")
-                }
-                .buttonStyle(.borderless)
-                .help("Copy to clipboard")
-            }
-            
-            // Recent translations (last N sentences)
-            ForEach(Array(viewModel.recentTranslations.enumerated()), id: \.offset) { index, pair in
-                TranslationPairCard(
-                    original: pair.original,
-                    translated: pair.translated,
-                    isLatest: index == viewModel.recentTranslations.count - 1
-                )
-            }
-            
-            // Current original text being transcribed/translated (real-time)
-            if !viewModel.currentOriginalText.isEmpty {
-                Text(viewModel.currentOriginalText)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                    )
-            }
-            
-            // Streaming translation (real-time)
-            if !viewModel.streamingTranslatedText.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    // Streaming output with typing indicator
-                    HStack(alignment: .bottom, spacing: 4) {
-                        Text(viewModel.streamingTranslatedText)
-                            .font(.body)
-                            .foregroundStyle(.blue)
-                        
-                        // Typing indicator
-                        TypingIndicator()
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.blue.opacity(0.1))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.blue.opacity(0.3), lineWidth: 1)
-                            )
-                    )
-                }
-            }
-            
-            // Empty state when no translations
-            if viewModel.recentTranslations.isEmpty && viewModel.streamingTranslatedText.isEmpty {
-                Text("Translations will appear here...")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                    )
             }
         }
     }
@@ -372,40 +267,70 @@ struct MainView: View {
         }
         .padding()
     }
+    
+    private var emptyStateCard: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "waveform")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+            
+            Text("No transcriptions yet")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            
+            Text("Click Start to begin capturing audio")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(40)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+    }
 }
 
-// MARK: - Transcription Card
+// MARK: - Transcript Segment Card
 
-struct TranscriptionCard: View {
-    let segment: TranscriptionResult
+struct TranscriptSegmentCard: View {
+    let segment: CaptionSegment
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Header with speaker and timestamp
+            // Header with timestamp and latency
             HStack {
-                if let speaker = segment.speaker {
-                    Label(speaker, systemImage: "person.fill")
-                        .font(.caption)
-                        .foregroundStyle(.blue)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(Color.blue.opacity(0.15))
-                        )
-                }
+                Text(formatTime(segment.timestamp))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
                 
                 Spacer()
                 
-                Text(formatTime(segment.startTime))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                if segment.latencyMs > 0 {
+                    Text("\(segment.latencyMs) ms")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
             
             // Text content
-            Text(segment.text)
-                .font(.body)
-                .foregroundStyle(segment.isVolatile ? .secondary : .primary)
+            if !segment.displaySource.isEmpty {
+                Text(segment.displaySource)
+                    .font(.body)
+                    .foregroundStyle(segment.state == .listening ? .secondary : .primary)
+            }
+            
+            if !segment.displayTranslation.isEmpty {
+                Text(segment.displayTranslation)
+                    .font(.body)
+                    .foregroundStyle(segment.state == .translating ? .cyan : .blue)
+            }
+            
+            if segment.state == .error, let err = segment.errorMessage {
+                Text("Error: \(err)")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -416,10 +341,10 @@ struct TranscriptionCard: View {
         )
     }
     
-    private func formatTime(_ interval: TimeInterval) -> String {
-        let minutes = Int(interval) / 60
-        let seconds = Int(interval) % 60
-        return String(format: "%02d:%02d", minutes, seconds)
+    private func formatTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .medium
+        return formatter.string(from: date)
     }
 }
 
@@ -536,35 +461,6 @@ struct OllamaStatusIndicator: View {
     }
 }
 
-// MARK: - Translation Pair Card
-
-struct TranslationPairCard: View {
-    let original: String
-    let translated: String
-    let isLatest: Bool
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Original text
-            Text(original)
-                .font(.body)
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            
-            // Translated text
-            Text(translated)
-                .font(.body)
-                .foregroundStyle(.blue)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isLatest ? Color.blue.opacity(0.08) : Color(nsColor: .controlBackgroundColor))
-        )
-        .opacity(isLatest ? 1.0 : 0.7)
-    }
-}
 
 // MARK: - Typing Indicator
 
