@@ -20,7 +20,7 @@ jobs:
     - name: Setup Swift
       uses: swift-actions/setup-swift@v2
       with:
-        swift-version: "5.10" # Default swift version for macos-14, can be omitted
+        swift-version: "6.0" # Match the swift-tools-version in Package.swift
 
     - name: Build Application
       run: |
@@ -30,15 +30,14 @@ jobs:
     - name: Package App Bundle
       run: |
         cd macos
+        BIN_PATH=$(swift build -c release --show-bin-path)
+        
         # Create the .app structure
         mkdir -p LCTMac.app/Contents/MacOS
         mkdir -p LCTMac.app/Contents/Resources
         
         # Copy the compiled binary
-        cp .build/release/LCTMac LCTMac.app/Contents/MacOS/LCTMac
-        
-        # If there's an Info.plist or Assets, copy them here
-        # cp LCTMac/Info.plist LCTMac.app/Contents/
+        cp "${BIN_PATH}/LCTMac" LCTMac.app/Contents/MacOS/LCTMac
         
         # Create a compressed zip of the app
         zip -r LCTMac-macOS.zip LCTMac.app
