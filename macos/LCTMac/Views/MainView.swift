@@ -7,34 +7,99 @@ struct MainView: View {
     @StateObject private var overlayController = OverlayWindowController()
     @State private var showSettings = false
     @State private var showHistory = false
+    @State private var autoScroll = true
+    @State private var isHovering = false
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Toolbar
-            toolbar
-            
-            Divider()
-            
+        ZStack(alignment: .top) {
             // Main content
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Status indicators
-                    statusBar
+            ScrollViewReader { proxy in
+                ZStack(alignment: .bottomTrailing) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            transcriptView
+                            
+                            // Live draft area
+                            if !viewModel.liveSourceText.isEmpty {
+                                liveDraftCard
+                                    .id("liveDraft")
+                            }
+                        }
+                        .padding(.horizontal, 4) // Reduced from default to avoid double padding with cards
+                        .padding(.top, isHovering ? 90 : 20) // Space for toolbar + status bar
+                        .padding(.bottom, isHovering ? 80 : 20) // Space for bottom bar
+                        .animation(.easeInOut(duration: 0.2), value: isHovering)
+                    }
+                    .onChange(of: viewModel.segments.count) { _ in
+                        if autoScroll {
+                            scrollToBottom(proxy: proxy)
+                        }
+                    }
+                    .onChange(of: viewModel.liveSourceText) { _ in
+                        if autoScroll {
+                            scrollToBottom(proxy: proxy)
+                        }
+                    }
                     
-                    // Transcript log
-                    transcriptView
+                    if !autoScroll {
+                        Button(action: {
+                            autoScroll = true
+                            scrollToBottom(proxy: proxy)
+                        }) {
+                            HStack {
+                                Image(systemName: "arrow.down.to.line")
+                                Text("Scroll to Bottom")
+                            }
+                            .padding(8)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(8)
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 0.5))
+                        }
+                        .buttonStyle(.plain)
+                        .padding()
+                        .padding(.bottom, isHovering ? 60 : 0) // Avoid bottom bar
+                        .animation(.easeInOut(duration: 0.2), value: isHovering)
+                    }
                 }
-                .padding()
             }
-            .frame(maxHeight: .infinity)
             
-            Divider()
+            // Bottom Bar Overlay
+            VStack(spacing: 0) {
+                Spacer()
+                if isHovering {
+                    Divider()
+                        .opacity(0.3)
+                    bottomBar
+                        .background(.ultraThinMaterial)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .zIndex(2)
             
-            // Audio level and controls
-            bottomBar
+            // Top Toolbar Overlay
+            VStack(spacing: 0) {
+                if isHovering {
+                    toolbar
+                    Divider()
+                        .opacity(0.3)
+                    statusBar
+                        .padding(.vertical, 8)
+                        .padding(.horizontal)
+                    Divider()
+                        .opacity(0.3)
+                }
+            }
+            .background(.ultraThinMaterial)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .zIndex(3)
         }
-        .frame(minWidth: 600, minHeight: 500)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: 320, idealWidth: 360, maxWidth: 480, minHeight: 400)
+        .background(.ultraThinMaterial)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isHovering = hovering
+            }
+        }
         .sheet(isPresented: $showSettings) {
             SettingsView(settings: $viewModel.settings) { newSettings in
                 viewModel.updateSettings(newSettings)
@@ -121,8 +186,16 @@ struct MainView: View {
         }
         .onAppear {
             print("[MainView] Appeared")
-            // Note: Overlay is now shown only when user toggles it or starts capture
-            // to avoid window initialization conflicts
+        }
+    }
+    
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        withAnimation {
+            if !viewModel.liveSourceText.isEmpty {
+                proxy.scrollTo("liveDraft", anchor: .bottom)
+            } else if let last = viewModel.segments.last {
+                proxy.scrollTo(last.id, anchor: .bottom)
+            }
         }
     }
     
@@ -149,6 +222,12 @@ struct MainView: View {
             
             // Toolbar buttons
             HStack(spacing: 12) {
+                Button(action: { autoScroll.toggle() }) {
+                    Image(systemName: autoScroll ? "arrow.down.circle.fill" : "arrow.down.circle")
+                        .foregroundColor(autoScroll ? .blue : .primary)
+                }
+                .help(autoScroll ? "Auto-scroll ON" : "Auto-scroll OFF")
+                
                 Button(action: { showHistory = true }) {
                     Image(systemName: "clock.arrow.circlepath")
                 }
@@ -212,6 +291,7 @@ struct MainView: View {
             } else {
                 ForEach(viewModel.segments) { segment in
                     TranscriptSegmentCard(segment: segment)
+                        .id(segment.id)
                 }
             }
         }
@@ -289,15 +369,59 @@ struct MainView: View {
                 .fill(Color(nsColor: .controlBackgroundColor))
         )
     }
+    
+    private var liveDraftCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Listening...")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+                Spacer()
+            }
+            
+            Text(viewModel.liveSourceText)
+                .font(.body)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.primary.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.green.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4]))
+                )
+        )
+    }
 }
 
 // MARK: - Transcript Segment Card
 
 struct TranscriptSegmentCard: View {
-    let segment: CaptionSegment
+    let segment: TranslationSegment
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
+            // Text content
+            if !segment.sourceText.isEmpty {
+                Text(segment.sourceText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            
+            if !segment.translatedText.isEmpty {
+                Text(segment.translatedText)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(segment.state == .translating ? .cyan : .primary)
+            }
+            
+            if segment.state == .failed {
+                Text(segment.translatedText) // Error message is usually stored here on failure
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            
             // Header with timestamp and latency
             HStack {
                 Text(formatTime(segment.timestamp))
@@ -312,33 +436,12 @@ struct TranscriptSegmentCard: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            
-            // Text content
-            if !segment.displaySource.isEmpty {
-                Text(segment.displaySource)
-                    .font(.body)
-                    .foregroundStyle(segment.state == .listening ? .secondary : .primary)
-            }
-            
-            if !segment.displayTranslation.isEmpty {
-                Text(segment.displayTranslation)
-                    .font(.body)
-                    .foregroundStyle(segment.state == .translating ? .cyan : .blue)
-            }
-            
-            if segment.state == .error, let err = segment.errorMessage {
-                Text("Error: \(err)")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
+            .padding(.top, 4)
         }
-        .padding()
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(nsColor: .controlBackgroundColor))
-                .shadow(color: .black.opacity(0.05), radius: 2, y: 1)
-        )
+        // Removed hard background to let the glassmorphism shine through
     }
     
     private func formatTime(_ date: Date) -> String {

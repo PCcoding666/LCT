@@ -6,14 +6,11 @@ import Combine
 class TranscriptionViewModel: ObservableObject {
     // MARK: - Published Properties
     
-    /// The currently active segment being spoken/translated
-    @Published var activeSegment: CaptionSegment?
+    /// All finalized and currently translating segments in the current session
+    @Published var segments: [TranslationSegment] = []
     
-    /// The previously finalized segment
-    @Published var previousSegment: CaptionSegment?
-    
-    /// All segments in the current session (for Transcript view)
-    @Published var segments: [CaptionSegment] = []
+    /// The current unfinalized live draft text from ASR
+    @Published var liveSourceText: String = ""
     
     /// Translation history for context
     @Published var translationHistory: [TranslationEntry] = []
@@ -47,6 +44,7 @@ class TranscriptionViewModel: ObservableObject {
     private let speakerManager: SpeakerManager
     private let speechAnalyzerService: SpeechAnalyzerService
     private let caption: Caption
+    private let captionSegmenter = CaptionSegmenter()
     private let ollamaGuardian = OllamaGuardian.shared
     private let historyService = HistoryService()
 
@@ -138,17 +136,12 @@ class TranscriptionViewModel: ObservableObject {
             self?.handleTranslationResult(result)
         }
         
-        // Handle streaming updates (real-time token updates)
         translationQueue.onStreamingUpdate = { [weak self] segmentId, streamingText in
             guard let self = self else { return }
             
-            if var active = self.activeSegment, active.id == segmentId {
-                active.draftTranslation = streamingText
-                active.state = .translating
-                self.activeSegment = active
-                if let idx = self.segments.firstIndex(where: { $0.id == active.id }) {
-                    self.segments[idx] = active
-                }
+            if let idx = self.segments.firstIndex(where: { $0.id == segmentId }) {
+                self.segments[idx].translatedText = streamingText
+                self.segments[idx].state = .translating
             }
         }
         
@@ -303,9 +296,9 @@ class TranscriptionViewModel: ObservableObject {
     
     /// Clear all transcriptions and translations
     func clear() {
-        activeSegment = nil
-        previousSegment = nil
         segments.removeAll()
+        liveSourceText = ""
+        captionSegmenter.reset()
         translationHistory.removeAll()
         speakerManager.clear()
         caption.clear()
@@ -401,50 +394,25 @@ class TranscriptionViewModel: ObservableObject {
 
     /// Handle a new transcription result from speech recognizer
     private func handleTranscriptionResult(_ result: TranscriptionResult) {
-        // If this is a new segment ID, push the current active to previous
-        if let active = activeSegment, active.id != result.id {
-            // Finalize active before pushing
-            if let idx = segments.firstIndex(where: { $0.id == active.id }) {
-                segments[idx] = active
+        let (newlyFinalized, draft) = captionSegmenter.process(result: result)
+        liveSourceText = draft
+        
+        for text in newlyFinalized {
+            let newSegment = TranslationSegment(sourceText: text, state: .translating)
+            segments.append(newSegment)
+            
+            caption.updateOriginal(text)
+            
+            if !isPaused {
+                let context = settings.contextAware ? caption.getContextForTranslation() : []
+                translationQueue.enqueue(
+                    segmentId: newSegment.id,
+                    text: text,
+                    context: context,
+                    priority: .high,
+                    isFinal: true
+                )
             }
-            previousSegment = active
-            activeSegment = CaptionSegment(id: result.id, timestamp: Date())
-            segments.append(activeSegment!)
-        } else if activeSegment == nil {
-            activeSegment = CaptionSegment(id: result.id, timestamp: Date())
-            segments.append(activeSegment!)
-        }
-        
-        guard var active = activeSegment else { return }
-        
-        if result.isVolatile {
-            active.interimSource = result.text
-            active.state = .listening
-        } else {
-            active.stableSource = result.text
-            active.interimSource = ""
-            active.state = .translating
-        }
-        activeSegment = active
-        
-        // Update it in the segments array
-        if let idx = segments.firstIndex(where: { $0.id == active.id }) {
-            segments[idx] = active
-        }
-        
-        // Ensure caption model is aware (for context purposes)
-        caption.updateOriginal(result.text)
-        
-        // Enqueue for translation if not paused
-        if !isPaused {
-            let context = settings.contextAware ? caption.getContextForTranslation() : []
-            translationQueue.enqueue(
-                segmentId: result.id,
-                text: result.text,
-                context: context,
-                priority: result.isVolatile ? .low : .high,
-                isFinal: !result.isVolatile
-            )
         }
     }
     
@@ -454,32 +422,17 @@ class TranscriptionViewModel: ObservableObject {
     private func handleTranslationResult(_ result: TranslationQueueResult) {
         let cleanedText = TextUtils.cleanTranslationOutput(result.translatedText)
         
-        // Update the segment (it might be active or previous)
-        var targetSegment: CaptionSegment?
-        var isTargetActive = false
+        guard let idx = segments.firstIndex(where: { $0.id == result.segmentId }) else { return }
         
-        if activeSegment?.id == result.segmentId {
-            targetSegment = activeSegment
-            isTargetActive = true
-        } else if previousSegment?.id == result.segmentId {
-            targetSegment = previousSegment
-        } else if let idx = segments.firstIndex(where: { $0.id == result.segmentId }) {
-            targetSegment = segments[idx]
-        }
-        
-        guard var segment = targetSegment else { return }
-        
-        segment.latencyMs = result.latencyMs
+        segments[idx].latencyMs = result.latencyMs
         
         if result.success {
-            segment.finalTranslation = cleanedText
-            segment.draftTranslation = ""
-            segment.state = .stable
-            segment.errorMessage = nil
+            segments[idx].translatedText = cleanedText
+            segments[idx].state = .translated
             
             // Log history
             let entry = TranslationEntry(
-                sourceText: segment.stableSource.isEmpty ? segment.interimSource : segment.stableSource,
+                sourceText: segments[idx].sourceText,
                 translatedText: cleanedText,
                 speaker: nil,
                 targetLanguage: settings.targetLanguage.displayName,
@@ -495,18 +448,8 @@ class TranscriptionViewModel: ObservableObject {
                 translationHistory.removeFirst()
             }
         } else {
-            segment.state = .error
-            segment.errorMessage = cleanedText // Error message is in translatedText for failures
-        }
-        
-        // Apply back
-        if isTargetActive {
-            activeSegment = segment
-        } else if previousSegment?.id == segment.id {
-            previousSegment = segment
-        }
-        if let idx = segments.firstIndex(where: { $0.id == segment.id }) {
-            segments[idx] = segment
+            segments[idx].state = .failed
+            segments[idx].translatedText = "Error: \(cleanedText)"
         }
         
         lastLatencyMs = result.latencyMs
@@ -515,8 +458,8 @@ class TranscriptionViewModel: ObservableObject {
     
     /// Copy current translation to clipboard
     func copyToClipboard() {
-        guard let active = activeSegment else { return }
-        let text = "\(active.displaySource)\n\(active.displayTranslation)"
+        guard let last = segments.last else { return }
+        let text = "\(last.sourceText)\n\(last.translatedText)"
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
     }

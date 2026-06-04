@@ -145,7 +145,7 @@ struct AppSettings: Codable, Equatable {
     // MARK: - Ollama Settings
     var ollamaHost: String = "localhost"
     var ollamaPort: Int = 11434
-    var ollamaModel: String = "qwen3:4b-instruct-2507-q4_K_M"
+    var ollamaModel: String = "qwen3.5:4b-mlx"
     var ollamaTimeout: Int = 30
     var ollamaTemperature: Double = 0.3
     

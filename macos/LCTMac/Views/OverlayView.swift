@@ -14,21 +14,21 @@ struct OverlayView: View {
                 overlayHeader
             }
             
-            // Previous Segment (faded)
-            if let prev = viewModel.previousSegment, !prev.isEmpty {
+            // Last Segment
+            if let last = viewModel.segments.last, !last.sourceText.isEmpty {
                 OverlayTranslationPair(
-                    original: prev.displaySource,
-                    translated: prev.displayTranslation,
-                    fontSize: viewModel.settings.overlayFontSize - 1, // slightly smaller
-                    isOld: true
+                    original: last.sourceText,
+                    translated: last.translatedText,
+                    fontSize: viewModel.settings.overlayFontSize,
+                    isOld: !viewModel.liveSourceText.isEmpty
                 )
             }
             
-            // Active Segment
-            if let active = viewModel.activeSegment, !active.isEmpty {
+            // Live Draft
+            if !viewModel.liveSourceText.isEmpty {
                 OverlayTranslationPair(
-                    original: active.displaySource,
-                    translated: active.displayTranslation,
+                    original: viewModel.liveSourceText,
+                    translated: "",
                     fontSize: viewModel.settings.overlayFontSize,
                     isOld: false
                 )
@@ -36,14 +36,12 @@ struct OverlayView: View {
             
             // Status and Latency
             HStack {
-                if let active = viewModel.activeSegment {
-                    if active.state == .error, let err = active.errorMessage {
-                        statusBadge(text: "Error: \(err)", color: .red)
-                    } else if active.state == .listening {
-                        statusBadge(text: "Listening", color: .green)
-                    } else if active.state == .translating {
-                        statusBadge(text: "Translating", color: .yellow, isTranslating: true)
-                    }
+                if !viewModel.liveSourceText.isEmpty {
+                    statusBadge(text: "Listening", color: .green)
+                } else if let last = viewModel.segments.last, last.state == .translating {
+                    statusBadge(text: "Translating", color: .yellow, isTranslating: true)
+                } else if let last = viewModel.segments.last, last.state == .failed {
+                    statusBadge(text: "Error", color: .red)
                 } else if viewModel.isPaused {
                     statusBadge(text: "Paused", color: .orange)
                 }
