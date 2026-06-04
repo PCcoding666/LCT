@@ -1,0 +1,72 @@
+name: macOS Build and Release
+
+on:
+  push:
+    branches: [ macos, main, develop, 'release/*' ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ macos, main, develop ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build macOS App
+    runs-on: macos-14
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Swift
+      uses: swift-actions/setup-swift@v2
+      with:
+        swift-version: "5.10" # Default swift version for macos-14, can be omitted
+
+    - name: Build Application
+      run: |
+        cd macos
+        swift build -c release
+
+    - name: Package App Bundle
+      run: |
+        cd macos
+        # Create the .app structure
+        mkdir -p LCTMac.app/Contents/MacOS
+        mkdir -p LCTMac.app/Contents/Resources
+        
+        # Copy the compiled binary
+        cp .build/release/LCTMac LCTMac.app/Contents/MacOS/LCTMac
+        
+        # If there's an Info.plist or Assets, copy them here
+        # cp LCTMac/Info.plist LCTMac.app/Contents/
+        
+        # Create a compressed zip of the app
+        zip -r LCTMac-macOS.zip LCTMac.app
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: LCTMac-macOS
+        path: macos/LCTMac-macOS.zip
+        retention-days: 7
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Download Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: LCTMac-macOS
+        path: ./release
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: ./release/LCTMac-macOS.zip
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
