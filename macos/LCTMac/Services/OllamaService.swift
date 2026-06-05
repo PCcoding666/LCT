@@ -45,10 +45,12 @@ struct OllamaChatRequest: Codable {
     let stream: Bool
     let temperature: Double?
     let keepAlive: String?
+    let think: Bool?
     
     enum CodingKeys: String, CodingKey {
         case model, messages, stream, temperature
         case keepAlive = "keep_alive"
+        case think
     }
 }
 
@@ -180,7 +182,8 @@ class OllamaService: ObservableObject {
             messages: messages,
             stream: false,
             temperature: settings.translationModelType == .translateGemma ? 0.1 : settings.ollamaTemperature,
-            keepAlive: "5m"
+            keepAlive: "5m",
+            think: false
         )
         
         var urlRequest = URLRequest(url: url)
@@ -262,7 +265,8 @@ class OllamaService: ObservableObject {
             messages: messages,
             stream: true,  // Enable streaming
             temperature: settings.translationModelType == .translateGemma ? 0.1 : settings.ollamaTemperature,
-            keepAlive: "5m"
+            keepAlive: "5m",
+            think: false
         )
         
         var urlRequest = URLRequest(url: url)
@@ -329,7 +333,8 @@ class OllamaService: ObservableObject {
             messages: [OllamaMessage(role: "user", content: "exit")],
             stream: false,
             temperature: nil,
-            keepAlive: "0"  // Immediately unload
+            keepAlive: "0",  // Immediately unload
+            think: false
         )
         
         var urlRequest = URLRequest(url: url)

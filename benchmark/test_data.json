@@ -1,0 +1,281 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "description": "LCT Translation Benchmark Test Data",
+    "created": "2026-06-04",
+    "note": "Simulates real-time speech-to-translation scenarios"
+  },
+  "system_prompt": "You are a professional simultaneous interpreter. Translate the text enclosed in 🔤 markers to {TARGET_LANGUAGE}.\n\nCRITICAL RULES:\n1. Output ONLY the translated text, never the original text\n2. Handle incomplete sentences naturally and professionally\n3. Preserve technical terms, company names, and proper nouns accurately\n4. Maintain appropriate tone and formality\n5. For unclear speech, provide the most likely interpretation\n\nOUTPUT FORMAT: Single line translation only, remove all 🔤 markers, no explanations.",
+
+  "test_cases": {
+    "A_short_utterances": {
+      "description": "短句/口语片段 — 模拟会议中的简短发言",
+      "direction": "en->zh",
+      "cases": [
+        {
+          "id": "A01",
+          "input": "Let's get started.",
+          "reference": "让我们开始吧。"
+        },
+        {
+          "id": "A02",
+          "input": "Can you hear me?",
+          "reference": "你能听到我吗？"
+        },
+        {
+          "id": "A03",
+          "input": "That's a great point.",
+          "reference": "说得很好。"
+        },
+        {
+          "id": "A04",
+          "input": "I'll share my screen.",
+          "reference": "我来共享一下屏幕。"
+        },
+        {
+          "id": "A05",
+          "input": "Any questions so far?",
+          "reference": "到目前为止有什么问题吗？"
+        }
+      ]
+    },
+
+    "B_medium_sentences": {
+      "description": "中等长度句子 — 模拟会议中的正常发言",
+      "direction": "en->zh",
+      "cases": [
+        {
+          "id": "B01",
+          "input": "I think we should postpone the launch to next quarter because the QA team hasn't finished testing yet.",
+          "reference": "我认为我们应该把发布推迟到下个季度，因为QA团队还没有完成测试。"
+        },
+        {
+          "id": "B02",
+          "input": "The user retention rate dropped by fifteen percent compared to last month, and we need to figure out why.",
+          "reference": "用户留存率与上个月相比下降了百分之十五，我们需要找出原因。"
+        },
+        {
+          "id": "B03",
+          "input": "We're planning to migrate our infrastructure from AWS to Google Cloud by the end of this year.",
+          "reference": "我们计划在今年年底前将基础设施从AWS迁移到Google Cloud。"
+        },
+        {
+          "id": "B04",
+          "input": "The new privacy policy requires us to obtain explicit user consent before collecting any personal data.",
+          "reference": "新的隐私政策要求我们在收集任何个人数据之前获得用户的明确同意。"
+        },
+        {
+          "id": "B05",
+          "input": "Could you walk us through the architecture diagram? I want to make sure everyone is on the same page.",
+          "reference": "你能给我们讲一下架构图吗？我想确保大家的理解是一致的。"
+        }
+      ]
+    },
+
+    "C_long_paragraphs": {
+      "description": "长段落 — 模拟演讲、课程讲座的连续发言",
+      "direction": "en->zh",
+      "cases": [
+        {
+          "id": "C01",
+          "input": "So let me summarize today's discussion. We agreed to move forward with option B, which involves rebuilding the payment module from scratch. The timeline is eight weeks, with the first milestone due in three weeks. John will lead the backend team, and Sarah will handle the frontend integration. We also need to coordinate with the compliance team to ensure we meet all regulatory requirements before going live.",
+          "reference": "让我来总结一下今天的讨论。我们同意推进方案B，即从零开始重建支付模块。时间线是八周，第一个里程碑在三周内到期。John将带领后端团队，Sarah负责前端集成。我们还需要与合规团队协调，确保上线前满足所有监管要求。"
+        },
+        {
+          "id": "C02",
+          "input": "Artificial intelligence is transforming the healthcare industry in ways we never imagined. From early disease detection using medical imaging to personalized treatment plans based on genetic data, AI is helping doctors make better decisions faster. However, we must also address the ethical concerns around patient privacy, algorithmic bias, and the potential displacement of healthcare workers.",
+          "reference": "人工智能正在以我们从未想象过的方式改变医疗行业。从利用医学影像进行早期疾病检测，到基于基因数据的个性化治疗方案，AI正在帮助医生更快地做出更好的决策。然而，我们也必须解决围绕患者隐私、算法偏见以及医疗工作者可能被取代等伦理问题。"
+        }
+      ]
+    },
+
+    "D_incomplete_fragments": {
+      "description": "不完整句子/语音片段 — 模拟实时语音识别的中间状态",
+      "direction": "en->zh",
+      "cases": [
+        {
+          "id": "D01",
+          "input": "So basically what I'm trying to say is",
+          "reference": "所以基本上我想说的是"
+        },
+        {
+          "id": "D02",
+          "input": "The reason we can't do that is because the",
+          "reference": "我们不能那样做的原因是因为"
+        },
+        {
+          "id": "D03",
+          "input": "If we look at the data from last",
+          "reference": "如果我们看一下上"
+        },
+        {
+          "id": "D04",
+          "input": "I mean it's not that we don't want to but",
+          "reference": "我的意思是，不是我们不想，但是"
+        },
+        {
+          "id": "D05",
+          "input": "Well the thing is um we actually",
+          "reference": "嗯，事情是这样的，实际上我们"
+        }
+      ]
+    },
+
+    "E_technical_terms": {
+      "description": "技术术语保留 — 验证模型不会错误翻译专有名词和技术词汇",
+      "direction": "en->zh",
+      "cases": [
+        {
+          "id": "E01",
+          "input": "We deployed the new Kubernetes cluster on AWS EKS last Friday.",
+          "reference": "我们上周五在AWS EKS上部署了新的Kubernetes集群。",
+          "preserve_terms": ["Kubernetes", "AWS EKS"]
+        },
+        {
+          "id": "E02",
+          "input": "The React Native app is crashing on iOS seventeen because of a WebSocket timeout issue.",
+          "reference": "React Native应用在iOS 17上因为WebSocket超时问题而崩溃。",
+          "preserve_terms": ["React Native", "iOS", "WebSocket"]
+        },
+        {
+          "id": "E03",
+          "input": "Apple announced the new M5 chip with improved Neural Engine performance at WWDC.",
+          "reference": "Apple在WWDC上发布了新的M5芯片，改进了Neural Engine性能。",
+          "preserve_terms": ["Apple", "M5", "Neural Engine", "WWDC"]
+        },
+        {
+          "id": "E04",
+          "input": "We need to implement OAuth two point zero authentication before integrating with the Stripe payment API.",
+          "reference": "在集成Stripe支付API之前，我们需要实现OAuth 2.0认证。",
+          "preserve_terms": ["OAuth", "Stripe", "API"]
+        },
+        {
+          "id": "E05",
+          "input": "The transformer model uses multi-head attention and layer normalization to process the input embeddings.",
+          "reference": "Transformer模型使用多头注意力机制和层归一化来处理输入嵌入。",
+          "preserve_terms": ["transformer", "multi-head attention"]
+        }
+      ]
+    },
+
+    "F_context_aware": {
+      "description": "上下文连贯性 — 模拟带历史对话的连续翻译（LCT支持最多5轮上下文）",
+      "direction": "en->zh",
+      "context_history": [
+        {
+          "user": "🔤 Today we're going to discuss the Q3 roadmap for Project Phoenix. 🔤",
+          "assistant": "今天我们将讨论Project Phoenix的第三季度路线图。"
+        },
+        {
+          "user": "🔤 The main focus areas are performance optimization and the new dashboard. 🔤",
+          "assistant": "主要关注领域是性能优化和新的仪表盘。"
+        }
+      ],
+      "cases": [
+        {
+          "id": "F01",
+          "input": "Let's start with the first one. How is it going so far?",
+          "reference": "让我们从第一个开始。目前进展如何？",
+          "note": "模型应该理解 'the first one' 指的是 '性能优化'"
+        },
+        {
+          "id": "F02",
+          "input": "And what about the second item? When is the design review scheduled?",
+          "reference": "第二项呢？设计评审安排在什么时候？",
+          "note": "模型应该理解 'the second item' 指的是 '新的仪表盘'"
+        }
+      ]
+    },
+
+    "G_reverse_direction": {
+      "description": "反向翻译 zh->en — 验证模型的双向翻译能力",
+      "direction": "zh->en",
+      "cases": [
+        {
+          "id": "G01",
+          "input": "这个方案的可行性还需要进一步评估。",
+          "reference": "The feasibility of this plan still needs further evaluation."
+        },
+        {
+          "id": "G02",
+          "input": "我们的日活用户已经突破了五百万。",
+          "reference": "Our daily active users have exceeded five million."
+        },
+        {
+          "id": "G03",
+          "input": "请大家在周五之前提交各自负责模块的测试报告。",
+          "reference": "Please submit the test reports for your respective modules by Friday."
+        },
+        {
+          "id": "G04",
+          "input": "下一步我们要重点关注用户体验的优化，尤其是首屏加载速度。",
+          "reference": "Next, we need to focus on optimizing user experience, especially the initial screen loading speed."
+        },
+        {
+          "id": "G05",
+          "input": "这个bug的根本原因是内存泄漏导致的，已经在最新版本中修复了。",
+          "reference": "The root cause of this bug was a memory leak, which has been fixed in the latest version."
+        }
+      ]
+    },
+
+    "H_japanese": {
+      "description": "日语翻译 en->ja — 验证非中文目标语言",
+      "direction": "en->ja",
+      "cases": [
+        {
+          "id": "H01",
+          "input": "Thank you for joining today's meeting.",
+          "reference": "本日の会議にご参加いただきありがとうございます。"
+        },
+        {
+          "id": "H02",
+          "input": "The deadline for this project is the end of next month.",
+          "reference": "このプロジェクトの締め切りは来月末です。"
+        },
+        {
+          "id": "H03",
+          "input": "We need to reconsider our marketing strategy for the Asian market.",
+          "reference": "アジア市場向けのマーケティング戦略を再検討する必要があります。"
+        }
+      ]
+    },
+
+    "I_instruction_compliance": {
+      "description": "指令遵循压力测试 — 验证模型是否严格只输出翻译，不加废话",
+      "direction": "en->zh",
+      "cases": [
+        {
+          "id": "I01",
+          "input": "Hello",
+          "reference": "你好",
+          "check": "模型不应输出'你好！有什么可以帮助您的？'之类的对话回复"
+        },
+        {
+          "id": "I02",
+          "input": "Thank you",
+          "reference": "谢谢",
+          "check": "模型不应输出'不客气'之类的回复"
+        },
+        {
+          "id": "I03",
+          "input": "I don't understand",
+          "reference": "我不明白",
+          "check": "模型不应试图去解释什么"
+        },
+        {
+          "id": "I04",
+          "input": "Can you help me?",
+          "reference": "你能帮我吗？",
+          "check": "模型应翻译这句话，而不是真的去'帮忙'"
+        },
+        {
+          "id": "I05",
+          "input": "What is machine learning?",
+          "reference": "什么是机器学习？",
+          "check": "模型应翻译这个问句，而不是去回答这个问题"
+        }
+      ]
+    }
+  }
+}
