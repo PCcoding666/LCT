@@ -5,9 +5,14 @@ import CoreGraphics
 import os
 
 /// Custom output stream that writes to a log file
-private struct FileLogStream: TextOutputStream {
+private final class FileLogStream {
     let fileHandle: FileHandle
-    mutating func write(_ string: String) {
+
+    init(fileHandle: FileHandle) {
+        self.fileHandle = fileHandle
+    }
+
+    func write(_ string: String) {
         if let data = string.data(using: .utf8) {
             fileHandle.write(data)
         }
@@ -15,14 +20,15 @@ private struct FileLogStream: TextOutputStream {
 }
 
 nonisolated(unsafe) private var _logStream: FileLogStream?
+private let _logLock = NSLock()
 
 /// Global log function that writes to both console and file
 func appLog(_ message: String) {
     let line = "\(message)\n"
-    if var stream = _logStream {
-        stream.write(line)
-    }
-    // Also write to stderr for terminal debugging
+    _logLock.lock()
+    defer { _logLock.unlock() }
+
+    _logStream?.write(line)
     fputs(line, stderr)
 }
 

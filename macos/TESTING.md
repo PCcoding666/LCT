@@ -1,4 +1,4 @@
-open Package.swiftopen Package.swift# LCT macOS 测试指南
+# LCT macOS 测试指南
 
 本文档描述如何测试 LCT (LiveCaptions Translator) macOS 应用程序。
 
@@ -270,7 +270,7 @@ curl http://localhost:11434/api/tags
 
 # 测试模型响应
 curl http://localhost:11434/api/generate -d '{
-  "model": "qwen2.5:3b",
+  "model": "qwen3.5:4b-mlx",
   "prompt": "Hello",
   "stream": false
 }'
@@ -337,7 +337,7 @@ leaks -atExit -- /path/to/LCT
 | 模型 | 期望延迟 |
 |------|---------|
 | gemma2:2b | < 500ms |
-| qwen2.5:3b | < 1000ms |
+| qwen3.5:4b-mlx | < 1000ms |
 | qwen2.5:7b | < 2000ms |
 
 ### 4. 长时间运行测试
@@ -390,9 +390,7 @@ leaks -atExit -- /path/to/LCT
 - [ ] 长时间运行稳定
 
 #### 兼容性
-- [ ] macOS 12 (Monterey) 测试通过
-- [ ] macOS 13 (Ventura) 测试通过
-- [ ] macOS 14 (Sonoma) 测试通过
+- [ ] macOS 15 (Sequoia) 测试通过
 - [ ] Apple Silicon 测试通过
 - [ ] Intel Mac 测试通过
 
@@ -455,7 +453,7 @@ ollama serve
 
 并且测试所需的模型已下载：
 ```bash
-ollama pull qwen2.5:3b
+ollama pull qwen3.5:4b-mlx
 ```
 
 ---

@@ -16,7 +16,7 @@ struct MainView: View {
             ScrollViewReader { proxy in
                 ZStack(alignment: .bottomTrailing) {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 16) {
+                        LazyVStack(alignment: .leading, spacing: 16) {
                             transcriptView
                             
                             // Live draft area
@@ -30,12 +30,12 @@ struct MainView: View {
                         .padding(.bottom, isHovering ? 80 : 20) // Space for bottom bar
                         .animation(.easeInOut(duration: 0.2), value: isHovering)
                     }
-                    .onChange(of: viewModel.segments.count) { _ in
+                    .onChange(of: viewModel.segments.count) { _, _ in
                         if autoScroll {
                             scrollToBottom(proxy: proxy)
                         }
                     }
-                    .onChange(of: viewModel.liveSourceText) { _ in
+                    .onChange(of: viewModel.liveSourceText) { _, _ in
                         if autoScroll {
                             scrollToBottom(proxy: proxy)
                         }
@@ -285,7 +285,7 @@ struct MainView: View {
     // MARK: - Transcript View
     
     private var transcriptView: some View {
-        VStack(spacing: 12) {
+        LazyVStack(spacing: 12) {
             if viewModel.segments.isEmpty {
                 emptyStateCard
             } else {
@@ -593,4 +593,3 @@ struct TypingIndicator: View {
         }
     }
 }
-

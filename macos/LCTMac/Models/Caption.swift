@@ -147,6 +147,12 @@ class Caption: ObservableObject {
             contexts.removeFirst()
         }
     }
+
+    /// Remove context entries that were created from rolled-back ASR text.
+    func removeContextEntries(withIds ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        contexts.removeAll { ids.contains($0.id) }
+    }
     
     /// Get context entries for translation (oldest first)
     func getContextForTranslation() -> [TranslationEntry] {

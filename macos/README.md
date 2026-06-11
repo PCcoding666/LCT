@@ -6,7 +6,7 @@
 
 **实时语音识别与翻译工具**
 
-[![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue)](https://www.apple.com/macos/)
+[![macOS](https://img.shields.io/badge/macOS-15.0%2B-blue)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-orange)](https://swift.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.0.0-brightgreen)](https://github.com/PCcoding666/LCT/releases)
@@ -57,10 +57,10 @@
 
 ## 📋 系统要求
 
-- **macOS**: 12.0 (Monterey) 或更高版本
+- **macOS**: 15.0 (Sequoia) 或更高版本
 - **处理器**: Apple Silicon (M1/M2/M3) 或 Intel Core i5+
 - **内存**: 8 GB RAM（推荐 16 GB）
-- **存储**: 至少 2 GB 可用空间
+- **存储**: 至少 8 GB 可用空间（用于应用和默认 Ollama 模型）
 
 ---
 
@@ -118,7 +118,7 @@ ollama serve
    - 点击"Install Ollama"一键安装
 
 3. **下载 AI 模型**
-   - 选择推荐的 `qwen2.5:3b` 模型
+   - 选择推荐的 `qwen3.5:4b-mlx` 模型
    - 或选择其他模型（llama3.2, gemma2 等）
 
 ### 2. 基本使用

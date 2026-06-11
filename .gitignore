@@ -401,5 +401,3 @@ LiveCaptionsTranslator-Setup*.exe
 macos/.build/
 macos/.swiftpm/
 macos/LCTMac.app/
-macos/Tests/
-

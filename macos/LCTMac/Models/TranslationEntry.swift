@@ -9,7 +9,7 @@ struct TranslationEntry: Identifiable, Codable, Equatable, Hashable {
     let targetLanguage: String
     let timestamp: Date
     let latencyMs: Int
-    
+
     init(
         id: UUID = UUID(),
         sourceText: String,
@@ -27,12 +27,12 @@ struct TranslationEntry: Identifiable, Codable, Equatable, Hashable {
         self.timestamp = timestamp
         self.latencyMs = latencyMs
     }
-    
+
     /// Formatted latency for display
     var formattedLatency: String {
         "\(latencyMs) ms"
     }
-    
+
     /// Formatted timestamp for display
     var formattedTimestamp: String {
         let formatter = DateFormatter()
@@ -45,21 +45,21 @@ struct TranslationEntry: Identifiable, Codable, Equatable, Hashable {
 /// Translation history container
 struct TranslationHistory: Codable {
     var entries: [TranslationEntry]
-    
+
     init(entries: [TranslationEntry] = []) {
         self.entries = entries
     }
-    
+
     /// Add a new entry to history
     mutating func add(_ entry: TranslationEntry) {
         entries.append(entry)
     }
-    
+
     /// Get entries for a specific date range
     func entries(from startDate: Date, to endDate: Date) -> [TranslationEntry] {
         entries.filter { $0.timestamp >= startDate && $0.timestamp <= endDate }
     }
-    
+
     /// Search entries by text
     func search(_ query: String) -> [TranslationEntry] {
         let lowercasedQuery = query.lowercased()
@@ -68,16 +68,27 @@ struct TranslationHistory: Codable {
             $0.translatedText.lowercased().contains(lowercasedQuery)
         }
     }
-    
+
     /// Export to CSV format
     func exportToCSV() -> String {
         var csv = "ID,Source Text,Translated Text,Speaker,Target Language,Timestamp,Latency (ms)\n"
         for entry in entries {
-            let speaker = entry.speaker ?? ""
-            let escapedSource = entry.sourceText.replacingOccurrences(of: "\"", with: "\"\"")
-            let escapedTranslated = entry.translatedText.replacingOccurrences(of: "\"", with: "\"\"")
-            csv += "\"\(entry.id)\",\"\(escapedSource)\",\"\(escapedTranslated)\",\"\(speaker)\",\"\(entry.targetLanguage)\",\"\(entry.formattedTimestamp)\",\(entry.latencyMs)\n"
+            let row = [
+                csvEscape(entry.id.uuidString),
+                csvEscape(entry.sourceText),
+                csvEscape(entry.translatedText),
+                csvEscape(entry.speaker ?? ""),
+                csvEscape(entry.targetLanguage),
+                csvEscape(entry.formattedTimestamp),
+                String(entry.latencyMs)
+            ].joined(separator: ",")
+            csv += "\(row)\n"
         }
         return csv
+    }
+
+    private func csvEscape(_ value: String) -> String {
+        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        return "\"\(escaped)\""
     }
 }

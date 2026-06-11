@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "LCTMac",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v15)
     ],
     products: [
         .executable(name: "LCTMac", targets: ["LCTMac"])
