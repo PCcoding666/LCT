@@ -33,11 +33,11 @@ from datetime import datetime
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 DEFAULT_MODELS = [
-    "qwen3:4b-instruct-2507-q4_K_M",
     "qwen3.5:4b-mlx",
-    "qwen3.5:9b-mlx",
+    "qwen3:4b-instruct-2507-q4_K_M",
 ]
 
 TEMPERATURE = 0.3
@@ -62,6 +62,7 @@ def ollama_chat(model: str, messages: list, stream: bool = False) -> dict | None
         "stream": stream,
         "temperature": TEMPERATURE,
         "keep_alive": KEEP_ALIVE,
+        "think": False,
     }
     req = urllib.request.Request(
         url,
@@ -69,7 +70,7 @@ def ollama_chat(model: str, messages: list, stream: bool = False) -> dict | None
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with OLLAMA_OPENER.open(req, timeout=120) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
         print(f"    ❌ API Error ({model}): {e}")
@@ -85,6 +86,7 @@ def ollama_chat_streaming(model: str, messages: list) -> dict | None:
         "stream": True,
         "temperature": TEMPERATURE,
         "keep_alive": KEEP_ALIVE,
+        "think": False,
     }
     req = urllib.request.Request(
         url,
@@ -98,7 +100,7 @@ def ollama_chat_streaming(model: str, messages: list) -> dict | None:
         total_eval_count = 0
         final_chunk = {}
 
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with OLLAMA_OPENER.open(req, timeout=120) as resp:
             for line in resp:
                 chunk = json.loads(line.decode("utf-8"))
                 content = chunk.get("message", {}).get("content", "")
@@ -506,7 +508,7 @@ def main():
     # Check Ollama connectivity
     try:
         req = urllib.request.Request(f"{OLLAMA_BASE_URL}/api/tags")
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with OLLAMA_OPENER.open(req, timeout=5) as resp:
             tags = json.loads(resp.read().decode("utf-8"))
             available = [m["name"] for m in tags.get("models", [])]
             print(f"✅ Ollama 已连接，可用模型: {', '.join(available)}")
