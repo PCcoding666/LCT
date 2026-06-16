@@ -56,7 +56,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Setup status bar item (optional)
         setupStatusBarItem()
-        
+
+        // Register system-wide hotkeys (⌃⌥⌘ S/P/O)
+        GlobalHotKeyManager.shared.registerDefaults()
+
         // Request necessary permissions
         requestPermissions()
         
@@ -133,7 +136,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Close overlay window
         overlayWindow?.close()
         overlayWindow = nil
-        
+
+        // Unregister global hotkeys
+        GlobalHotKeyManager.shared.unregister()
+
         // Remove status item
         if let statusItem = statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
