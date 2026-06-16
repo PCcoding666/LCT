@@ -28,7 +28,10 @@ jobs:
   build:
     name: Build Application
     runs-on: windows-latest
-    
+    defaults:
+      run:
+        working-directory: windows
+
     outputs:
       version: ${{ steps.version.outputs.version }}
       version-suffix: ${{ steps.version.outputs.version-suffix }}
@@ -157,7 +160,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: installer-${{ steps.version.outputs.version }}
-        path: ${{ steps.version.outputs.installer-name }}
+        path: windows/${{ steps.version.outputs.installer-name }}
         retention-days: 30
     
     - name: Upload version info
@@ -165,8 +168,8 @@ jobs:
       with:
         name: version-info-${{ steps.version.outputs.version }}
         path: |
-          version-info.json
-          release-info-*.txt
+          windows/version-info.json
+          windows/release-info-*.txt
         retention-days: 30
 
   security-scan:
