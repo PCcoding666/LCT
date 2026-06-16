@@ -7,9 +7,12 @@ on:
     tags:
       - 'v*'
     paths:
-      - 'src/**'
-      - 'Properties/**'
+      - 'windows/**'
+      - '.github/workflows/dotnet-build.yml'
   pull_request:
+    paths:
+      - 'windows/**'
+      - '.github/workflows/dotnet-build.yml'
   workflow_dispatch:
 
 jobs:
@@ -23,6 +26,9 @@ jobs:
       contains(github.event.head_commit.message, 'build')
     name: Build and Test
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
 
     steps:
       - name: Checkout Repository
@@ -57,7 +63,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: LiveCaptionsTranslator
-          path: ./publish
+          path: windows/publish
 
   release:
     name: Create GitHub Release

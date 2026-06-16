@@ -397,3 +397,7 @@ test-nsis.bat
 # Dell Local Edition specific
 DellLiveCaptionsTranslator*.exe
 LiveCaptionsTranslator-Setup*.exe 
+# macOS App Build files
+macos/.build/
+macos/.swiftpm/
+macos/LCTMac.app/
