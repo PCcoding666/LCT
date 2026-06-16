@@ -3,6 +3,7 @@ import Speech
 import AVFoundation
 
 /// Settings view for configuring the application
+@MainActor
 struct SettingsView: View {
     @Binding var settings: AppSettings
     let onSave: (AppSettings) -> Void
@@ -448,6 +449,7 @@ struct SettingsView: View {
 }
 
 /// Prompt editor sheet
+@MainActor
 struct PromptEditorView: View {
     @Binding var prompt: String
     @Environment(\.dismiss) private var dismiss

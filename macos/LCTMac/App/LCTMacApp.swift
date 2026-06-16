@@ -2,6 +2,7 @@ import SwiftUI
 
 /// LCT for macOS - Main Application Entry Point
 @main
+@MainActor
 struct LCTMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var showWelcome: Bool = {
@@ -83,6 +84,7 @@ struct LCTMacApp: App {
 }
 
 /// Settings window view wrapper
+@MainActor
 struct SettingsWindowView: View {
     @State private var settings = AppSettings.load()
     

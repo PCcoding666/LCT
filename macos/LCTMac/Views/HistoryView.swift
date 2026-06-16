@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// History view displaying past translations from SQLite persistence
+@MainActor
 struct HistoryView: View {
     @ObservedObject var viewModel: TranscriptionViewModel
     
@@ -195,6 +196,7 @@ struct HistoryView: View {
 }
 
 /// Individual history entry row
+@MainActor
 struct HistoryEntryRow: View {
     let entry: TranslationEntry
     

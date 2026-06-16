@@ -14,6 +14,7 @@ enum HUD {
 }
 
 /// Main application view with transcription and translation display
+@MainActor
 struct MainView: View {
     @StateObject private var viewModel = TranscriptionViewModel()
     @StateObject private var overlayController = OverlayWindowController()
@@ -434,6 +435,7 @@ struct MainView: View {
 
 // MARK: - Transcript Segment Row
 
+@MainActor
 struct TranscriptSegmentRow: View {
     let segment: TranslationSegment
 
@@ -513,6 +515,7 @@ struct TranscriptSegmentRow: View {
 
 // MARK: - Blinking Cursor
 
+@MainActor
 struct BlinkingCursor: View {
     @State private var isOn = false
 
@@ -531,6 +534,7 @@ struct BlinkingCursor: View {
 
 // MARK: - Audio Bars View
 
+@MainActor
 struct AudioBarsView: View {
     let level: Float
     let isActive: Bool
@@ -558,6 +562,7 @@ struct AudioBarsView: View {
 
 // MARK: - Ollama Status Indicator
 
+@MainActor
 struct OllamaStatusIndicator: View {
     let isConnected: Bool
     @State private var isHovering = false

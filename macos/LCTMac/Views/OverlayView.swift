@@ -3,6 +3,7 @@ import AppKit
 import Foundation
 
 /// Overlay window for floating transcription display
+@MainActor
 struct OverlayView: View {
     @ObservedObject var viewModel: TranscriptionViewModel
     @State private var isHovering = false
@@ -126,6 +127,7 @@ struct OverlayView: View {
 }
 
 /// Translation pair in overlay
+@MainActor
 struct OverlayTranslationPair: View {
     let original: String
     let translated: String
@@ -158,6 +160,7 @@ struct OverlayTranslationPair: View {
 }
 
 /// Typing dots animation for overlay
+@MainActor
 struct OverlayTypingDots: View {
     @State private var dotIndex = 0
     @State private var timer: Timer?
