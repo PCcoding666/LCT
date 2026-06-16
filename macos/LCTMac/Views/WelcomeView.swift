@@ -4,6 +4,7 @@ import AVFoundation
 @preconcurrency import ScreenCaptureKit
 
 /// Welcome/Setup view for first-time users
+@MainActor
 struct WelcomeView: View {
     @StateObject private var guardian = OllamaGuardian.shared
     @StateObject private var modelManager = OllamaModelManager()
@@ -889,8 +890,8 @@ struct WelcomeView: View {
     }
     
     private func requestSpeechRecognitionPermission() {
-        SFSpeechRecognizer.requestAuthorization { @Sendable status in
-            DispatchQueue.main.async { [self] in
+        SFSpeechRecognizer.requestAuthorization { status in
+            Task { @MainActor in
                 hasSpeechRecognitionPermission = (status == .authorized)
             }
         }
