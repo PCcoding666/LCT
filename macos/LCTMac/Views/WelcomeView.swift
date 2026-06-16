@@ -11,6 +11,11 @@ struct WelcomeView: View {
     @State private var currentStep: SetupStep = .welcome
     @State private var isSettingUp = false
     @State private var setupError: String?
+    @State private var remoteHost = ""
+    @State private var remotePortText = "11434"
+    @State private var remoteModel = RecommendedModel.defaultModel.name
+    @State private var readyModelName = RecommendedModel.defaultModel.name
+    @State private var setupSkipped = false
     
     // Permission states
     @State private var hasScreenCapturePermission = false
@@ -28,8 +33,17 @@ struct WelcomeView: View {
         case permissions
         case checkingOllama
         case ollamaNotInstalled
+        case modelMissing
+        case remoteOllama
         case downloadingModel
         case complete
+    }
+
+    private struct RemoteOllamaConfig {
+        let host: String
+        let port: Int
+        let baseURL: String
+        let model: String
     }
     
     var body: some View {
@@ -51,6 +65,10 @@ struct WelcomeView: View {
                         checkingOllamaContent
                     case .ollamaNotInstalled:
                         ollamaNotInstalledContent
+                    case .modelMissing:
+                        modelMissingContent
+                    case .remoteOllama:
+                        remoteOllamaContent
                     case .downloadingModel:
                         downloadingModelContent
                     case .complete:
@@ -65,7 +83,7 @@ struct WelcomeView: View {
             // Footer
             footerView
         }
-        .frame(width: 600, height: 500)
+        .frame(width: 600, height: 560)
     }
     
     // MARK: - Header
@@ -119,7 +137,7 @@ struct WelcomeView: View {
         switch currentStep {
         case .welcome: return 0
         case .permissions: return 1
-        case .checkingOllama, .ollamaNotInstalled, .downloadingModel: return 2
+        case .checkingOllama, .ollamaNotInstalled, .modelMissing, .remoteOllama, .downloadingModel: return 2
         case .complete: return 3
         }
     }
@@ -261,7 +279,7 @@ struct WelcomeView: View {
                 .font(.title)
                 .fontWeight(.bold)
             
-            Text("LCT uses Ollama for local AI translation. Please install Ollama to continue.")
+            Text("Install Ollama locally or connect LCT to an existing Ollama server.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             
@@ -274,12 +292,125 @@ struct WelcomeView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+
+                Button(action: {
+                    remoteHost = ""
+                    remotePortText = "11434"
+                    remoteModel = defaultModel.name
+                    setupError = nil
+                    currentStep = .remoteOllama
+                }) {
+                    Label("Use Remote Ollama Server", systemImage: "network")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
                 
-                Text("After installing, click 'Check Again' below")
+                Text("After installing Ollama locally, click 'Check Again' below.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding(.top, 8)
+        }
+    }
+
+    // MARK: - Model Missing Content
+
+    private var modelMissingContent: some View {
+        VStack(spacing: 24) {
+            Image(systemName: "square.and.arrow.down")
+                .font(.system(size: 60))
+                .foregroundStyle(.blue)
+
+            Text("Translation Model Required")
+                .font(.title)
+                .fontWeight(.bold)
+
+            Text("Ollama is running, but \(defaultModel.displayName) is not installed.")
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Model")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(defaultModel.name)
+                        .monospaced()
+                }
+
+                HStack {
+                    Text("Download Size")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(defaultModel.size)
+                }
+
+                Divider()
+
+                Text("Command")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text("ollama pull \(defaultModel.name)")
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+            .padding()
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
+        }
+    }
+
+    // MARK: - Remote Ollama Content
+
+    private var remoteOllamaContent: some View {
+        VStack(spacing: 24) {
+            Image(systemName: "network")
+                .font(.system(size: 60))
+                .foregroundStyle(.blue)
+
+            Text("Remote Ollama Server")
+                .font(.title)
+                .fontWeight(.bold)
+
+            Text("Connect to a reachable Ollama API that already has the translation model installed.")
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Host")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("192.168.1.20", text: $remoteHost)
+                    .textFieldStyle(.roundedBorder)
+
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Port")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("11434", text: $remotePortText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 120)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Model")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField(defaultModel.name, text: $remoteModel)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+
+                Text("LCT will verify /api/tags and save this endpoint if the model is present.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
         }
     }
     
@@ -319,7 +450,7 @@ struct WelcomeView: View {
             if modelManager.isPulling {
                 Button("Cancel") {
                     modelManager.cancelPull()
-                    currentStep = .ollamaNotInstalled
+                    currentStep = .modelMissing
                 }
                 .buttonStyle(.bordered)
             }
@@ -330,34 +461,36 @@ struct WelcomeView: View {
     
     private var completeContent: some View {
         VStack(spacing: 24) {
-            Image(systemName: "checkmark.circle.fill")
+            Image(systemName: setupSkipped ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
                 .font(.system(size: 60))
-                .foregroundStyle(.green)
+                .foregroundStyle(setupSkipped ? .orange : .green)
             
-            Text("You're All Set!")
+            Text(setupSkipped ? "Setup Skipped" : "You're All Set!")
                 .font(.title)
                 .fontWeight(.bold)
             
-            Text("LCT is ready to use. Click 'Get Started' to begin translating.")
+            Text(setupSkipped ? "Configure Ollama in Settings before starting translation." : "LCT is ready to use. Click 'Get Started' to begin translating.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text("Ollama is running")
+            if !setupSkipped {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Ollama connection is ready")
+                    }
+
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Model '\(readyModelName)' is ready")
+                    }
                 }
-                
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text("Model '\(defaultModel.displayName)' is ready")
-                }
+                .padding()
+                .background(Color.green.opacity(0.1))
+                .cornerRadius(12)
             }
-            .padding()
-            .background(Color.green.opacity(0.1))
-            .cornerRadius(12)
         }
     }
     
@@ -365,11 +498,18 @@ struct WelcomeView: View {
     
     private var footerView: some View {
         HStack {
-            if currentStep == .ollamaNotInstalled {
+            if currentStep == .ollamaNotInstalled || currentStep == .modelMissing {
                 Button("Check Again") {
                     Task {
                         await checkOllama()
                     }
+                }
+            }
+
+            if currentStep == .remoteOllama {
+                Button("Back") {
+                    setupError = nil
+                    currentStep = .ollamaNotInstalled
                 }
             }
             
@@ -403,6 +543,10 @@ struct WelcomeView: View {
             return "Setting up..."
         case .ollamaNotInstalled:
             return "Skip for Now"
+        case .modelMissing:
+            return "Install Model"
+        case .remoteOllama:
+            return isSettingUp ? "Testing..." : "Test Connection"
         case .downloadingModel:
             return modelManager.isPulling ? "Downloading..." : "Continue"
         case .complete:
@@ -434,7 +578,19 @@ struct WelcomeView: View {
             
         case .ollamaNotInstalled:
             // Skip and continue anyway (user can set up later)
+            setupSkipped = true
             currentStep = .complete
+
+        case .modelMissing:
+            currentStep = .downloadingModel
+            Task {
+                await downloadModel()
+            }
+
+        case .remoteOllama:
+            Task {
+                await testRemoteOllama()
+            }
             
         case .downloadingModel:
             if !modelManager.isPulling {
@@ -448,6 +604,7 @@ struct WelcomeView: View {
     
     private func checkOllama() async {
         isSettingUp = true
+        setupError = nil
         defer { isSettingUp = false }
         
         await guardian.checkStatus()
@@ -461,11 +618,11 @@ struct WelcomeView: View {
             
             // Check if default model is installed
             if modelManager.isModelInstalled(defaultModel.name) {
+                setupSkipped = false
+                readyModelName = defaultModel.name
                 currentStep = .complete
             } else {
-                // Download the default model automatically
-                currentStep = .downloadingModel
-                await downloadModel()
+                currentStep = .modelMissing
             }
             
         case .installed, .stopped:
@@ -475,10 +632,11 @@ struct WelcomeView: View {
                 await modelManager.fetchInstalledModels()
                 
                 if modelManager.isModelInstalled(defaultModel.name) {
+                    setupSkipped = false
+                    readyModelName = defaultModel.name
                     currentStep = .complete
                 } else {
-                    currentStep = .downloadingModel
-                    await downloadModel()
+                    currentStep = .modelMissing
                 }
             } catch {
                 setupError = "Failed to start Ollama: \(error.localizedDescription)"
@@ -499,11 +657,163 @@ struct WelcomeView: View {
     private func downloadModel() async {
         do {
             try await modelManager.pullModel(defaultModel.name)
+            setupSkipped = false
+            readyModelName = defaultModel.name
             currentStep = .complete
         } catch {
             setupError = error.localizedDescription
-            currentStep = .ollamaNotInstalled
+            currentStep = .modelMissing
         }
+    }
+
+    private func testRemoteOllama() async {
+        isSettingUp = true
+        setupError = nil
+        defer { isSettingUp = false }
+
+        guard let config = normalizedRemoteOllamaConfig() else {
+            setupError = "Enter a valid HTTP host, port, and model."
+            return
+        }
+
+        guard let url = URL(string: "\(config.baseURL)/api/tags") else {
+            setupError = "Invalid remote Ollama URL."
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                setupError = "Remote Ollama did not return a healthy /api/tags response."
+                return
+            }
+
+            let modelsResponse = try JSONDecoder().decode(OllamaModelsResponse.self, from: data)
+            guard modelsResponse.models.contains(where: { isModelName($0.name, matching: config.model) }) else {
+                setupError = "Remote Ollama connected, but '\(config.model)' is not installed."
+                return
+            }
+
+            var settings = AppSettings.load()
+            settings.ollamaHost = config.host
+            settings.ollamaPort = config.port
+            settings.ollamaModel = config.model
+
+            guard settings.save() else {
+                setupError = AppSettings.consumeLastPersistenceError() ?? "Failed to save remote Ollama settings."
+                return
+            }
+
+            setupSkipped = false
+            readyModelName = config.model
+            currentStep = .complete
+        } catch {
+            setupError = "Cannot connect to remote Ollama: \(error.localizedDescription)"
+        }
+    }
+
+    private func normalizedRemoteOllamaConfig() -> RemoteOllamaConfig? {
+        let rawHost = remoteHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawPort = remotePortText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = remoteModel.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !rawHost.isEmpty, !model.isEmpty else {
+            return nil
+        }
+
+        var port = 11434
+        if !rawPort.isEmpty {
+            guard let parsedPort = Int(rawPort) else {
+                return nil
+            }
+            port = parsedPort
+        }
+
+        guard (1...65_535).contains(port) else {
+            return nil
+        }
+
+        let lowercasedHost = rawHost.lowercased()
+        if lowercasedHost.hasPrefix("http://") || lowercasedHost.hasPrefix("https://") {
+            guard var components = URLComponents(string: rawHost),
+                  components.scheme?.lowercased() == "http",
+                  let parsedHost = components.host else {
+                return nil
+            }
+
+            if let parsedPort = components.port {
+                port = parsedPort
+            }
+
+            components.scheme = "http"
+            components.host = parsedHost
+            components.port = port
+            components.path = ""
+            components.query = nil
+            components.fragment = nil
+
+            guard let absoluteURL = components.url?.absoluteString else {
+                return nil
+            }
+            let baseURL = absoluteURL.hasSuffix("/") ? String(absoluteURL.dropLast()) : absoluteURL
+
+            return RemoteOllamaConfig(
+                host: normalizedHostForSettings(parsedHost),
+                port: port,
+                baseURL: baseURL,
+                model: model
+            )
+        }
+
+        let hostInput = rawHost.hasSuffix("/") ? String(rawHost.dropLast()) : rawHost
+
+        if let components = URLComponents(string: "http://\(hostInput)"),
+           let parsedHost = components.host {
+            if let parsedPort = components.port {
+                port = parsedPort
+            }
+
+            guard (1...65_535).contains(port) else {
+                return nil
+            }
+
+            let host = normalizedHostForSettings(parsedHost)
+            return RemoteOllamaConfig(
+                host: host,
+                port: port,
+                baseURL: "http://\(host):\(port)",
+                model: model
+            )
+        }
+
+        guard hostInput.filter({ $0 == ":" }).count > 1 else {
+            return nil
+        }
+
+        let host = normalizedHostForSettings(hostInput)
+        return RemoteOllamaConfig(
+            host: host,
+            port: port,
+            baseURL: "http://\(host):\(port)",
+            model: model
+        )
+    }
+
+    private func normalizedHostForSettings(_ host: String) -> String {
+        if host.contains(":") && !host.hasPrefix("[") {
+            return "[\(host)]"
+        }
+
+        return host
+    }
+
+    private func isModelName(_ installedName: String, matching requestedName: String) -> Bool {
+        installedName == requestedName || installedName.hasPrefix("\(requestedName):")
     }
     
     // MARK: - Permission Methods

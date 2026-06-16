@@ -3,6 +3,7 @@ import Foundation
 /// State of a translation segment
 enum TranslationState: String, Codable, Equatable {
     case recognizing = "recognizing" // (Not used directly if we only create it when finalized, but useful)
+    case pending = "pending" // Finalized while paused; will be enqueued on resume
     case translating = "translating"
     case translated = "translated"
     case failed = "failed"

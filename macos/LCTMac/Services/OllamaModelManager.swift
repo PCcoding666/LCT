@@ -91,8 +91,8 @@ struct RecommendedModel {
         name: "qwen3.5:4b-mlx",
         displayName: "Qwen3.5 4B MLX",
         description: "MLX-optimized 4B model for low-latency local translation",
-        size: "~2.5GB",
-        sizeBytes: 2_500_000_000,
+        size: "~4.0GB",
+        sizeBytes: 4_000_000_000,
         isDefault: true
     )
 

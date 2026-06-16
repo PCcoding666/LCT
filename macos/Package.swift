@@ -22,7 +22,7 @@ let package = Package(
                 .product(name: "SQLite", package: "SQLite.swift")
             ],
             path: "LCTMac",
-            exclude: ["LCTMac.entitlements", "Info.plist"],
+            exclude: ["LCTMac.entitlements", "Info.plist", "Resources"],
             linkerSettings: [
                 .unsafeFlags([
                     "-Xlinker", "-sectcreate",

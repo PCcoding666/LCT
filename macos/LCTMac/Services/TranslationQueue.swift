@@ -159,6 +159,9 @@ class TranslationQueue: ObservableObject {
         pendingCount = 0
         isProcessing = false
         streamingText = ""
+        // Reset the dedup baseline: canceled work may be re-enqueued with the
+        // same text later (e.g. resume after pause) and must not be skipped
+        lastProcessedText = ""
         // Bump generation so any in-flight token dispatches are discarded
         generation &+= 1
     }
@@ -328,7 +331,12 @@ class TranslationQueue: ObservableObject {
             // Double-check generation hasn't changed during processing
             guard generation == taskGeneration else { return }
 
-            lastProcessedText = task.text
+            // Only final translations update the dedup baseline. Volatile draft
+            // text is transient and must not suppress the final segment that
+            // happens to share the same text.
+            if task.isFinal {
+                lastProcessedText = task.text
+            }
 
             let result = TranslationQueueResult(
                 taskId: task.id,
@@ -393,7 +401,9 @@ class TranslationQueue: ObservableObject {
             guard !Task.isCancelled else { return }
             guard generation == taskGeneration else { return }
 
-            lastProcessedText = task.text
+            if task.isFinal {
+                lastProcessedText = task.text
+            }
 
             let result = TranslationQueueResult(
                 taskId: task.id,

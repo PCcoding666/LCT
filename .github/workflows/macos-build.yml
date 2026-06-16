@@ -16,30 +16,18 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Full history so git describe / rev-list can stamp versions
 
     - name: Setup Swift
       uses: swift-actions/setup-swift@v2
       with:
         swift-version: "6.0" # Match the swift-tools-version in Package.swift
 
-    - name: Build Application
+    - name: Build and Package App Bundle
       run: |
         cd macos
-        swift build -c release
-
-    - name: Package App Bundle
-      run: |
-        cd macos
-        BIN_PATH=$(swift build -c release --show-bin-path)
-        
-        # Create the .app structure
-        mkdir -p LCTMac.app/Contents/MacOS
-        mkdir -p LCTMac.app/Contents/Resources
-        
-        # Copy the compiled binary
-        cp "${BIN_PATH}/LCTMac" LCTMac.app/Contents/MacOS/LCTMac
-        
-        # Create a compressed zip of the app
+        ./package-app.sh
         zip -r LCTMac-macOS.zip LCTMac.app
 
     - name: Upload Artifact

@@ -46,6 +46,16 @@ enum OllamaStatus: Equatable {
     }
 }
 
+enum OllamaInstallation: Equatable {
+    case none
+    case app(URL)
+    case cli(String)
+
+    var isInstalled: Bool {
+        self != .none
+    }
+}
+
 /// Service for managing Ollama installation and lifecycle
 @MainActor
 class OllamaGuardian: ObservableObject {
@@ -92,49 +102,70 @@ class OllamaGuardian: ObservableObject {
         
         return nil
     }
-    
-    // MARK: - Installation Check
-    
-    /// Check if Ollama is installed
-    func checkInstallation() async -> Bool {
-        // Check common installation paths (file existence checks are fast, OK on MainActor)
-        let paths = [
-            "/usr/local/bin/ollama",
-            "/opt/homebrew/bin/ollama",
-            "/usr/bin/ollama",
-            "\(NSHomeDirectory())/bin/ollama"
+
+    /// Find Ollama.app from common macOS application locations.
+    static func findOllamaAppURL() -> URL? {
+        let urls = [
+            URL(fileURLWithPath: "/Applications/Ollama.app"),
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Applications/Ollama.app")
         ]
-        
-        for path in paths {
-            if FileManager.default.fileExists(atPath: path) {
-                return true
-            }
+
+        return urls.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// Detect whether Ollama is installed as a native app or CLI.
+    func detectInstallation() async -> OllamaInstallation {
+        if let appURL = Self.findOllamaAppURL() {
+            return .app(appURL)
         }
-        
-        // Run `which ollama` on a background queue to avoid blocking the main thread.
-        // Process.waitUntilExit() is synchronous and can hang for seconds if PATH
-        // resolution involves network drives or broken shell config.
+
+        if let cliPath = getOllamaPath() {
+            return .cli(cliPath)
+        }
+
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
                 process.arguments = ["ollama"]
-                
+
                 let pipe = Pipe()
                 process.standardOutput = pipe
                 process.standardError = pipe
-                
+
                 do {
                     try process.run()
                     process.waitUntilExit()
-                    continuation.resume(returning: process.terminationStatus == 0)
+
+                    guard process.terminationStatus == 0 else {
+                        continuation.resume(returning: .none)
+                        return
+                    }
+
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let path = String(data: data, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                    if let path, !path.isEmpty {
+                        continuation.resume(returning: .cli(path))
+                    } else {
+                        continuation.resume(returning: .none)
+                    }
                 } catch {
-                    continuation.resume(returning: false)
+                    continuation.resume(returning: .none)
                 }
             }
         }
     }
-    
+
+    // MARK: - Installation Check
+
+    /// Check if Ollama is installed
+    func checkInstallation() async -> Bool {
+        await detectInstallation().isInstalled
+    }
+
     /// Get the Ollama executable path
     func getOllamaPath() -> String? {
         let paths = [
@@ -198,20 +229,14 @@ class OllamaGuardian: ObservableObject {
     func checkStatus() async {
         isChecking = true
         defer { isChecking = false }
-        
-        // Check installation first
-        if !(await checkInstallation()) {
-            status = .notInstalled
-            return
-        }
-        
-        // Check if service is running
-        let isRunning = await checkServiceStatus()
-        if isRunning {
+
+        // A running local service is usable even when the CLI is not on PATH.
+        if await checkServiceStatus() {
             status = .running
             ollamaVersion = await getVersion()
         } else {
-            status = .installed
+            let installation = await detectInstallation()
+            status = installation.isInstalled ? .installed : .notInstalled
         }
     }
     
@@ -221,7 +246,8 @@ class OllamaGuardian: ObservableObject {
     func startService() async throws {
         print("[OllamaGuardian] startService() called")
         
-        guard await checkInstallation() else {
+        let installation = await detectInstallation()
+        guard installation.isInstalled else {
             print("[OllamaGuardian] ❌ Ollama not installed")
             throw OllamaGuardianError.notInstalled
         }
@@ -236,13 +262,22 @@ class OllamaGuardian: ObservableObject {
         
         status = .starting
         
-        guard let ollamaPath = getOllamaPath() else {
+        switch installation {
+        case .app(let appURL):
+            print("[OllamaGuardian] Opening Ollama.app from: \(appURL.path)")
+            NSWorkspace.shared.open(appURL)
+            try await waitForServiceAfterLaunch()
+        case .cli(let ollamaPath):
+            try await startCLIService(at: ollamaPath)
+        case .none:
             print("[OllamaGuardian] ❌ Cannot find Ollama path")
             throw OllamaGuardianError.notInstalled
         }
-        
+    }
+
+    private func startCLIService(at ollamaPath: String) async throws {
         print("[OllamaGuardian] Starting Ollama from: \(ollamaPath)")
-        
+
         // Start Ollama serve in background
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ollamaPath)
@@ -256,27 +291,7 @@ class OllamaGuardian: ObservableObject {
             try process.run()
             print("[OllamaGuardian] Process started, waiting for service...")
             
-            // Wait for service to be ready (with timeout)
-            let maxAttempts = 15  // 15 seconds timeout (reduced from 30)
-            for attempt in 1...maxAttempts {
-                try await Task.sleep(nanoseconds: 1_000_000_000)  // 1 second
-                
-                if await checkServiceStatus() {
-                    print("[OllamaGuardian] ✅ Service started successfully after \(attempt)s")
-                    status = .running
-                    ollamaVersion = await getVersion()
-                    return
-                }
-                
-                // Update status to show progress
-                print("[OllamaGuardian] Waiting for Ollama to start... (\(attempt)s)")
-            }
-            
-            // Timeout reached
-            print("[OllamaGuardian] ❌ Startup timeout after \(maxAttempts)s")
-            status = .error("Startup timeout")
-            throw OllamaGuardianError.startupTimeout
-            
+            try await waitForServiceAfterLaunch()
         } catch let error as OllamaGuardianError {
             throw error
         } catch {
@@ -284,6 +299,26 @@ class OllamaGuardian: ObservableObject {
             status = .error(error.localizedDescription)
             throw OllamaGuardianError.startupFailed(error.localizedDescription)
         }
+    }
+
+    private func waitForServiceAfterLaunch() async throws {
+        let maxAttempts = 20
+        for attempt in 1...maxAttempts {
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+
+            if await checkServiceStatus() {
+                print("[OllamaGuardian] ✅ Service started successfully after \(attempt)s")
+                status = .running
+                ollamaVersion = await getVersion()
+                return
+            }
+
+            print("[OllamaGuardian] Waiting for Ollama to start... (\(attempt)s)")
+        }
+
+        print("[OllamaGuardian] ❌ Startup timeout after \(maxAttempts)s")
+        status = .error("Startup timeout")
+        throw OllamaGuardianError.startupTimeout
     }
     
     /// Stop Ollama service (if we started it)
@@ -355,7 +390,7 @@ class OllamaGuardian: ObservableObject {
     
     /// Get installation instructions URL
     var installationURL: URL {
-        URL(string: "https://ollama.ai/download")!
+        URL(string: "https://ollama.com/download")!
     }
     
     /// Open Ollama download page
@@ -375,7 +410,7 @@ enum OllamaGuardianError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notInstalled:
-            return "Ollama is not installed. Please install it from https://ollama.ai"
+            return "Ollama is not installed. Please install it from https://ollama.com/download or configure a remote Ollama server."
         case .startupFailed(let message):
             return "Failed to start Ollama: \(message)"
         case .startupTimeout:

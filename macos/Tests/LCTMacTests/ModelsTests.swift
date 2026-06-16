@@ -250,10 +250,10 @@ final class ModelsTests: XCTestCase {
         XCTAssertEqual(settings.ollamaTemperature, 0.3)
         XCTAssertEqual(settings.targetLanguage, .chinese)
         XCTAssertTrue(settings.contextAware)
+        XCTAssertTrue(settings.liveDraftTranslation)
         XCTAssertEqual(settings.maxContextEntries, 5)
         XCTAssertEqual(settings.historyRetentionDays, 30)
         XCTAssertEqual(settings.historyMaxEntries, 5000)
-        XCTAssertTrue(settings.showOverlay)
     }
 
     func testAppSettings_OllamaURL() {
@@ -270,6 +270,25 @@ final class ModelsTests: XCTestCase {
 
         XCTAssertEqual(settings.ollamaURL, "http://192.168.1.100:8080")
         XCTAssertEqual(settings.ollamaAPIEndpoint, "http://192.168.1.100:8080/api/chat")
+    }
+
+    func testAppSettings_IsLocalOllama() {
+        var settings = AppSettings()
+
+        settings.ollamaHost = "localhost"
+        XCTAssertTrue(settings.isLocalOllama)
+
+        settings.ollamaHost = " 127.0.0.1 "
+        XCTAssertTrue(settings.isLocalOllama)
+
+        settings.ollamaHost = "::1"
+        XCTAssertTrue(settings.isLocalOllama)
+
+        settings.ollamaHost = "[::1]"
+        XCTAssertTrue(settings.isLocalOllama)
+
+        settings.ollamaHost = "192.168.1.20"
+        XCTAssertFalse(settings.isLocalOllama)
     }
 
     func testAppSettings_TranslationPrompt_Default() {

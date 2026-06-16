@@ -12,6 +12,9 @@ class TranscriptionViewModel: ObservableObject {
     /// The current unfinalized live draft text from ASR
     @Published var liveSourceText: String = ""
 
+    /// Streaming translation of the current draft (transient; not persisted)
+    @Published var liveTranslation: String = ""
+
     /// Translation history for context
     @Published var translationHistory: [TranslationEntry] = []
 
@@ -27,14 +30,17 @@ class TranscriptionViewModel: ObservableObject {
     /// Audio level for visualization
     @Published var audioLevel: Float = 0
 
-    /// Current error message
-    @Published var errorMessage: String?
+    /// Current user-facing notice (info / warning / error with optional actions)
+    @Published var notice: AppNotice?
 
     /// Last translation latency
     @Published var lastLatencyMs: Int = 0
 
     /// Ollama connection status
     @Published var isOllamaConnected: Bool = false
+
+    /// When the current capture session started (nil when stopped)
+    @Published var captureStartedAt: Date?
 
     // MARK: - Services
 
@@ -56,8 +62,13 @@ class TranscriptionViewModel: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
     private var activeTranscriptionTaskId: UUID?
-    private var segmentTaskIdsBySegmentId: [UUID: UUID] = [:]
+    /// UI segment ids emitted for the active ASR task, in emission order.
+    /// Parallel to CaptionSegmenter's committed segments so tail rollbacks align.
+    private var activeTaskSegmentIds: [UUID] = []
     private var historyEntryIdsBySegmentId: [UUID: UUID] = [:]
+    /// Stable id for the volatile draft translation task, kept out of `segments`
+    /// so its streaming/complete callbacks route to `liveTranslation` instead.
+    private let liveDraftSegmentId = UUID()
 
     // MARK: - Initialization
 
@@ -81,7 +92,7 @@ class TranscriptionViewModel: ObservableObject {
         setupBindings()
 
         if let persistenceError = AppSettings.consumeLastPersistenceError() {
-            errorMessage = persistenceError
+            notice = .warning(persistenceError, autoDismiss: false)
         }
     }
 
@@ -108,12 +119,13 @@ class TranscriptionViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$isOllamaConnected)
 
-        // Bind errors
+        // Bind errors. These are runtime failures surfaced mid-session; offer a
+        // retry since the user's intent was to keep capturing.
         audioCaptureService.$lastError
             .receive(on: DispatchQueue.main)
             .compactMap { $0 }
             .sink { [weak self] error in
-                self?.errorMessage = error
+                self?.notice = .error(error, actions: [.retryCapture])
             }
             .store(in: &cancellables)
 
@@ -121,7 +133,7 @@ class TranscriptionViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .compactMap { $0 }
             .sink { [weak self] error in
-                self?.errorMessage = error
+                self?.notice = .error(error, actions: [.retryCapture])
             }
             .store(in: &cancellables)
 
@@ -129,7 +141,7 @@ class TranscriptionViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .compactMap { $0 }
             .sink { [weak self] error in
-                self?.errorMessage = error
+                self?.notice = .error(error, actions: [.retryCapture])
             }
             .store(in: &cancellables)
 
@@ -146,6 +158,11 @@ class TranscriptionViewModel: ObservableObject {
         translationQueue.onStreamingUpdate = { [weak self] segmentId, streamingText in
             guard let self = self else { return }
 
+            if segmentId == self.liveDraftSegmentId {
+                self.liveTranslation = streamingText
+                return
+            }
+
             if let idx = self.segments.firstIndex(where: { $0.id == segmentId }) {
                 self.segments[idx].translatedText = streamingText
                 self.segments[idx].state = .translating
@@ -159,7 +176,7 @@ class TranscriptionViewModel: ObservableObject {
             // Stop speech recognition and translation queue since audio is gone
             self.speechAnalyzerService.stop()
             self.translationQueue.cancelAll()
-            self.errorMessage = "Audio capture interrupted: \(error.localizedDescription). Please click Start to resume."
+            self.notice = .error("Audio capture interrupted: \(error.localizedDescription)", actions: [.retryCapture])
         }
 
     }
@@ -170,8 +187,10 @@ class TranscriptionViewModel: ObservableObject {
     func start() async {
         appLog("[TranscriptionVM] ▶️ start() called")
 
+        var micOnlyFallback = false
+
         do {
-            errorMessage = nil
+            notice = nil
 
             // Check if we need screen capture (system audio) or just microphone
             let needsScreenCapture = settings.captureSystemAudio
@@ -188,26 +207,36 @@ class TranscriptionViewModel: ObservableObject {
                     // If microphone is also enabled, offer to continue with microphone only
                     if settings.captureMicrophone {
                         appLog("[TranscriptionVM] Screen capture denied, will fall back to microphone-only mode")
+                        micOnlyFallback = true
                         // Continue with microphone only - don't return
                     } else {
                         appLog("[TranscriptionVM] ❌ No permission and no microphone fallback")
-                        errorMessage = "Screen recording permission required. Please grant permission in System Settings > Privacy & Security > Screen Recording."
-                        // Open system settings automatically
-                        AudioCaptureService.openScreenRecordingSettings()
+                        notice = .error(
+                            "Screen recording permission is required to capture system audio.",
+                            actions: [.openScreenRecordingSettings]
+                        )
                         return
                     }
                 }
             }
 
-            // Ensure Ollama is running (will start it if needed)
-            appLog("[TranscriptionVM] Ensuring Ollama is running...")
-            do {
-                try await ollamaGuardian.ensureRunning()
-                appLog("[TranscriptionVM] ✅ Ollama is running")
-            } catch {
-                appLog("[TranscriptionVM] ❌ Ollama error: \(error)")
-                errorMessage = "Cannot start Ollama: \(error.localizedDescription)"
-                return
+            if settings.isLocalOllama {
+                // Ensure local Ollama is running (will start it if needed).
+                appLog("[TranscriptionVM] Ensuring local Ollama is running...")
+                do {
+                    try await ollamaGuardian.ensureRunning()
+                    appLog("[TranscriptionVM] ✅ Local Ollama is running")
+                } catch let error as OllamaGuardianError {
+                    appLog("[TranscriptionVM] ❌ Local Ollama error: \(error)")
+                    notice = .error(error.localizedDescription, actions: [.startOllama])
+                    return
+                } catch {
+                    appLog("[TranscriptionVM] ❌ Local Ollama error: \(error)")
+                    notice = .error("Cannot start Ollama: \(error.localizedDescription)", actions: [.startOllama])
+                    return
+                }
+            } else {
+                appLog("[TranscriptionVM] Using remote Ollama at \(settings.ollamaURL); skipping local startup")
             }
 
             // Check Ollama connection
@@ -215,31 +244,47 @@ class TranscriptionViewModel: ObservableObject {
             let isConnected = await ollamaService.checkHealth()
             appLog("[TranscriptionVM] Ollama connected: \(isConnected)")
             if !isConnected {
-                errorMessage = "Cannot connect to Ollama at \(settings.ollamaURL). Please check your settings."
+                if settings.isLocalOllama {
+                    notice = .error(
+                        "Cannot connect to local Ollama at \(settings.ollamaURL).",
+                        actions: [.startOllama]
+                    )
+                } else {
+                    notice = .error(
+                        "Cannot connect to remote Ollama at \(settings.ollamaURL). Check the address in Settings.",
+                        actions: [.openAppSettings]
+                    )
+                }
                 return
             }
 
             do {
                 let availableModels = try await ollamaService.getAvailableModels()
                 guard isModelInstalled(settings.ollamaModel, in: availableModels) else {
-                    errorMessage = "Ollama model '\(settings.ollamaModel)' is not installed. Install it in setup or run: ollama pull \(settings.ollamaModel)"
+                    let installHint = settings.isLocalOllama
+                        ? "Run: ollama pull \(settings.ollamaModel)"
+                        : "Install it on the configured remote Ollama server."
+                    notice = .error(
+                        "Model '\(settings.ollamaModel)' is not installed. \(installHint)",
+                        actions: [.openAppSettings]
+                    )
                     return
                 }
             } catch {
-                errorMessage = "Cannot list Ollama models: \(error.localizedDescription)"
+                notice = .error("Cannot list Ollama models: \(error.localizedDescription)", actions: [.retryCapture])
                 return
             }
 
-            errorMessage = "Loading translation model. The first run may take longer..."
+            notice = .info("Loading translation model — the first run may take 5–30 seconds…")
             do {
                 let latencyMs = try await ollamaService.prewarmModel()
                 appLog("[TranscriptionVM] ✅ Ollama model prewarmed in \(latencyMs)ms")
-                errorMessage = nil
+                notice = nil
             } catch let error as OllamaError {
-                errorMessage = "Cannot load model '\(settings.ollamaModel)': \(error.localizedDescription)"
+                notice = .error("Cannot load model '\(settings.ollamaModel)': \(error.localizedDescription)", actions: [.retryCapture])
                 return
             } catch {
-                errorMessage = "Cannot load model '\(settings.ollamaModel)': \(error.localizedDescription)"
+                notice = .error("Cannot load model '\(settings.ollamaModel)': \(error.localizedDescription)", actions: [.retryCapture])
                 return
             }
 
@@ -267,48 +312,103 @@ class TranscriptionViewModel: ObservableObject {
             } catch AudioCaptureError.noPermission where settings.captureMicrophone {
                 // Fall back to microphone-only mode
                 appLog("[TranscriptionVM] Screen capture failed, falling back to microphone-only mode")
+                micOnlyFallback = true
                 try await audioCaptureService.startMicrophoneOnlyCapture()
                 appLog("[TranscriptionVM] ✅ Microphone-only capture started")
             }
 
             appLog("[TranscriptionVM] ✅ start() completed successfully")
+            captureStartedAt = Date()
 
-            // Start health monitoring for Ollama
-            ollamaGuardian.startHealthMonitoring(interval: 30)
+            // Surface mic-only mode now that capture is running (earlier notices
+            // were overwritten by the model-loading progress message).
+            if micOnlyFallback {
+                notice = .warning("No screen recording permission — capturing microphone only.")
+            }
+
+            // Start local health monitoring only for local Ollama.
+            if settings.isLocalOllama {
+                ollamaGuardian.startHealthMonitoring(interval: 30)
+            }
 
         } catch let error as SpeechAnalyzerError {
             switch error {
             case .notAuthorized:
-                errorMessage = "Speech recognition permission required. Please grant permission in System Settings > Privacy & Security > Speech Recognition."
+                notice = .error(
+                    "Speech recognition permission is required.",
+                    actions: [.openSpeechRecognitionSettings]
+                )
             case .recognizerUnavailable:
-                errorMessage = "Speech recognizer is unavailable for \(settings.sourceLanguage.displayName). Please try a different language."
+                notice = .error(
+                    "Speech recognition is unavailable for \(settings.sourceLanguage.displayName). Try another language.",
+                    actions: [.openAppSettings]
+                )
             case .audioSessionFailed:
-                errorMessage = "Failed to configure audio session."
+                notice = .error("Failed to configure audio session.", actions: [.retryCapture])
             }
         } catch let error as AudioCaptureError {
             switch error {
             case .noPermission:
-                errorMessage = "Screen recording permission required. Please grant permission in System Settings > Privacy & Security > Screen Recording."
-                AudioCaptureService.openScreenRecordingSettings()
+                notice = .error(
+                    "Screen recording permission is required to capture system audio.",
+                    actions: [.openScreenRecordingSettings]
+                )
             case .noDisplaysAvailable:
-                errorMessage = "No displays available for audio capture."
+                notice = .error("No displays available for audio capture.")
             case .captureSetupFailed(let message):
-                errorMessage = "Capture setup failed: \(message)"
+                notice = .error("Capture setup failed: \(message)", actions: [.retryCapture])
             case .audioProcessingFailed(let message):
-                errorMessage = "Audio processing failed: \(message)"
+                notice = .error("Audio processing failed: \(message)", actions: [.retryCapture])
             case .streamInterrupted(let message):
-                errorMessage = "Audio stream interrupted: \(message)"
+                notice = .error("Audio stream interrupted: \(message)", actions: [.retryCapture])
             }
         } catch {
-            errorMessage = error.localizedDescription
+            notice = .error(error.localizedDescription, actions: [.retryCapture])
+        }
+    }
+
+    // MARK: - Notice Handling
+
+    /// Dismiss the current notice.
+    func dismissNotice() {
+        notice = nil
+    }
+
+    /// Perform a notice's remediation action. `.openAppSettings` is handled by
+    /// the view (it owns the settings sheet) and is a no-op here.
+    func perform(_ action: NoticeAction) {
+        switch action {
+        case .openScreenRecordingSettings:
+            AudioCaptureService.openScreenRecordingSettings()
+        case .openMicrophoneSettings:
+            AudioCaptureService.openMicrophoneSettings()
+        case .openSpeechRecognitionSettings:
+            AudioCaptureService.openSpeechRecognitionSettings()
+        case .startOllama:
+            notice = .info("Starting Ollama…")
+            Task {
+                do {
+                    try await ollamaGuardian.ensureRunning()
+                    await start()
+                } catch {
+                    notice = .error("Could not start Ollama: \(error.localizedDescription)")
+                }
+            }
+        case .retryCapture:
+            notice = nil
+            Task { await start() }
+        case .openAppSettings:
+            break // handled by the view
         }
     }
 
     /// Stop capturing
     func stop() async {
+        captureStartedAt = nil
         await audioCaptureService.stopCapture()
         translationQueue.cancelAll()
         speechAnalyzerService.stop()
+        liveTranslation = ""
         clearTransientSegmentBookkeeping()
 
         // Stop health monitoring
@@ -323,6 +423,31 @@ class TranscriptionViewModel: ObservableObject {
         isPaused.toggle()
         if isPaused {
             translationQueue.cancelAll()
+            liveTranslation = ""
+            // cancelAll() drops queued and in-flight work; mark those segments
+            // as pending (and discard partial streaming output) so they are
+            // re-enqueued on resume instead of dangling in .translating forever.
+            for idx in segments.indices where segments[idx].state == .translating {
+                segments[idx].state = .pending
+                segments[idx].translatedText = ""
+            }
+        } else {
+            resumePendingTranslations()
+        }
+    }
+
+    /// Re-enqueue segments that finalized while paused or were canceled by pausing
+    private func resumePendingTranslations() {
+        for idx in segments.indices where segments[idx].state == .pending {
+            segments[idx].state = .translating
+            let context = settings.contextAware ? caption.getContextForTranslation() : []
+            translationQueue.enqueue(
+                segmentId: segments[idx].id,
+                text: segments[idx].sourceText,
+                context: context,
+                priority: .high,
+                isFinal: true
+            )
         }
     }
 
@@ -330,6 +455,7 @@ class TranscriptionViewModel: ObservableObject {
     func clear() {
         segments.removeAll()
         liveSourceText = ""
+        liveTranslation = ""
         captionSegmenter.reset()
         translationHistory.removeAll()
         speakerManager.clear()
@@ -413,12 +539,15 @@ class TranscriptionViewModel: ObservableObject {
                 || oldSettings.sourceLanguage != newSettings.sourceLanguage
                 || oldSettings.ollamaModel != newSettings.ollamaModel
             if needsRestart {
-                errorMessage = "Some settings require restarting capture to take effect. Please click Stop then Start."
+                notice = .warning("Some settings need a restart — click Stop then Start to apply.")
             }
         }
 
         if !didSaveSettings {
-            errorMessage = saveError ?? "Settings save failed. Your changes are active for this session but may not persist after restart."
+            notice = .warning(
+                saveError ?? "Settings save failed. Changes are active this session but may not persist.",
+                autoDismiss: false
+            )
         }
 
         // Unload old model if model changed
@@ -434,23 +563,22 @@ class TranscriptionViewModel: ObservableObject {
     /// Handle a new transcription result from speech recognizer
     private func handleTranscriptionResult(_ result: TranscriptionResult) {
         if activeTranscriptionTaskId != result.id {
-            if let oldTaskId = activeTranscriptionTaskId {
-                discardRollbackBookkeeping(for: oldTaskId)
-            }
             activeTranscriptionTaskId = result.id
+            // Segments from a finished ASR task can no longer be rolled back
+            activeTaskSegmentIds.removeAll()
         }
 
-        let (newlyFinalized, draft, didRollback) = captionSegmenter.process(result: result)
+        let (newlyFinalized, draft, invalidatedTailCount) = captionSegmenter.process(result: result)
         liveSourceText = draft
 
-        if didRollback {
-            rollbackSegments(for: result.id)
+        if invalidatedTailCount > 0 {
+            rollbackTailSegments(count: invalidatedTailCount)
             caption.updateOriginal(draft)
         }
 
         for text in newlyFinalized {
-            let newSegment = TranslationSegment(sourceText: text, state: .translating)
-            segmentTaskIdsBySegmentId[newSegment.id] = result.id
+            let newSegment = TranslationSegment(sourceText: text, state: isPaused ? .pending : .translating)
+            activeTaskSegmentIds.append(newSegment.id)
             segments.append(newSegment)
             trimSegmentsIfNeeded()
 
@@ -467,6 +595,38 @@ class TranscriptionViewModel: ObservableObject {
                 )
             }
         }
+
+        updateLiveDraftTranslation(draft: draft, didFinalize: !newlyFinalized.isEmpty)
+    }
+
+    /// Translate the in-progress draft for lower perceived latency. The result is
+    /// volatile (debounced, preemptible by final segments) and shown only in the
+    /// live area — it never enters `segments`, history, or translation context.
+    private func updateLiveDraftTranslation(draft: String, didFinalize: Bool) {
+        // A finalized cut means the previous draft's translation is now stale:
+        // its text became a real segment that gets its own final translation.
+        if didFinalize {
+            liveTranslation = ""
+        }
+
+        guard !isPaused, settings.liveDraftTranslation else {
+            liveTranslation = ""
+            return
+        }
+
+        if draft.isEmpty {
+            liveTranslation = ""
+            return
+        }
+
+        let context = settings.contextAware ? caption.getContextForTranslation() : []
+        translationQueue.enqueue(
+            segmentId: liveDraftSegmentId,
+            text: draft,
+            context: context,
+            priority: .normal, // below .high finals so a finalized sentence preempts the draft
+            isFinal: false
+        )
     }
 
     // MARK: - Translation Handling
@@ -474,6 +634,16 @@ class TranscriptionViewModel: ObservableObject {
     /// Handle translation result from queue
     private func handleTranslationResult(_ result: TranslationQueueResult) {
         let cleanedText = TextUtils.cleanTranslationOutput(result.translatedText)
+
+        // Draft translations are transient: update the live area and stop. They
+        // must not touch segments, history, or translation context.
+        if result.segmentId == liveDraftSegmentId {
+            if result.success {
+                liveTranslation = cleanedText
+                lastLatencyMs = result.latencyMs
+            }
+            return
+        }
 
         let idx = segments.firstIndex(where: { $0.id == result.segmentId })
         let sourceText = idx.map { segments[$0].sourceText } ?? result.originalText
@@ -497,7 +667,7 @@ class TranscriptionViewModel: ObservableObject {
                 latencyMs: result.latencyMs
             )
             translationHistory.append(entry)
-            if segmentTaskIdsBySegmentId[result.segmentId] == activeTranscriptionTaskId {
+            if activeTaskSegmentIds.contains(result.segmentId) {
                 historyEntryIdsBySegmentId[result.segmentId] = entry.id
             }
             caption.addToContext(entry)
@@ -531,14 +701,15 @@ class TranscriptionViewModel: ObservableObject {
         segments.removeFirst(segments.count - maxCards)
     }
 
-    private func rollbackSegments(for taskId: UUID) {
-        let staleSegmentIds = Set(segmentTaskIdsBySegmentId.compactMap { segmentId, mappedTaskId in
-            mappedTaskId == taskId ? segmentId : nil
-        })
+    /// Revoke the most recent `count` segments of the active ASR task after the
+    /// recognizer revised text they were cut from. Earlier segments survive.
+    private func rollbackTailSegments(count: Int) {
+        let staleSegmentIds = Set(activeTaskSegmentIds.suffix(count))
+        activeTaskSegmentIds.removeLast(min(count, activeTaskSegmentIds.count))
 
         guard !staleSegmentIds.isEmpty else { return }
 
-        appLog("[TranscriptionVM] ASR rollback detected; canceling \(staleSegmentIds.count) stale segment(s)")
+        appLog("[TranscriptionVM] ASR rollback detected; revoking \(staleSegmentIds.count) stale tail segment(s)")
         translationQueue.cancel(segmentIds: staleSegmentIds)
         segments.removeAll { staleSegmentIds.contains($0.id) }
 
@@ -555,25 +726,13 @@ class TranscriptionViewModel: ObservableObject {
         }
 
         for segmentId in staleSegmentIds {
-            segmentTaskIdsBySegmentId.removeValue(forKey: segmentId)
-            historyEntryIdsBySegmentId.removeValue(forKey: segmentId)
-        }
-    }
-
-    private func discardRollbackBookkeeping(for taskId: UUID) {
-        let oldSegmentIds = Set(segmentTaskIdsBySegmentId.compactMap { segmentId, mappedTaskId in
-            mappedTaskId == taskId ? segmentId : nil
-        })
-
-        for segmentId in oldSegmentIds {
-            segmentTaskIdsBySegmentId.removeValue(forKey: segmentId)
             historyEntryIdsBySegmentId.removeValue(forKey: segmentId)
         }
     }
 
     private func clearTransientSegmentBookkeeping() {
         activeTranscriptionTaskId = nil
-        segmentTaskIdsBySegmentId.removeAll()
+        activeTaskSegmentIds.removeAll()
         historyEntryIdsBySegmentId.removeAll()
     }
 

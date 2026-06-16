@@ -20,6 +20,8 @@
     <string>15.0</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.productivity</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
 
     <!-- Privacy Permissions -->
     <key>NSMicrophoneUsageDescription</key>

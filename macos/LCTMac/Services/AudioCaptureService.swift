@@ -79,7 +79,21 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     
     /// Open System Settings to Screen Recording permissions
     static func openScreenRecordingSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+        openPrivacySettings(pane: "Privacy_ScreenCapture")
+    }
+
+    /// Open System Settings to Microphone permissions
+    static func openMicrophoneSettings() {
+        openPrivacySettings(pane: "Privacy_Microphone")
+    }
+
+    /// Open System Settings to Speech Recognition permissions
+    static func openSpeechRecognitionSettings() {
+        openPrivacySettings(pane: "Privacy_SpeechRecognition")
+    }
+
+    private static func openPrivacySettings(pane: String) {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
             NSWorkspace.shared.open(url)
         }
     }

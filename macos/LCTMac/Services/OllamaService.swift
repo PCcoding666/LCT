@@ -281,6 +281,11 @@ class OllamaService: ObservableObject {
             lastError = nil
             return (translatedText, latencyMs)
 
+        } catch is CancellationError {
+            // Deliberate cancellation (pause, ASR rollback, preemption) — not a network failure
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
         } catch let error as OllamaError {
             appLog("[OllamaService] ❌ OllamaError in translate: \(error.localizedDescription)")
             lastError = error.localizedDescription
@@ -370,6 +375,11 @@ class OllamaService: ObservableObject {
             lastError = nil
             return latencyMs
 
+        } catch is CancellationError {
+            // Deliberate cancellation (pause, ASR rollback, preemption) — not a network failure
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
         } catch let error as OllamaError {
             appLog("[OllamaService] ❌ OllamaError in translateStreaming: \(error.localizedDescription)")
             lastError = error.localizedDescription

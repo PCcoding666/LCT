@@ -169,26 +169,26 @@ struct AppSettings: Codable, Equatable {
     var contextAware: Bool = true
     var maxContextEntries: Int = 5
     var customPrompt: String = ""
+    /// Translate the in-progress draft (before a sentence finalizes) for lower
+    /// perceived latency. Draft translations are transient and shown in the live
+    /// area only — they never enter history or translation context.
+    var liveDraftTranslation: Bool = true
 
     // MARK: - History Settings
     var historyRetentionDays: Int = 30
     var historyMaxEntries: Int = 5000
 
     // MARK: - UI Settings
-    var showOverlay: Bool = true
     var overlayOpacity: Double = 0.85
     var overlayFontSize: Double = 14.0
     var showLatency: Bool = true
     var maxDisplayCards: Int = 5
-    var captionLogMax: Int = 3
 
     // MARK: - Overlay Advanced Settings
     var overlayPositionX: Double = 0.0
     var overlayPositionY: Double = 0.0
     var overlayWidth: Double = 400.0
     var overlayHeight: Double = 200.0
-    var overlayTextColor: String = "#FFFFFF"
-    var overlayBackgroundColor: String = "#000000"
     var overlayClickThrough: Bool = false
     var overlayStayOnTop: Bool = true
 
@@ -200,6 +200,17 @@ struct AppSettings: Codable, Equatable {
 
     var ollamaAPIEndpoint: String {
         "\(ollamaURL)/api/chat"
+    }
+
+    var isLocalOllama: Bool {
+        let host = ollamaHost
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        return host == "localhost"
+            || host == "127.0.0.1"
+            || host == "::1"
+            || host == "[::1]"
     }
 
     // MARK: - Persistence
@@ -272,17 +283,6 @@ struct AppSettings: Codable, Equatable {
         return defaultSettings
     }
 
-    // MARK: - Color Helper
-
-    /// Convert hex color string to NSColor
-    var overlayTextColorNS: NSColor {
-        NSColor(hex: overlayTextColor) ?? NSColor.white
-    }
-
-    /// Convert hex background color to NSColor with opacity
-    var overlayBackgroundColorNS: NSColor {
-        NSColor(hex: overlayBackgroundColor)?.withAlphaComponent(overlayOpacity) ?? NSColor.black.withAlphaComponent(overlayOpacity)
-    }
 }
 
 // MARK: - Hex Color Extension
