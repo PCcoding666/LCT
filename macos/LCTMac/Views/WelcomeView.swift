@@ -23,6 +23,9 @@ struct WelcomeView: View {
     @State private var hasMicrophonePermission = false
     @State private var hasSpeechRecognitionPermission = false
     @State private var isCheckingPermissions = false
+    /// Set once the user has triggered the screen-recording prompt; until the
+    /// app restarts, CGPreflight keeps returning false even after granting.
+    @State private var screenRecordingRequested = false
     
     /// Default model to use
     private let defaultModel = RecommendedModel.defaultModel
@@ -181,39 +184,45 @@ struct WelcomeView: View {
                 .font(.title)
                 .fontWeight(.bold)
             
-            Text("LCT needs the following permissions to capture and translate audio")
+            Text("Grant microphone and speech recognition to get started. Screen recording is optional — it lets LCT caption audio from videos and meetings.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            
+                .fixedSize(horizontal: false, vertical: true)
+
             VStack(spacing: 16) {
-                // Screen Recording Permission
-                PermissionRow(
-                    icon: "rectangle.dashed.badge.record",
-                    title: "Screen Recording",
-                    description: "Required to capture system audio",
-                    isGranted: hasScreenCapturePermission,
-                    isChecking: isCheckingPermissions,
-                    action: requestScreenCapturePermission
-                )
-                
-                // Microphone Permission
+                // Microphone Permission (required)
                 PermissionRow(
                     icon: "mic.fill",
                     title: "Microphone",
-                    description: "Required to capture your voice",
+                    description: "Capture your voice",
                     isGranted: hasMicrophonePermission,
                     isChecking: isCheckingPermissions,
-                    action: requestMicrophonePermission
+                    onGrant: requestMicrophonePermission
                 )
-                
-                // Speech Recognition Permission
+
+                // Speech Recognition Permission (required)
                 PermissionRow(
                     icon: "waveform",
                     title: "Speech Recognition",
-                    description: "Required for speech-to-text",
+                    description: "Convert speech to text",
                     isGranted: hasSpeechRecognitionPermission,
                     isChecking: isCheckingPermissions,
-                    action: requestSpeechRecognitionPermission
+                    onGrant: requestSpeechRecognitionPermission
+                )
+
+                Divider()
+
+                // Screen Recording Permission (optional — needs a restart to take effect)
+                PermissionRow(
+                    icon: "rectangle.dashed.badge.record",
+                    title: "Screen Recording",
+                    description: "Capture audio from videos & meetings",
+                    isGranted: hasScreenCapturePermission,
+                    isChecking: isCheckingPermissions,
+                    isOptional: true,
+                    pendingRestart: screenRecordingRequested && !hasScreenCapturePermission,
+                    onGrant: requestScreenCapturePermission,
+                    onRestart: relaunchApp
                 )
             }
             .padding()
@@ -221,16 +230,13 @@ struct WelcomeView: View {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color(nsColor: .controlBackgroundColor))
             )
-            
-            if !allPermissionsGranted {
-                Text("Click each permission to grant access, or open System Settings manually")
+
+            if screenRecordingRequested && !hasScreenCapturePermission {
+                Text("macOS requires a restart for screen recording to take effect. You can also continue with microphone only.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                
-                Button(action: openSystemSettings) {
-                    Label("Open System Settings", systemImage: "gear")
-                }
-                .buttonStyle(.bordered)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .onAppear {
@@ -240,7 +246,7 @@ struct WelcomeView: View {
         }
         // Auto-refresh when coming back from System Settings
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            if currentStep == .permissions && !allPermissionsGranted {
+            if currentStep == .permissions {
                 print("[WelcomeView] App became active. Auto-checking permissions...")
                 Task {
                     await checkAllPermissions()
@@ -249,8 +255,10 @@ struct WelcomeView: View {
         }
     }
     
-    private var allPermissionsGranted: Bool {
-        hasScreenCapturePermission && hasMicrophonePermission && hasSpeechRecognitionPermission
+    /// Only microphone + speech recognition are required to proceed. Screen
+    /// recording is optional (microphone-only mode covers the rest).
+    private var requiredPermissionsGranted: Bool {
+        hasMicrophonePermission && hasSpeechRecognitionPermission
     }
     
     // MARK: - Checking Ollama Content
@@ -539,7 +547,7 @@ struct WelcomeView: View {
         case .welcome:
             return "Get Started"
         case .permissions:
-            return allPermissionsGranted ? "Continue" : "Skip for Now"
+            return requiredPermissionsGranted ? "Continue" : "Skip for Now"
         case .checkingOllama:
             return "Setting up..."
         case .ollamaNotInstalled:
@@ -864,18 +872,33 @@ struct WelcomeView: View {
     }
     
     private func requestScreenCapturePermission() {
+        screenRecordingRequested = true
         Task {
-            // Requesting screen capture will trigger the system dialog
+            // Requesting screen capture triggers the system dialog (first time)
             do {
                 _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
                 hasScreenCapturePermission = true
             } catch {
-                // Permission denied or not yet granted
+                // Not yet granted — open System Settings so the user can enable it.
+                // Note: even after granting, macOS needs an app restart for it to
+                // take effect, which is why we surface a Restart button.
                 hasScreenCapturePermission = false
-                // Open System Settings for Screen Recording
                 if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
                     NSWorkspace.shared.open(url)
                 }
+            }
+        }
+    }
+
+    /// Relaunch the app so a newly granted screen-recording permission takes
+    /// effect (CGPreflight caches the old value for the process's lifetime).
+    private func relaunchApp() {
+        let bundleURL = Bundle.main.bundleURL
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: bundleURL, configuration: config) { _, _ in
+            Task { @MainActor in
+                NSApp.terminate(nil)
             }
         }
     }
@@ -894,12 +917,6 @@ struct WelcomeView: View {
             Task { @MainActor in
                 hasSpeechRecognitionPermission = (status == .authorized)
             }
-        }
-    }
-    
-    private func openSystemSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
-            NSWorkspace.shared.open(url)
         }
     }
 }
@@ -937,38 +954,69 @@ struct PermissionRow: View {
     let description: String
     let isGranted: Bool
     let isChecking: Bool
-    let action: () -> Void
-    
+    var isOptional: Bool = false
+    var pendingRestart: Bool = false
+    let onGrant: () -> Void
+    var onRestart: (() -> Void)? = nil
+
     var body: some View {
         HStack(spacing: 16) {
             Image(systemName: icon)
                 .font(.title2)
-                .foregroundStyle(isGranted ? .green : .orange)
+                .foregroundStyle(iconColor)
                 .frame(width: 40)
-            
+
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.headline)
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.headline)
+                    if isOptional && !isGranted {
+                        Text("Recommended")
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Text(description)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            
+
             Spacer()
-            
-            if isChecking {
-                ProgressView()
-                    .scaleEffect(0.8)
-            } else if isGranted {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .font(.title2)
-            } else {
-                Button("Grant") {
-                    action()
-                }
-                .buttonStyle(.bordered)
-            }
+
+            trailing
         }
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        if isChecking {
+            ProgressView()
+                .scaleEffect(0.8)
+        } else if isGranted {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .font(.title2)
+        } else if pendingRestart {
+            Button("Restart to apply") {
+                onRestart?()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.orange)
+            .controlSize(.small)
+        } else {
+            Button("Grant") {
+                onGrant()
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    private var iconColor: Color {
+        if isGranted { return .green }
+        if pendingRestart { return .orange }
+        return isOptional ? Color(nsColor: .tertiaryLabelColor) : .orange
     }
 }
