@@ -141,15 +141,14 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
         }
         
         appLog("[AudioCaptureService] --------- Permission Check Failed ---------")
-        appLog("[AudioCaptureService] Showing error and opening settings.")
-        
+
+        // Pure query: don't set lastError or open System Settings here. The caller
+        // (TranscriptionViewModel) decides whether this is fatal — if microphone
+        // capture is enabled it silently falls back instead of surfacing an error.
         Task { @MainActor in
             self.hasPermission = false
-            self.lastError = "Screen recording permission denied. Please:\n1. Open System Settings > Privacy & Security > Screen & System Audio Recording\n2. Enable LCTMac\n3. Restart the application"
         }
-        
-        AudioCaptureService.openScreenRecordingSettings()
-        
+
         return false
     }
     
