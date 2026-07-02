@@ -94,6 +94,13 @@ class TranscriptionViewModel: ObservableObject {
         if let persistenceError = AppSettings.consumeLastPersistenceError() {
             notice = .warning(persistenceError, autoDismiss: false)
         }
+
+        // Probe Ollama on launch so the status indicator reflects reality
+        // immediately, instead of showing the default "stopped" until first use.
+        Task {
+            await ollamaGuardian.checkStatus()
+            isOllamaConnected = await ollamaService.checkHealth()
+        }
     }
 
     // MARK: - Setup
