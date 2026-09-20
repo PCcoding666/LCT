@@ -30,6 +30,11 @@ class TranscriptionViewModel: ObservableObject {
     /// Audio level for visualization
     @Published var audioLevel: Float = 0
 
+    /// Per-lane meter levels and which lanes are running (for the meter UI)
+    @Published var systemLevel: Float = 0
+    @Published var micLevel: Float = 0
+    @Published var captureSources: [AudioSource] = []
+
     /// Current user-facing notice (info / warning / error with optional actions)
     @Published var notice: AppNotice?
 
@@ -50,7 +55,9 @@ class TranscriptionViewModel: ObservableObject {
     private let speakerManager: SpeakerManager
     private let speechAnalyzerService: SpeechAnalyzerService
     private let caption: Caption
-    private let captionSegmenter = CaptionSegmenter()
+    /// One segmenter per capture lane — each lane's transcript evolves
+    /// independently and must not be fed into a shared segmenter.
+    private var captionSegmenters: [AudioSource: CaptionSegmenter] = [:]
     private let ollamaGuardian = OllamaGuardian.shared
     private let historyService = HistoryService()
 
@@ -61,14 +68,18 @@ class TranscriptionViewModel: ObservableObject {
     // MARK: - Private Properties
 
     private var cancellables = Set<AnyCancellable>()
-    private var activeTranscriptionTaskId: UUID?
-    /// UI segment ids emitted for the active ASR task, in emission order.
-    /// Parallel to CaptionSegmenter's committed segments so tail rollbacks align.
-    private var activeTaskSegmentIds: [UUID] = []
+    /// Active ASR task id per capture lane (mic / system each run their own task).
+    private var activeTranscriptionTaskIds: [AudioSource: UUID] = [:]
+    /// UI segment ids emitted for each lane's active ASR task, in emission order.
+    /// Parallel to each lane's CaptionSegmenter committed segments so tail rollbacks align.
+    private var activeTaskSegmentIds: [AudioSource: [UUID]] = [:]
     private var historyEntryIdsBySegmentId: [UUID: UUID] = [:]
-    /// Stable id for the volatile draft translation task, kept out of `segments`
-    /// so its streaming/complete callbacks route to `liveTranslation` instead.
-    private let liveDraftSegmentId = UUID()
+    /// Stable per-lane ids for the volatile draft translation tasks, kept out of
+    /// `segments` so their streaming/complete callbacks route to the live area.
+    private var liveDraftSegmentIds: [AudioSource: UUID] = [:]
+    /// Per-lane live draft text and draft translation, combined for display.
+    private var liveDrafts: [AudioSource: String] = [:]
+    private var liveTranslations: [AudioSource: String] = [:]
 
     // MARK: - Initialization
 
@@ -110,6 +121,19 @@ class TranscriptionViewModel: ObservableObject {
         audioCaptureService.$audioLevel
             .receive(on: DispatchQueue.main)
             .assign(to: &$audioLevel)
+
+        // Bind per-lane meter levels + active lanes
+        audioCaptureService.$systemLevel
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$systemLevel)
+
+        audioCaptureService.$micLevel
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$micLevel)
+
+        audioCaptureService.$activeSources
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$captureSources)
 
         // Bind capture state
         audioCaptureService.$isCapturing
@@ -165,8 +189,9 @@ class TranscriptionViewModel: ObservableObject {
         translationQueue.onStreamingUpdate = { [weak self] segmentId, streamingText in
             guard let self = self else { return }
 
-            if segmentId == self.liveDraftSegmentId {
-                self.liveTranslation = streamingText
+            if let lane = self.liveDraftSegmentIds.first(where: { $0.value == segmentId })?.key {
+                self.liveTranslations[lane] = streamingText
+                self.refreshLiveTranslation()
                 return
             }
 
@@ -195,37 +220,63 @@ class TranscriptionViewModel: ObservableObject {
         appLog("[TranscriptionVM] ▶️ start() called")
 
         var micOnlyFallback = false
+        var micDeniedInDual = false
 
         do {
             notice = nil
 
-            // Check if we need screen capture (system audio) or just microphone
-            let needsScreenCapture = settings.captureSystemAudio
-            appLog("[TranscriptionVM] needsScreenCapture: \(needsScreenCapture)")
-            appLog("[TranscriptionVM] captureMicrophone: \(settings.captureMicrophone)")
+            // Resolve which capture lanes to run: each enabled source needs its
+            // own permission. system → screen recording TCC, mic → microphone TCC.
+            appLog("[TranscriptionVM] captureSystemAudio: \(settings.captureSystemAudio), captureMicrophone: \(settings.captureMicrophone)")
 
-            if needsScreenCapture {
+            var activeSources: [AudioSource] = []
+
+            if settings.captureSystemAudio {
                 appLog("[TranscriptionVM] Checking screen capture permission...")
-                // Check screen capture permission first
                 let hasPermission = await audioCaptureService.checkPermission()
                 appLog("[TranscriptionVM] Screen capture permission: \(hasPermission)")
 
-                if !hasPermission {
-                    // If microphone is also enabled, offer to continue with microphone only
-                    if settings.captureMicrophone {
-                        appLog("[TranscriptionVM] Screen capture denied, will fall back to microphone-only mode")
-                        micOnlyFallback = true
-                        // Continue with microphone only - don't return
-                    } else {
-                        appLog("[TranscriptionVM] ❌ No permission and no microphone fallback")
-                        notice = .error(
-                            "Screen recording permission is required to capture system audio.",
-                            actions: [.openScreenRecordingSettings]
-                        )
-                        return
-                    }
+                if hasPermission {
+                    activeSources.append(.system)
+                } else if !settings.captureMicrophone {
+                    appLog("[TranscriptionVM] ❌ No screen permission and no microphone fallback")
+                    notice = .error(
+                        "Screen recording permission is required to capture system audio.",
+                        actions: [.openScreenRecordingSettings]
+                    )
+                    return
                 }
             }
+
+            if settings.captureMicrophone {
+                let micGranted = await AudioCaptureService.ensureMicrophonePermission()
+                if micGranted {
+                    activeSources.append(.microphone)
+                    if settings.captureSystemAudio && !activeSources.contains(.system) {
+                        // Screen denied, mic OK → classic mic-only fallback
+                        micOnlyFallback = true
+                    }
+                } else if activeSources.isEmpty {
+                    appLog("[TranscriptionVM] ❌ Microphone permission denied, no other source")
+                    notice = .error(
+                        "Microphone permission is required to capture audio.",
+                        actions: [.openMicrophoneSettings, .retryCapture]
+                    )
+                    return
+                } else {
+                    // Dual was requested but mic denied → run system-only, tell the user
+                    micDeniedInDual = true
+                }
+            }
+
+            guard !activeSources.isEmpty else {
+                notice = .error(
+                    "Enable at least one audio source (system audio or microphone) in Settings.",
+                    actions: [.openAppSettings]
+                )
+                return
+            }
+            appLog("[TranscriptionVM] Active sources: \(activeSources.map { $0.rawValue })")
 
             if settings.isLocalOllama {
                 // Ensure local Ollama is running (will start it if needed).
@@ -299,38 +350,46 @@ class TranscriptionViewModel: ObservableObject {
             appLog("[TranscriptionVM] Setting speech language: \(settings.sourceLanguage.displayName)")
             speechAnalyzerService.setLanguage(settings.sourceLanguage)
 
-            // Start speech recognition
+            // Start speech recognition — one independent lane per active source
             appLog("[TranscriptionVM] Starting speech recognition...")
-            try await speechAnalyzerService.start()
+            try await speechAnalyzerService.start(sources: activeSources)
             appLog("[TranscriptionVM] ✅ Speech recognition started")
 
-            // Connect audio capture to speech recognizer
+            // Connect audio capture to speech recognizer (buffers stay tagged per lane)
             let analyzer = self.speechAnalyzerService
-            audioCaptureService.onAudioBuffer = { [weak analyzer] buffer in
-                analyzer?.appendAudioBuffer(buffer)
+            audioCaptureService.onAudioBuffer = { [weak analyzer] buffer, source in
+                analyzer?.appendAudioBuffer(buffer, source: source)
             }
             audioCaptureService.onAudioData = nil
 
-            // Start audio capture (will use microphone if screen capture fails)
-            appLog("[TranscriptionVM] Starting audio capture...")
-            do {
-                try await audioCaptureService.startCapture()
-                appLog("[TranscriptionVM] ✅ Audio capture started (screen + mic)")
-            } catch AudioCaptureError.noPermission where settings.captureMicrophone {
-                // Fall back to microphone-only mode
-                appLog("[TranscriptionVM] Screen capture failed, falling back to microphone-only mode")
-                micOnlyFallback = true
+            // Start audio capture for the resolved sources
+            if activeSources.contains(.system) && activeSources.contains(.microphone) {
+                appLog("[TranscriptionVM] Starting dual capture (system audio + microphone)...")
+                try await audioCaptureService.startDualCapture()
+                appLog("[TranscriptionVM] ✅ Dual capture started")
+            } else if activeSources == [.microphone] {
+                appLog("[TranscriptionVM] Starting microphone-only capture...")
                 try await audioCaptureService.startMicrophoneOnlyCapture()
                 appLog("[TranscriptionVM] ✅ Microphone-only capture started")
+            } else {
+                appLog("[TranscriptionVM] Starting system audio capture...")
+                try await audioCaptureService.startCapture()
+                appLog("[TranscriptionVM] ✅ System audio capture started")
             }
 
             appLog("[TranscriptionVM] ✅ start() completed successfully")
             captureStartedAt = Date()
 
-            // Surface mic-only mode now that capture is running (earlier notices
-            // were overwritten by the model-loading progress message).
+            // Surface lane-degraded notices now that capture is running (earlier
+            // notices were overwritten by the model-loading progress message).
             if micOnlyFallback {
                 notice = .warning("No screen recording permission — capturing microphone only.")
+            } else if micDeniedInDual {
+                notice = AppNotice(
+                    severity: .warning,
+                    message: "No microphone permission — capturing system audio only.",
+                    actions: [.openMicrophoneSettings]
+                )
             }
 
             // Start local health monitoring only for local Ollama.
@@ -359,6 +418,11 @@ class TranscriptionViewModel: ObservableObject {
                 notice = .error(
                     "Screen recording permission is required to capture system audio.",
                     actions: [.openScreenRecordingSettings]
+                )
+            case .noMicrophonePermission:
+                notice = .error(
+                    "Microphone permission is required to capture audio.",
+                    actions: [.openMicrophoneSettings, .retryCapture]
                 )
             case .noDisplaysAvailable:
                 notice = .error("No displays available for audio capture.")
@@ -415,6 +479,9 @@ class TranscriptionViewModel: ObservableObject {
         await audioCaptureService.stopCapture()
         translationQueue.cancelAll()
         speechAnalyzerService.stop()
+        liveDrafts.removeAll()
+        liveTranslations.removeAll()
+        liveSourceText = ""
         liveTranslation = ""
         clearTransientSegmentBookkeeping()
 
@@ -430,6 +497,7 @@ class TranscriptionViewModel: ObservableObject {
         isPaused.toggle()
         if isPaused {
             translationQueue.cancelAll()
+            liveTranslations.removeAll()
             liveTranslation = ""
             // cancelAll() drops queued and in-flight work; mark those segments
             // as pending (and discard partial streaming output) so they are
@@ -463,7 +531,9 @@ class TranscriptionViewModel: ObservableObject {
         segments.removeAll()
         liveSourceText = ""
         liveTranslation = ""
-        captionSegmenter.reset()
+        liveDrafts.removeAll()
+        liveTranslations.removeAll()
+        captionSegmenters.removeAll()
         translationHistory.removeAll()
         speakerManager.clear()
         caption.clear()
@@ -567,25 +637,34 @@ class TranscriptionViewModel: ObservableObject {
 
     // MARK: - Transcription Handling
 
-    /// Handle a new transcription result from speech recognizer
+    /// Handle a new transcription result from speech recognizer (any lane)
     private func handleTranscriptionResult(_ result: TranscriptionResult) {
-        if activeTranscriptionTaskId != result.id {
-            activeTranscriptionTaskId = result.id
+        let lane = result.source
+
+        if activeTranscriptionTaskIds[lane] != result.id {
+            activeTranscriptionTaskIds[lane] = result.id
             // Segments from a finished ASR task can no longer be rolled back
-            activeTaskSegmentIds.removeAll()
+            activeTaskSegmentIds[lane] = []
         }
 
-        let (newlyFinalized, draft, invalidatedTailCount) = captionSegmenter.process(result: result)
-        liveSourceText = draft
+        let segmenter = captionSegmenters[lane] ?? {
+            let s = CaptionSegmenter()
+            captionSegmenters[lane] = s
+            return s
+        }()
+
+        let (newlyFinalized, draft, invalidatedTailCount) = segmenter.process(result: result)
+        liveDrafts[lane] = draft
+        refreshLiveSourceText()
 
         if invalidatedTailCount > 0 {
-            rollbackTailSegments(count: invalidatedTailCount)
+            rollbackTailSegments(count: invalidatedTailCount, source: lane)
             caption.updateOriginal(draft)
         }
 
         for text in newlyFinalized {
-            let newSegment = TranslationSegment(sourceText: text, state: isPaused ? .pending : .translating)
-            activeTaskSegmentIds.append(newSegment.id)
+            let newSegment = TranslationSegment(sourceText: text, state: isPaused ? .pending : .translating, source: lane)
+            activeTaskSegmentIds[lane, default: []].append(newSegment.id)
             segments.append(newSegment)
             trimSegmentsIfNeeded()
 
@@ -603,32 +682,59 @@ class TranscriptionViewModel: ObservableObject {
             }
         }
 
-        updateLiveDraftTranslation(draft: draft, didFinalize: !newlyFinalized.isEmpty)
+        updateLiveDraftTranslation(draft: draft, didFinalize: !newlyFinalized.isEmpty, source: lane)
+    }
+
+    /// Rebuild the combined live source text from all lanes' drafts.
+    /// In dual mode each lane's draft is prefixed so the two stay distinguishable.
+    private func refreshLiveSourceText() {
+        liveSourceText = combinedLaneText(liveDrafts)
+    }
+
+    private func refreshLiveTranslation() {
+        liveTranslation = combinedLaneText(liveTranslations)
+    }
+
+    private func combinedLaneText(_ perLane: [AudioSource: String]) -> String {
+        let ordered: [AudioSource] = [.microphone, .system]
+        let parts = ordered.compactMap { lane -> String? in
+            guard let text = perLane[lane], !text.isEmpty else { return nil }
+            return perLane.count > 1 ? "[\(lane.label)] \(text)" : text
+        }
+        return parts.joined(separator: "\n")
     }
 
     /// Translate the in-progress draft for lower perceived latency. The result is
     /// volatile (debounced, preemptible by final segments) and shown only in the
     /// live area — it never enters `segments`, history, or translation context.
-    private func updateLiveDraftTranslation(draft: String, didFinalize: Bool) {
+    private func updateLiveDraftTranslation(draft: String, didFinalize: Bool, source: AudioSource) {
         // A finalized cut means the previous draft's translation is now stale:
         // its text became a real segment that gets its own final translation.
         if didFinalize {
-            liveTranslation = ""
+            liveTranslations[source] = nil
         }
 
         guard !isPaused, settings.liveDraftTranslation else {
-            liveTranslation = ""
+            liveTranslations[source] = nil
+            refreshLiveTranslation()
             return
         }
 
         if draft.isEmpty {
-            liveTranslation = ""
+            liveTranslations[source] = nil
+            refreshLiveTranslation()
             return
         }
 
+        let draftId = liveDraftSegmentIds[source] ?? {
+            let id = UUID()
+            liveDraftSegmentIds[source] = id
+            return id
+        }()
+
         let context = settings.contextAware ? caption.getContextForTranslation() : []
         translationQueue.enqueue(
-            segmentId: liveDraftSegmentId,
+            segmentId: draftId,
             text: draft,
             context: context,
             priority: .normal, // below .high finals so a finalized sentence preempts the draft
@@ -644,9 +750,10 @@ class TranscriptionViewModel: ObservableObject {
 
         // Draft translations are transient: update the live area and stop. They
         // must not touch segments, history, or translation context.
-        if result.segmentId == liveDraftSegmentId {
+        if let lane = liveDraftSegmentIds.first(where: { $0.value == result.segmentId })?.key {
             if result.success {
-                liveTranslation = cleanedText
+                liveTranslations[lane] = cleanedText
+                refreshLiveTranslation()
                 lastLatencyMs = result.latencyMs
             }
             return
@@ -674,7 +781,7 @@ class TranscriptionViewModel: ObservableObject {
                 latencyMs: result.latencyMs
             )
             translationHistory.append(entry)
-            if activeTaskSegmentIds.contains(result.segmentId) {
+            if activeTaskSegmentIds.values.contains(where: { $0.contains(result.segmentId) }) {
                 historyEntryIdsBySegmentId[result.segmentId] = entry.id
             }
             caption.addToContext(entry)
@@ -708,15 +815,17 @@ class TranscriptionViewModel: ObservableObject {
         segments.removeFirst(segments.count - maxCards)
     }
 
-    /// Revoke the most recent `count` segments of the active ASR task after the
-    /// recognizer revised text they were cut from. Earlier segments survive.
-    private func rollbackTailSegments(count: Int) {
-        let staleSegmentIds = Set(activeTaskSegmentIds.suffix(count))
-        activeTaskSegmentIds.removeLast(min(count, activeTaskSegmentIds.count))
+    /// Revoke the most recent `count` segments of one lane's active ASR task
+    /// after the recognizer revised text they were cut from. Earlier segments survive.
+    private func rollbackTailSegments(count: Int, source: AudioSource) {
+        var laneSegmentIds = activeTaskSegmentIds[source] ?? []
+        let staleSegmentIds = Set(laneSegmentIds.suffix(count))
+        laneSegmentIds.removeLast(min(count, laneSegmentIds.count))
+        activeTaskSegmentIds[source] = laneSegmentIds
 
         guard !staleSegmentIds.isEmpty else { return }
 
-        appLog("[TranscriptionVM] ASR rollback detected; revoking \(staleSegmentIds.count) stale tail segment(s)")
+        appLog("[TranscriptionVM] ASR rollback on [\(source.rawValue)] lane; revoking \(staleSegmentIds.count) stale tail segment(s)")
         translationQueue.cancel(segmentIds: staleSegmentIds)
         segments.removeAll { staleSegmentIds.contains($0.id) }
 
@@ -738,7 +847,7 @@ class TranscriptionViewModel: ObservableObject {
     }
 
     private func clearTransientSegmentBookkeeping() {
-        activeTranscriptionTaskId = nil
+        activeTranscriptionTaskIds.removeAll()
         activeTaskSegmentIds.removeAll()
         historyEntryIdsBySegmentId.removeAll()
     }

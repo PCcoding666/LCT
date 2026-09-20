@@ -7,6 +7,7 @@ import CoreGraphics
 /// Audio capture error types
 enum AudioCaptureError: Error, LocalizedError {
     case noPermission
+    case noMicrophonePermission
     case noDisplaysAvailable
     case captureSetupFailed(String)
     case audioProcessingFailed(String)
@@ -16,6 +17,8 @@ enum AudioCaptureError: Error, LocalizedError {
         switch self {
         case .noPermission:
             return "Screen recording permission not granted"
+        case .noMicrophonePermission:
+            return "Microphone permission not granted"
         case .noDisplaysAvailable:
             return "No displays available for capture"
         case .captureSetupFailed(let message):
@@ -43,6 +46,11 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     @MainActor @Published private(set) var isCapturing: Bool = false
     @MainActor @Published private(set) var hasPermission: Bool = false
     @MainActor @Published private(set) var audioLevel: Float = 0
+    /// Per-lane meter levels (0...1, -60dB…0dB normalized, with fast-attack/slow-decay ballistics)
+    @MainActor @Published private(set) var systemLevel: Float = 0
+    @MainActor @Published private(set) var micLevel: Float = 0
+    /// Lanes actually running in the current capture session
+    @MainActor @Published private(set) var activeSources: [AudioSource] = []
     @MainActor @Published private(set) var lastError: String?
     
     // MARK: - Configuration
@@ -51,7 +59,8 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     // MARK: - Audio Callback
     // These callbacks are marked nonisolated(unsafe) because they are called from background threads
     // The callbacks themselves must be thread-safe (e.g., SFSpeechAudioBufferRecognitionRequest.append is thread-safe)
-    nonisolated(unsafe) var onAudioBuffer: (@Sendable (AVAudioPCMBuffer) -> Void)?
+    // The AudioSource tag tells the consumer which capture lane the buffer came from.
+    nonisolated(unsafe) var onAudioBuffer: (@Sendable (AVAudioPCMBuffer, AudioSource) -> Void)?
     nonisolated(unsafe) var onAudioData: (@Sendable (Data) -> Void)?
     
     /// Callback when the SCStream is interrupted (e.g., display disconnected).
@@ -67,6 +76,10 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     private var cancellables = Set<AnyCancellable>()
     private var isStarting = false
     private var isStopping = false
+    // Meter update throttling timestamps (each lane's buffers arrive serially on
+    // its own queue, so per-lane vars stay single-threaded)
+    private var lastSystemMeterUpdate: TimeInterval = 0
+    private var lastMicMeterUpdate: TimeInterval = 0
 
     // MARK: - Initialization
     
@@ -76,7 +89,28 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     }
     
     // MARK: - Permission Management
-    
+
+    /// Ensure microphone TCC permission, requesting in-app when undetermined.
+    /// macOS feeds silent (all-zero) buffers to unauthorized processes without
+    /// any error — previously surfaced as "capturing but RMS always 0.0".
+    /// Returns true when authorized.
+    @discardableResult
+    static func ensureMicrophonePermission() async -> Bool {
+        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        appLog("[AudioCaptureService] Microphone authorization status: \(micStatus.rawValue)")
+        switch micStatus {
+        case .authorized:
+            return true
+        case .notDetermined:
+            let granted = await AVCaptureDevice.requestAccess(for: .audio)
+            appLog("[AudioCaptureService] Microphone permission request result: \(granted)")
+            return granted
+        default:
+            appLog("[AudioCaptureService] ❌ Microphone permission denied/restricted")
+            return false
+        }
+    }
+
     /// Open System Settings to Screen Recording permissions
     static func openScreenRecordingSettings() {
         openPrivacySettings(pane: "Privacy_ScreenCapture")
@@ -153,8 +187,8 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     }
     
     // MARK: - Capture Control
-    
-    /// Start capturing audio
+
+    /// Start capturing system audio only (ScreenCaptureKit)
     func startCapture() async throws {
         let isCapturingCurrently = await MainActor.run { isCapturing }
         guard !isCapturingCurrently else { return }
@@ -166,40 +200,122 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
         guard await checkPermission() else {
             throw AudioCaptureError.noPermission
         }
-        
+
+        try await startSystemAudioStream()
+
+        Task { @MainActor in
+            self.isCapturing = true
+            self.lastError = nil
+            self.activeSources = [.system]
+            self.systemLevel = 0
+        }
+
+        appLog("Audio capture started successfully (system audio)")
+    }
+
+    /// Start BOTH lanes concurrently: system audio (ScreenCaptureKit) + microphone
+    /// (AVAudioEngine). Buffers are tagged with their AudioSource so downstream
+    /// recognition runs as two independent lanes — never mixed into one stream
+    /// (mixing/interleaving two streams into a single recognizer corrupts both).
+    func startDualCapture() async throws {
+        let isCapturingCurrently = await MainActor.run { isCapturing }
+        guard !isCapturingCurrently else { return }
+        guard !isStarting else { return }
+        isStarting = true
+        defer { isStarting = false }
+
+        guard await checkPermission() else {
+            throw AudioCaptureError.noPermission
+        }
+
+        guard await Self.ensureMicrophonePermission() else {
+            throw AudioCaptureError.noMicrophonePermission
+        }
+
+        try await startSystemAudioStream()
+
+        do {
+            try startMicrophoneEngine()
+        } catch {
+            // Mic failed after the system stream started — tear the stream back
+            // down so we don't run a half-configured session.
+            if let stream = stream {
+                try? await stream.stopCapture()
+                self.stream = nil
+                self.streamOutput = nil
+                self.videoOutput = nil
+            }
+            throw error
+        }
+
+        Task { @MainActor in
+            self.isCapturing = true
+            self.lastError = nil
+            self.activeSources = [.system, .microphone]
+            self.systemLevel = 0
+            self.micLevel = 0
+        }
+
+        appLog("Dual capture started successfully (system audio + microphone)")
+    }
+
+    /// Start capturing audio from microphone only (no screen capture permission needed)
+    func startMicrophoneOnlyCapture() async throws {
+        let isCapturingCurrently = await MainActor.run { isCapturing }
+        guard !isCapturingCurrently else { return }
+
+        appLog("Starting microphone-only capture mode...")
+
+        guard await Self.ensureMicrophonePermission() else {
+            throw AudioCaptureError.noMicrophonePermission
+        }
+
+        try startMicrophoneEngine()
+
+        Task { @MainActor in
+            self.isCapturing = true
+            self.lastError = nil
+            self.activeSources = [.microphone]
+            self.micLevel = 0
+        }
+
+        appLog("Microphone-only capture started successfully")
+    }
+
+    // MARK: - Lane Setup Helpers
+
+    /// Open the ScreenCaptureKit system-audio stream and wire it to the `.system` lane.
+    private func startSystemAudioStream() async throws {
         // Get shareable content
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        
+
         guard let display = content.displays.first else {
             throw AudioCaptureError.noDisplaysAvailable
         }
-        
+
         // Create content filter for the display
         let filter = SCContentFilter(display: display, excludingWindows: [])
-        
+
         // Configure stream for audio capture
         let streamConfig = SCStreamConfiguration()
-        
+
         // We only need audio, not video
-        streamConfig.capturesAudio = config.captureSystemAudio
+        streamConfig.capturesAudio = true
         streamConfig.excludesCurrentProcessAudio = true  // Don't capture our own audio
-        
+
         // Audio configuration
         streamConfig.sampleRate = Int(config.sampleRate)
         streamConfig.channelCount = config.channelCount
-        
-        // Microphone capture (macOS 15+)
-        // Disabled for now as dual-stream appending breaks SFSpeechRecognizer
-        // if #available(macOS 15.0, *) {
-        //     streamConfig.captureMicrophone = config.captureMicrophone
-        // }
-        
+
+        // NOTE: ScreenCaptureKit's `captureMicrophone` / `.microphone` output stays
+        // disabled deliberately. The mic lane uses AVAudioEngine instead so both
+        // lanes keep clean, separately-tagged buffers (see startDualCapture).
+
         // Minimal video config (required even for audio-only)
         streamConfig.width = 2
         streamConfig.height = 2
         streamConfig.minimumFrameInterval = CMTime(value: 1, timescale: 1)  // 1 FPS minimum
-        
-        // Create stream
+
         // Create stream with delegate for error handling (e.g., display disconnect)
         let stream = SCStream(filter: filter, configuration: streamConfig, delegate: self)
 
@@ -209,7 +325,7 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
             channelCount: config.channelCount
         )
         output.onAudioBuffer = { [weak self] buffer in
-            self?.processAudioBufferBackground(buffer)
+            self?.processAudioBufferBackground(buffer, source: .system)
         }
 
         try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: streamOutputQueue)
@@ -218,46 +334,24 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
         let screenOutput = VideoStreamOutput()
         try stream.addStreamOutput(screenOutput, type: .screen, sampleHandlerQueue: streamOutputQueue)
 
-        // If microphone is enabled and available (macOS 15+)
-        // Disabled for now as dual-stream appending breaks SFSpeechRecognizer
-        // if #available(macOS 15.0, *), config.captureMicrophone {
-        //     do {
-        //         try stream.addStreamOutput(output, type: .microphone, sampleHandlerQueue: streamOutputQueue)
-        //     } catch {
-        //         print("Warning: Could not add microphone stream output: \(error)")
-        //         // Continue without microphone - system audio will still work
-        //     }
-        // }
-
         // Start the stream only after all outputs have been registered.
         try await stream.startCapture()
 
         self.stream = stream
         self.streamOutput = output
         self.videoOutput = screenOutput
-
-        Task { @MainActor in
-            self.isCapturing = true
-            self.lastError = nil
-        }
-        
-        appLog("Audio capture started successfully")
     }
-    
-    /// Start capturing audio from microphone only (no screen capture permission needed)
-    func startMicrophoneOnlyCapture() async throws {
-        let isCapturingCurrently = await MainActor.run { isCapturing }
-        guard !isCapturingCurrently else { return }
-        
-        appLog("Starting microphone-only capture mode...")
-        
-        // Use AVAudioEngine for microphone capture
+
+    /// Start the AVAudioEngine microphone lane, wired to the `.microphone` source.
+    /// Caller must have ensured microphone TCC permission first
+    /// (`ensureMicrophonePermission`) — unauthorized processes receive silent buffers.
+    private func startMicrophoneEngine() throws {
         let audioEngine = AVAudioEngine()
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
-        
+
         appLog("Microphone native format: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount) channels")
-        
+
         // Target format for SFSpeechRecognizer (16kHz Mono PCM)
         let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -265,24 +359,24 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
             channels: AVAudioChannelCount(config.channelCount),
             interleaved: false
         )!
-        
+
         // Use an AVAudioMixerNode to perform safe sample rate conversion
         let mixer = AVAudioMixerNode()
         audioEngine.attach(mixer)
-        
+
         // Connect input -> mixer (native format)
         audioEngine.connect(inputNode, to: mixer, format: inputFormat)
-        
+
         // Connect mixer -> mainMixerNode (target format) to ensure the graph runs
         // Mute the mixer so we don't get audio feedback through speakers
         audioEngine.connect(mixer, to: audioEngine.mainMixerNode, format: targetFormat)
         mixer.outputVolume = 0.0
-        
+
         // Install tap on the mixer's output to get the correctly converted 16kHz buffers
         mixer.installTap(onBus: 0, bufferSize: 4096, format: targetFormat) { [weak self] buffer, _ in
-            self?.processAudioBufferBackground(buffer)
+            self?.processAudioBufferBackground(buffer, source: .microphone)
         }
-        
+
         // Start audio engine
         do {
             audioEngine.prepare()
@@ -290,15 +384,9 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
         } catch {
             throw AudioCaptureError.captureSetupFailed("Could not start audio engine: \(error.localizedDescription)")
         }
-        
+
         self.audioEngine = audioEngine
-        
-        Task { @MainActor in
-            self.isCapturing = true
-            self.lastError = nil
-        }
-        
-        appLog("Microphone-only capture started successfully (format: \(targetFormat.sampleRate)Hz, \(targetFormat.channelCount) channels)")
+        appLog("Microphone engine started (format: \(targetFormat.sampleRate)Hz, \(targetFormat.channelCount) channels)")
     }
     
     /// Stop capturing audio
@@ -330,15 +418,32 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
         
         Task { @MainActor in
             self.isCapturing = false
+            self.activeSources = []
+            self.systemLevel = 0
+            self.micLevel = 0
+            self.audioLevel = 0
         }
         
         appLog("Audio capture stopped")
     }
     
     // MARK: - Handlers
-    
+
+    /// Meter ballistics: fast attack, slow decay (~0.05 per 66ms tick), so the
+    /// bar jumps up instantly on sound and falls smoothly like an OBS meter.
+    @MainActor
+    private func applyMeterLevel(_ norm: Float, for source: AudioSource) {
+        switch source {
+        case .system:
+            systemLevel = norm >= systemLevel ? norm : max(norm, systemLevel - 0.05)
+        case .microphone:
+            micLevel = norm >= micLevel ? norm : max(norm, micLevel - 0.05)
+        }
+        audioLevel = max(systemLevel, micLevel)
+    }
+
     /// Process audio buffer - this is called from background thread, so we use nonisolated
-    private func processAudioBufferBackground(_ buffer: AVAudioPCMBuffer) {
+    private func processAudioBufferBackground(_ buffer: AVAudioPCMBuffer, source: AudioSource) {
         // Calculate audio level for visualization
         if let channelData = buffer.floatChannelData {
             let frames = buffer.frameLength
@@ -349,23 +454,30 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
             }
             let rms = sqrt(sum / Float(frames))
             let level = 20 * log10(max(rms, 0.000001))
-            
-            // Log RMS occasionally to verify audio isn't silent
+
+            // Log RMS occasionally to verify audio isn't silent (tagged by lane)
             if Int(Date().timeIntervalSince1970 * 10) % 50 == 0 {
-                appLog("[AudioCaptureService] 🔊 Current RMS level: \(rms)")
+                appLog("[AudioCaptureService] 🔊 [\(source.rawValue)] RMS level: \(rms)")
             }
-            
-            // Only dispatch UI updates to main thread (not every buffer)
-            Task { @MainActor [weak self] in
+
+            // Throttle UI meter updates to ~15Hz per lane — hopping to MainActor
+            // for every 20ms buffer would flood the main thread.
+            let now = Date().timeIntervalSince1970
+            let last = source == .system ? lastSystemMeterUpdate : lastMicMeterUpdate
+            if now - last >= 0.066 {
+                if source == .system { lastSystemMeterUpdate = now } else { lastMicMeterUpdate = now }
                 // Normalize to 0-1 range (assuming -60dB to 0dB range)
-                self?.audioLevel = max(0, min(1, (level + 60) / 60))
+                let norm = max(0, min(1, (level + 60) / 60))
+                Task { @MainActor [weak self] in
+                    self?.applyMeterLevel(norm, for: source)
+                }
             }
         }
-        
+
         // IMPORTANT: Call onAudioBuffer directly from background thread
         // SFSpeechAudioBufferRecognitionRequest.append() is thread-safe according to Apple documentation
         // Dispatching to main thread for every buffer causes main thread flooding and UI hangs
-        onAudioBuffer?(buffer)
+        onAudioBuffer?(buffer, source)
         
         // Convert to Data and call onAudioData if needed
         if let onAudioData = onAudioData {

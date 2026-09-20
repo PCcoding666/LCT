@@ -273,7 +273,12 @@ struct MainView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 16) {
-            AudioBarsView(level: viewModel.audioLevel, isActive: viewModel.isCapturing)
+            AudioMetersView(
+                systemLevel: viewModel.systemLevel,
+                micLevel: viewModel.micLevel,
+                sources: viewModel.captureSources,
+                isActive: viewModel.isCapturing && !viewModel.isPaused
+            )
 
             Text("⌘␣ start · ⌘P pause · ⇧⌘C copy · ⌘O overlay")
                 .font(HUD.mono(.caption2))
@@ -443,11 +448,20 @@ struct TranscriptSegmentRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            Text(segment.timestamp.formatted(Self.timeFormat))
-                .font(HUD.mono(.caption2))
-                .foregroundStyle(.tertiary)
-                .frame(width: 64, alignment: .leading)
-                .padding(.top, 3)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(segment.timestamp.formatted(Self.timeFormat))
+                    .font(HUD.mono(.caption2))
+                    .foregroundStyle(.tertiary)
+
+                // Capture lane badge (MIC / SYS) so dual-source transcripts stay distinguishable
+                Label(segment.source.label, systemImage: segment.source.icon)
+                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(segment.source == .microphone ? Color.orange : Color.cyan)
+                    .labelStyle(.titleAndIcon)
+                    .imageScale(.small)
+            }
+            .frame(width: 64, alignment: .leading)
+            .padding(.top, 3)
 
             VStack(alignment: .leading, spacing: 5) {
                 if !segment.sourceText.isEmpty {
@@ -532,31 +546,89 @@ struct BlinkingCursor: View {
     }
 }
 
-// MARK: - Audio Bars View
+// MARK: - Audio Level Meters (OBS-style, one row per active capture lane)
 
 @MainActor
-struct AudioBarsView: View {
-    let level: Float
+struct AudioMetersView: View {
+    let systemLevel: Float
+    let micLevel: Float
+    let sources: [AudioSource]
     let isActive: Bool
 
-    private static let barHeights: [CGFloat] = [5, 9, 13, 7, 11, 15, 8, 12, 6, 10, 14, 7]
-
     var body: some View {
-        HStack(alignment: .center, spacing: 3) {
-            ForEach(Self.barHeights.indices, id: \.self) { index in
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(barColor(index: index))
-                    .frame(width: 3, height: Self.barHeights[index])
+        // When idle (no capture session yet), preview the lanes implied by nothing —
+        // just show the system row greyed out so the slot doesn't jump around.
+        let lanes: [AudioSource] = sources.isEmpty ? [.system] : sources
+
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(lanes, id: \.self) { lane in
+                LaneMeterView(
+                    lane: lane,
+                    level: lane == .microphone ? micLevel : systemLevel,
+                    isActive: isActive
+                )
             }
         }
-        .frame(height: 16)
-        .animation(.linear(duration: 0.1), value: level)
+        .frame(width: 150)
+    }
+}
+
+@MainActor
+struct LaneMeterView: View {
+    let lane: AudioSource
+    let level: Float   // 0...1, normalized -60dB…0dB
+    let isActive: Bool
+
+    private var tint: Color {
+        lane == .microphone ? .orange : .cyan
     }
 
-    private func barColor(index: Int) -> Color {
-        guard isActive else { return Color.white.opacity(0.1) }
-        let threshold = Float(index + 1) / Float(Self.barHeights.count)
-        return level >= threshold ? HUD.accent : Color.white.opacity(0.12)
+    /// dB readout for debugging ("-∞" when effectively silent)
+    private var dBText: String {
+        guard isActive, level > 0.001 else { return "-∞" }
+        let db = Int(level * 60 - 60)
+        return "\(db)"
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(lane.label)
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundStyle(isActive ? tint : Color.secondary.opacity(0.5))
+                .frame(width: 24, alignment: .leading)
+
+            GeometryReader { geo in
+                let fill = geo.size.width * CGFloat(isActive ? max(0, min(level, 1)) : 0)
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.white.opacity(0.08))
+
+                    // Gradient spans the FULL track; mask reveals only up to the
+                    // current level so colors stay anchored to dB zones (OBS-style)
+                    LinearGradient(
+                        colors: [HUD.accent, HUD.accent, .yellow, .red],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: geo.size.width, height: 6)
+                    .mask(
+                        HStack(spacing: 0) {
+                            Rectangle().frame(width: fill)
+                            Spacer(minLength: 0)
+                        }
+                    )
+                }
+            }
+            .frame(height: 6)
+
+            Text(dBText)
+                .font(.system(size: 8, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .frame(width: 28, alignment: .trailing)
+        }
+        .frame(height: 10)
+        .animation(.linear(duration: 0.06), value: level)
+        .help(lane == .microphone ? "Microphone input level" : "System audio level")
     }
 }
 
