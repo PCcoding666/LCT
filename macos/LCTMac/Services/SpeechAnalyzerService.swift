@@ -35,26 +35,119 @@ private final class SharedSpeechState: @unchecked Sendable {
     }
 }
 
-/// One recognition lane: an independent request + task for a single AudioSource.
-/// Lanes never share a request — interleaving two audio streams into one
-/// SFSpeechAudioBufferRecognitionRequest sequentially concatenates the audio
-/// and garbles recognition for both sources.
+/// Pure decision logic for recognition-lane callbacks and restarts.
+/// Deliberately free of any Speech-framework dependency so it can be
+/// unit-tested directly.
+struct RecognitionRestartPolicy: Equatable {
+    /// A callback is only worth processing when it comes from the lane's
+    /// current recognition task: the lane must still be the active one and the
+    /// generation captured when the task was created must still match the
+    /// lane's generation.
+    static func shouldProcessCallback(laneIsCurrent: Bool, callbackGeneration: Int, currentGeneration: Int) -> Bool {
+        laneIsCurrent && callbackGeneration == currentGeneration
+    }
+
+    static let initialBackoff: TimeInterval = 0.3
+    static let maxBackoff: TimeInterval = 3.0
+
+    /// Consecutive no-speech (error 1110) restarts since the last non-empty transcript.
+    private(set) var consecutiveNoSpeechRestarts: Int = 0
+
+    /// Register a no-speech timeout and return how long to wait before the
+    /// replacement task starts: 0.3s, doubling per consecutive timeout,
+    /// capped at 3s.
+    mutating func registerNoSpeechRestart() -> TimeInterval {
+        let delay = min(Self.initialBackoff * pow(2.0, Double(consecutiveNoSpeechRestarts)), Self.maxBackoff)
+        consecutiveNoSpeechRestarts += 1
+        return delay
+    }
+
+    /// A non-empty transcript means speech is present — reset the backoff.
+    mutating func noteNonEmptyTranscript() {
+        consecutiveNoSpeechRestarts = 0
+    }
+}
+
+/// Per-lane counters. Numbers only (never transcript content) so they are
+/// safe to write to the log — see DiagnosticsPrivacyTests.
+struct LaneStats: Equatable {
+    var resultCount = 0
+    var error1110Count = 0
+    var restartCount = 0
+    var staleCallbackCount = 0
+}
+
+/// One recognition lane: an independent recognizer + request + task for a
+/// single AudioSource. Lanes never share a request — interleaving two audio
+/// streams into one SFSpeechAudioBufferRecognitionRequest sequentially
+/// concatenates the audio and garbles recognition for both sources. Each lane
+/// also owns its SFSpeechRecognizer so lanes can run different locales.
 private final class RecognitionLane {
     let source: AudioSource
+    let recognizer: SFSpeechRecognizer
     let sharedState = SharedSpeechState()
     var task: SFSpeechRecognitionTask?
+    /// Monotonic id of the lane's current recognition task. Bumped every time
+    /// a replacement task is scheduled, so a late callback from a torn-down
+    /// task is recognized as stale and dropped.
+    var generation: Int = 0
+    var policy = RecognitionRestartPolicy()
+    var stats = LaneStats()
     var currentSegmentId: UUID = UUID()
     var lastTranscript: String = ""
     var sessionStartTime: Date = Date()
 
-    init(source: AudioSource) {
+    init(source: AudioSource, recognizer: SFSpeechRecognizer) {
         self.source = source
+        self.recognizer = recognizer
+    }
+}
+
+/// Lock-protected registry of the active lanes. Read by audio threads
+/// (appendAudioBuffer) and written on MainActor (start/stop/restart).
+private final class LaneRegistry: @unchecked Sendable {
+    private var _lock = os_unfair_lock()
+    private var _lanes: [AudioSource: RecognitionLane] = [:]
+
+    func lane(for source: AudioSource) -> RecognitionLane? {
+        os_unfair_lock_lock(&_lock)
+        defer { os_unfair_lock_unlock(&_lock) }
+        return _lanes[source]
+    }
+
+    func set(_ lane: RecognitionLane, for source: AudioSource) {
+        os_unfair_lock_lock(&_lock)
+        defer { os_unfair_lock_unlock(&_lock) }
+        _lanes[source] = lane
+    }
+
+    /// Remove all lanes atomically and return them so the caller can tear
+    /// them down outside the lock.
+    func removeAllLanes() -> [RecognitionLane] {
+        os_unfair_lock_lock(&_lock)
+        defer { os_unfair_lock_unlock(&_lock) }
+        let lanes = Array(_lanes.values)
+        _lanes.removeAll()
+        return lanes
+    }
+
+    var allLanes: [RecognitionLane] {
+        os_unfair_lock_lock(&_lock)
+        defer { os_unfair_lock_unlock(&_lock) }
+        return Array(_lanes.values)
+    }
+
+    var anyRunning: Bool {
+        os_unfair_lock_lock(&_lock)
+        defer { os_unfair_lock_unlock(&_lock) }
+        return _lanes.values.contains { $0.sharedState.isRunning }
     }
 }
 
 /// Apple speech recognition service using SFSpeechRecognizer.
 /// Supports up to two concurrent lanes (.system + .microphone), each with its
-/// own recognition task; results are tagged with the producing AudioSource.
+/// own recognizer and recognition task; results are tagged with the producing
+/// AudioSource.
 @MainActor
 class SpeechAnalyzerService: ObservableObject {
     // MARK: - Published Properties
@@ -66,32 +159,27 @@ class SpeechAnalyzerService: ObservableObject {
     var onTranscription: ((TranscriptionResult) -> Void)?
 
     // MARK: - Private Properties
-    private var speechRecognizer: SFSpeechRecognizer?
 
-    // Lanes are accessed from audio threads via nonisolated append; they are
-    // only created/torn down on MainActor while lanes are stopped, so unsafe
-    // access is contained (same pattern as the service's callbacks).
-    nonisolated(unsafe) private var lanes: [AudioSource: RecognitionLane] = [:]
+    /// Delay before replacing a task that ended with isFinal (a natural
+    /// segment boundary). Short, because speech is flowing and the request
+    /// swap already eliminates the audio gap.
+    private static let finalRestartDelay: TimeInterval = 0.05
+
+    private let laneRegistry = LaneRegistry()
 
     // MARK: - Initialization
 
     init(language: SourceLanguage = .english) {
         self.currentLanguage = language
-        // Note: SFSpeechRecognizer is NOT created here to avoid triggering
-        // a TCC privacy check at app launch before the UI is ready.
-        // It will be created lazily when start() or setLanguage() is called.
-    }
-
-    /// Lazily create the speech recognizer when actually needed
-    private func ensureRecognizer() {
-        if speechRecognizer == nil {
-            speechRecognizer = SFSpeechRecognizer(locale: currentLanguage.locale)
-        }
+        // Note: SFSpeechRecognizer instances are NOT created here to avoid
+        // triggering a TCC privacy check at app launch before the UI is ready.
+        // They are created per lane when start() is called.
     }
 
     // MARK: - Language Management
 
-    /// Update the recognition language
+    /// Update the recognition language used for lanes that don't get an
+    /// explicit per-lane language in start(sources:languages:).
     func setLanguage(_ language: SourceLanguage) {
         // Only change if different
         guard language != currentLanguage else { return }
@@ -102,10 +190,10 @@ class SpeechAnalyzerService: ObservableObject {
         }
 
         currentLanguage = language
-        speechRecognizer = SFSpeechRecognizer(locale: language.locale)
 
         // Note: We don't auto-restart here anymore to avoid race conditions
-        // The caller should restart if needed
+        // The caller should restart if needed. Per-lane recognizers are
+        // created fresh on the next start(), so nothing else to update here.
     }
 
     /// Check if a language is available on this device
@@ -148,7 +236,9 @@ class SpeechAnalyzerService: ObservableObject {
     // MARK: - Recognition Control
 
     /// Start recognition for the given audio sources (one independent lane each).
-    func start(sources: [AudioSource]) async throws {
+    /// `languages` optionally overrides the recognition language per source;
+    /// sources without an entry use `currentLanguage`.
+    func start(sources: [AudioSource], languages: [AudioSource: SourceLanguage] = [:]) async throws {
         appLog("[SpeechAnalyzerService] start() called for lanes: \(sources.map { $0.rawValue })")
 
         appLog("[SpeechAnalyzerService] Requesting/checking authorization status...")
@@ -162,24 +252,24 @@ class SpeechAnalyzerService: ObservableObject {
             throw SpeechAnalyzerError.notAuthorized
         }
 
-        // Lazily create recognizer now that we have authorization
-        ensureRecognizer()
-
-        // Check recognizer availability
+        // Resolve every lane's recognizer up front so a configuration problem
+        // fails before any lane starts. On-device recognition is mandatory —
+        // we never silently send audio to Apple's servers.
         appLog("[SpeechAnalyzerService] Checking recognizer availability...")
-        guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-            lastError = "Speech recognizer is unavailable for \(currentLanguage.displayName)."
-            appLog("[SpeechAnalyzerService] ❌ Recognizer unavailable")
-            throw SpeechAnalyzerError.recognizerUnavailable
-        }
-        appLog("[SpeechAnalyzerService] Recognizer available: \(recognizer.isAvailable)")
-
-        // On-device recognition is mandatory. Fail before any lane starts
-        // rather than silently sending audio to Apple's servers.
-        guard recognizer.supportsOnDeviceRecognition else {
-            lastError = "On-device speech recognition is not available for \(currentLanguage.displayName)."
-            appLog("[SpeechAnalyzerService] ❌ On-device recognition unavailable for \(currentLanguage.displayName)")
-            throw SpeechAnalyzerError.onDeviceRecognitionUnavailable
+        var recognizers: [AudioSource: SFSpeechRecognizer] = [:]
+        for source in sources {
+            let language = languages[source] ?? currentLanguage
+            guard let recognizer = SFSpeechRecognizer(locale: language.locale), recognizer.isAvailable else {
+                lastError = "Speech recognizer is unavailable for \(language.displayName)."
+                appLog("[SpeechAnalyzerService] ❌ Recognizer unavailable for \(language.displayName)")
+                throw SpeechAnalyzerError.recognizerUnavailable
+            }
+            guard recognizer.supportsOnDeviceRecognition else {
+                lastError = "On-device speech recognition is not available for \(language.displayName)."
+                appLog("[SpeechAnalyzerService] ❌ On-device recognition unavailable for \(language.displayName)")
+                throw SpeechAnalyzerError.onDeviceRecognitionUnavailable
+            }
+            recognizers[source] = recognizer
         }
 
         // Stop any existing recognition
@@ -187,6 +277,7 @@ class SpeechAnalyzerService: ObservableObject {
         stop()
 
         for source in sources {
+            guard let recognizer = recognizers[source] else { continue }
             startLane(source: source, recognizer: recognizer)
         }
 
@@ -197,7 +288,7 @@ class SpeechAnalyzerService: ObservableObject {
 
     /// Start a single lane: fresh request + recognition task.
     private func startLane(source: AudioSource, recognizer: SFSpeechRecognizer) {
-        let lane = RecognitionLane(source: source)
+        let lane = RecognitionLane(source: source, recognizer: recognizer)
 
         let request = makeRecognitionRequest()
         appLog("[SpeechAnalyzerService] [\(source.rawValue)] Recognition request native format: \(request.nativeAudioFormat.sampleRate)Hz, \(request.nativeAudioFormat.channelCount)ch")
@@ -205,15 +296,17 @@ class SpeechAnalyzerService: ObservableObject {
         lane.sharedState.request = request
         lane.sessionStartTime = Date()
 
+        lane.generation += 1
+        let generation = lane.generation
         lane.task = recognizer.recognitionTask(with: request) { [weak self, weak lane] result, error in
             Task { @MainActor in
                 guard let self = self, let lane = lane else { return }
-                self.handleRecognitionResult(result: result, error: error, lane: lane)
+                self.handleRecognitionResult(result: result, error: error, lane: lane, generation: generation)
             }
         }
 
         lane.sharedState.isRunning = true
-        lanes[source] = lane
+        laneRegistry.set(lane, for: source)
         appLog("[SpeechAnalyzerService] ✅ [\(source.rawValue)] lane started")
     }
 
@@ -232,10 +325,11 @@ class SpeechAnalyzerService: ObservableObject {
     }
 
     /// Append audio buffer to the matching lane's recognition request - can be
-    /// called from any thread. Thread safety is ensured by SharedSpeechState's
-    /// os_unfair_lock. Buffers from unknown/inactive lanes are dropped.
+    /// called from any thread. Thread safety is ensured by the lane registry
+    /// lock plus SharedSpeechState's os_unfair_lock. Buffers from
+    /// unknown/inactive lanes are dropped.
     nonisolated func appendAudioBuffer(_ buffer: AVAudioPCMBuffer, source: AudioSource) {
-        guard let lane = lanes[source], lane.sharedState.isRunning, let request = lane.sharedState.request else { return }
+        guard let lane = laneRegistry.lane(for: source), lane.sharedState.isRunning, let request = lane.sharedState.request else { return }
         let count = lane.sharedState.incrementBufferCount()
         if count % 50 == 1 {
             appLog("[SpeechAnalyzerService] 🎤 [\(source.rawValue)] Audio buffer #\(count) appended (format: \(buffer.format.sampleRate)Hz, \(buffer.format.channelCount)ch, frames: \(buffer.frameLength))")
@@ -245,25 +339,57 @@ class SpeechAnalyzerService: ObservableObject {
 
     /// Whether any lane is actively recognizing. Callable from any thread.
     nonisolated var anyLaneRunning: Bool {
-        lanes.values.contains { $0.sharedState.isRunning }
+        laneRegistry.anyRunning
     }
 
     func stop() {
-        for (_, lane) in lanes {
+        let lanes = laneRegistry.removeAllLanes()
+        for lane in lanes {
+            lane.sharedState.isRunning = false
             lane.sharedState.request?.endAudio()
             lane.task?.cancel()
             lane.task = nil
             lane.sharedState.request = nil
-            lane.sharedState.isRunning = false
             lane.lastTranscript = ""
         }
-        lanes.removeAll()
+        if !lanes.isEmpty {
+            let summary = lanes
+                .sorted { $0.source.rawValue < $1.source.rawValue }
+                .map { lane in
+                    "\(lane.source.rawValue) results=\(lane.stats.resultCount) error1110=\(lane.stats.error1110Count) restarts=\(lane.stats.restartCount) staleDropped=\(lane.stats.staleCallbackCount)"
+                }
+                .joined(separator: " | ")
+            appLog("[SpeechAnalyzerService] stop() summary: \(summary)")
+        }
         isRunning = false
+    }
+
+    /// Numbers-only snapshot of the per-lane counters (used by the self-test
+    /// report; contains no transcript content).
+    func statsSnapshot() -> [AudioSource: LaneStats] {
+        var snapshot: [AudioSource: LaneStats] = [:]
+        for lane in laneRegistry.allLanes {
+            snapshot[lane.source] = lane.stats
+        }
+        return snapshot
     }
 
     // MARK: - Private Methods
 
-    private func handleRecognitionResult(result: SFSpeechRecognitionResult?, error: Error?, lane: RecognitionLane) {
+    private func handleRecognitionResult(result: SFSpeechRecognitionResult?, error: Error?, lane: RecognitionLane, generation: Int) {
+        // Drop callbacks from superseded tasks. Restarting bumps the lane's
+        // generation before the old task is cancelled, so the old task's
+        // trailing callbacks (including its 1110) can never trigger another
+        // restart or emit a transcript — that was the infinite-restart loop.
+        guard RecognitionRestartPolicy.shouldProcessCallback(
+            laneIsCurrent: laneRegistry.lane(for: lane.source) === lane,
+            callbackGeneration: generation,
+            currentGeneration: lane.generation
+        ) else {
+            lane.stats.staleCallbackCount += 1
+            return
+        }
+
         // Handle errors
         if let error = error {
             let nsError = error as NSError
@@ -275,11 +401,12 @@ class SpeechAnalyzerService: ObservableObject {
             }
             // kAFAssistantErrorDomain 1110 = "No speech detected": the task timed
             // out on silence. This is normal during quiet periods, not a failure —
-            // don't surface an error banner; just restart the lane so it keeps listening.
+            // don't surface an error banner; just restart the lane (with backoff)
+            // so it keeps listening.
             if nsError.code == 1110 {
-                Task {
-                    await self.restartLaneForContinuous(lane)
-                }
+                lane.stats.error1110Count += 1
+                let delay = lane.policy.registerNoSpeechRestart()
+                scheduleLaneRestart(lane, generation: generation, delay: delay)
                 return
             }
             lastError = description
@@ -294,39 +421,42 @@ class SpeechAnalyzerService: ObservableObject {
 
         let transcript = result.bestTranscription.formattedString
 
-        // Skip if empty or unchanged
-        if transcript.isEmpty || transcript == lane.lastTranscript {
-            return
+        if !transcript.isEmpty {
+            lane.policy.noteNonEmptyTranscript()
         }
 
-        lane.lastTranscript = transcript
+        // Emit only non-empty, changed transcripts
+        if !transcript.isEmpty && transcript != lane.lastTranscript {
+            lane.lastTranscript = transcript
+            lane.stats.resultCount += 1
 
-        // Calculate timing
-        let (startTime, endTime) = segmentTiming(from: result, lane: lane)
+            // Calculate timing
+            let (startTime, endTime) = segmentTiming(from: result, lane: lane)
 
-        // Calculate confidence
-        let confidence = calculateConfidence(from: result)
+            // Calculate confidence
+            let confidence = calculateConfidence(from: result)
 
-        // Create transcription result, tagged with the producing lane
-        let transcription = TranscriptionResult(
-            id: lane.currentSegmentId,
-            text: transcript,
-            speaker: nil,
-            startTime: startTime,
-            endTime: endTime,
-            isVolatile: !result.isFinal,
-            confidence: confidence,
-            source: lane.source
-        )
+            // Create transcription result, tagged with the producing lane
+            let transcription = TranscriptionResult(
+                id: lane.currentSegmentId,
+                text: transcript,
+                speaker: nil,
+                startTime: startTime,
+                endTime: endTime,
+                isVolatile: !result.isFinal,
+                confidence: confidence,
+                source: lane.source
+            )
 
-        // Notify callback
-        onTranscription?(transcription)
+            // Notify callback
+            onTranscription?(transcription)
+        }
 
-        // Restart this lane's recognition for continuous transcription
+        // A final result ends this task — restart the lane so transcription
+        // continues. This also covers empty/unchanged finals, which previously
+        // stalled the lane until the next no-speech timeout.
         if result.isFinal {
-            Task {
-                await restartLaneForContinuous(lane)
-            }
+            scheduleLaneRestart(lane, generation: generation, delay: Self.finalRestartDelay)
         }
     }
 
@@ -348,21 +478,22 @@ class SpeechAnalyzerService: ObservableObject {
         return totalConfidence / Float(segments.count)
     }
 
-    private func restartLaneForContinuous(_ lane: RecognitionLane) async {
-        guard lanes[lane.source] === lane, lane.sharedState.isRunning else { return }
+    /// Replace the lane's finished/timed-out recognition task with a fresh one
+    /// after `delay`. Both restart paths (error 1110 and isFinal) funnel here.
+    ///
+    /// The lane's generation is bumped immediately, so any late callback from
+    /// the old task is dropped as stale. The replacement request is created
+    /// and swapped in NOW — before the delay — so audio appended during the
+    /// backoff window is queued in the request and recognized once the new
+    /// task starts, instead of being dropped on the floor.
+    private func scheduleLaneRestart(_ lane: RecognitionLane, generation: Int, delay: TimeInterval) {
+        guard laneRegistry.lane(for: lane.source) === lane,
+              lane.sharedState.isRunning,
+              lane.generation == generation else { return }
 
-        // Brief delay to prevent rapid restart loops if Apple fires isFinal in quick succession.
-        // Reduced from 100ms to 50ms to minimize audio loss during the gap.
-        try? await Task.sleep(nanoseconds: 50_000_000) // 0.05 seconds
-
-        guard lanes[lane.source] === lane, lane.sharedState.isRunning else { return }
-
-        guard let recognizer = speechRecognizer, recognizer.isAvailable else { return }
-
-        // === Buffer gap minimization strategy ===
-        // Create the NEW request BEFORE tearing down the old one.
-        // This way, when we swap the request, appendAudioBuffer() immediately
-        // starts feeding buffers to the new request with no gap.
+        lane.generation += 1
+        let newGeneration = lane.generation
+        lane.stats.restartCount += 1
 
         let newRequest = makeRecognitionRequest()
 
@@ -370,22 +501,46 @@ class SpeechAnalyzerService: ObservableObject {
         let oldRequest = lane.sharedState.request
         let oldTask = lane.task
 
-        // Atomically swap the request pointer — appendAudioBuffer() will immediately
-        // start appending to the new request from this point forward.
+        // Atomically swap the request pointer — appendAudioBuffer() immediately
+        // starts appending to the new request from this point forward.
         lane.sharedState.request = newRequest
         lane.currentSegmentId = UUID()
         lane.lastTranscript = ""
 
-        // Now tear down the old request/task. Any buffers that were appended to oldRequest
-        // after endAudio() are silently discarded by Apple (documented behavior).
+        // Tear down the old request/task. Its trailing callbacks carry the old
+        // generation and are dropped as stale.
         oldRequest?.endAudio()
         oldTask?.cancel()
 
-        // Start the new recognition task for this lane
-        lane.task = recognizer.recognitionTask(with: newRequest) { [weak self, weak lane] result, error in
+        appLog("[SpeechAnalyzerService] [\(lane.source.rawValue)] lane restarting in \(String(format: "%.2f", delay))s")
+
+        Task { [weak self, weak lane] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self = self, let lane = lane else { return }
+            self.startDeferredTask(lane: lane, generation: newGeneration, request: newRequest)
+        }
+    }
+
+    /// Start the replacement task created by scheduleLaneRestart, unless the
+    /// lane was stopped or superseded while the backoff was elapsing.
+    private func startDeferredTask(lane: RecognitionLane, generation: Int, request: SFSpeechAudioBufferRecognitionRequest) {
+        guard laneRegistry.lane(for: lane.source) === lane,
+              lane.sharedState.isRunning,
+              lane.generation == generation else { return }
+        guard lane.recognizer.isAvailable else {
+            // The lane cannot recover on its own: stop it cleanly so buffers
+            // don't pile up in the swapped-in request forever, and surface the
+            // failure instead of leaving a silently dead lane.
+            appLog("[SpeechAnalyzerService] ⚠️ [\(lane.source.rawValue)] Recognizer unavailable; lane stopped")
+            lane.sharedState.isRunning = false
+            lane.sharedState.request = nil
+            lastError = "Speech recognizer became unavailable for the \(lane.source.rawValue) lane."
+            return
+        }
+        lane.task = lane.recognizer.recognitionTask(with: request) { [weak self, weak lane] result, error in
             Task { @MainActor in
                 guard let self = self, let lane = lane else { return }
-                self.handleRecognitionResult(result: result, error: error, lane: lane)
+                self.handleRecognitionResult(result: result, error: error, lane: lane, generation: generation)
             }
         }
     }
