@@ -242,6 +242,7 @@ final class ModelsTests: XCTestCase {
 
         XCTAssertTrue(settings.captureSystemAudio)
         XCTAssertTrue(settings.captureMicrophone)
+        XCTAssertNil(settings.microphoneDeviceUID)
         XCTAssertEqual(settings.sourceLanguage, .english)
         XCTAssertEqual(settings.ollamaHost, "localhost")
         XCTAssertEqual(settings.ollamaPort, 11434)
@@ -339,5 +340,31 @@ final class ModelsTests: XCTestCase {
         let settings2 = AppSettings()
 
         XCTAssertEqual(settings1, settings2)
+    }
+
+    func testAppSettings_LegacyJSONWithoutMicrophoneDeviceUID_DecodesAsNil() throws {
+        // Settings JSON saved by a version predating microphoneDeviceUID must
+        // still decode, with the new field defaulting to "follow system default".
+        let data = try JSONEncoder().encode(AppSettings())
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object.removeValue(forKey: "microphoneDeviceUID")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: legacyData)
+
+        XCTAssertNil(decoded.microphoneDeviceUID)
+        XCTAssertTrue(decoded.captureSystemAudio)
+        XCTAssertTrue(decoded.captureMicrophone)
+    }
+
+    func testAppSettings_MicrophoneDeviceUID_RoundTrips() throws {
+        var settings = AppSettings()
+        settings.microphoneDeviceUID = "AppleUSBAudioEngine:Test:Mic:1"
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(decoded.microphoneDeviceUID, "AppleUSBAudioEngine:Test:Mic:1")
+        XCTAssertEqual(settings, decoded)
     }
 }

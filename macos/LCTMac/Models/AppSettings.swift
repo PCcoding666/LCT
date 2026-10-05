@@ -152,6 +152,9 @@ struct AppSettings: Codable, Equatable {
     // MARK: - Audio Settings
     var captureSystemAudio: Bool = true
     var captureMicrophone: Bool = true
+    /// Core Audio UID of the microphone input device. nil follows the system
+    /// default input device; a missing key (older installs) decodes as nil.
+    var microphoneDeviceUID: String? = nil
 
     // MARK: - Speech Recognition Settings
     var sourceLanguage: SourceLanguage = .english
@@ -315,6 +318,7 @@ extension AppSettings {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         captureSystemAudio = try container.decodeIfPresent(Bool.self, forKey: .captureSystemAudio) ?? true
         captureMicrophone = try container.decodeIfPresent(Bool.self, forKey: .captureMicrophone) ?? true
+        microphoneDeviceUID = try container.decodeIfPresent(String.self, forKey: .microphoneDeviceUID)
         sourceLanguage = try container.decodeIfPresent(SourceLanguage.self, forKey: .sourceLanguage) ?? .english
         ollamaHost = try container.decodeIfPresent(String.self, forKey: .ollamaHost) ?? "localhost"
         ollamaPort = try container.decodeIfPresent(Int.self, forKey: .ollamaPort) ?? 11434
