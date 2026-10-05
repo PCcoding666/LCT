@@ -12,6 +12,11 @@ final class AppNoticeTests: XCTestCase {
         XCTAssertTrue(notice.actions.isEmpty)
     }
 
+    func testInfoBuilderAutoDismissOverride() {
+        XCTAssertTrue(AppNotice.info("transient").autoDismiss, "default must stay auto-dismiss for existing callers")
+        XCTAssertFalse(AppNotice.info("persistent", autoDismiss: false).autoDismiss)
+    }
+
     func testWarningDefaultsToAutoDismiss() {
         XCTAssertTrue(AppNotice.warning("heads up").autoDismiss)
         XCTAssertFalse(AppNotice.warning("persist", autoDismiss: false).autoDismiss)

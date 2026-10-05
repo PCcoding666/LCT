@@ -59,8 +59,8 @@ struct AppNotice: Equatable, Identifiable {
 
     // MARK: - Convenience builders
 
-    static func info(_ message: String) -> AppNotice {
-        AppNotice(severity: .info, message: message, autoDismiss: true)
+    static func info(_ message: String, autoDismiss: Bool = true) -> AppNotice {
+        AppNotice(severity: .info, message: message, autoDismiss: autoDismiss)
     }
 
     static func warning(_ message: String, autoDismiss: Bool = true) -> AppNotice {
