@@ -3,6 +3,25 @@ import Speech
 import AVFoundation
 @preconcurrency import ScreenCaptureKit
 
+/// Persists the onboarding step across an app relaunch so the setup flow
+/// resumes where the user left off — screen-recording permission only takes
+/// effect after a restart, which used to send users back to step one.
+enum OnboardingResumeStore {
+    static let key = "onboardingResumeStep"
+
+    static func save(stepID: String, defaults: UserDefaults = .standard) {
+        defaults.set(stepID, forKey: key)
+    }
+
+    /// Returns the saved step and removes it, so a stale value can never
+    /// trap the setup flow in a resume loop.
+    static func consume(defaults: UserDefaults = .standard) -> String? {
+        guard let stepID = defaults.string(forKey: key) else { return nil }
+        defaults.removeObject(forKey: key)
+        return stepID
+    }
+}
+
 /// Welcome/Setup view for first-time users
 @MainActor
 struct WelcomeView: View {
@@ -32,7 +51,7 @@ struct WelcomeView: View {
     
     let onComplete: () -> Void
     
-    enum SetupStep {
+    enum SetupStep: String {
         case welcome
         case permissions
         case checkingOllama
@@ -88,8 +107,11 @@ struct WelcomeView: View {
             footerView
         }
         .frame(width: 600, height: 560)
+        .onAppear {
+            resumeSavedStepIfNeeded()
+        }
     }
-    
+
     // MARK: - Header
     
     private var headerView: some View {
@@ -222,7 +244,8 @@ struct WelcomeView: View {
                     isOptional: true,
                     pendingRestart: screenRecordingRequested && !hasScreenCapturePermission,
                     onGrant: requestScreenCapturePermission,
-                    onRestart: relaunchApp
+                    onRestart: relaunchApp,
+                    onOpenSettings: openScreenRecordingSettings
                 )
             }
             .padding()
@@ -564,7 +587,19 @@ struct WelcomeView: View {
     }
     
     // MARK: - Actions
-    
+
+    /// After a restart triggered from the setup flow, jump back to the saved
+    /// step and re-check permissions immediately — grant state may have
+    /// changed while the app was away.
+    private func resumeSavedStepIfNeeded() {
+        guard let stepID = OnboardingResumeStore.consume(),
+              let step = SetupStep(rawValue: stepID) else { return }
+        currentStep = step
+        Task {
+            await checkAllPermissions()
+        }
+    }
+
     private func nextStep() {
         setupError = nil
         
@@ -891,20 +926,27 @@ struct WelcomeView: View {
                 _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
                 hasScreenCapturePermission = true
             } catch {
-                // Not yet granted — open System Settings so the user can enable it.
-                // Note: even after granting, macOS needs an app restart for it to
-                // take effect, which is why we surface a Restart button.
+                // Not yet granted. Never open System Settings unprompted —
+                // the row surfaces an "Open System Settings" button instead.
+                // Even after granting, macOS needs an app restart for the
+                // permission to take effect, which is why the row also
+                // surfaces a Restart button.
                 hasScreenCapturePermission = false
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                    NSWorkspace.shared.open(url)
-                }
             }
+        }
+    }
+
+    private func openScreenRecordingSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
         }
     }
 
     /// Relaunch the app so a newly granted screen-recording permission takes
     /// effect (CGPreflight caches the old value for the process's lifetime).
+    /// The current step is saved first so setup resumes here after the restart.
     private func relaunchApp() {
+        OnboardingResumeStore.save(stepID: currentStep.rawValue)
         let bundleURL = Bundle.main.bundleURL
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
@@ -970,6 +1012,7 @@ struct PermissionRow: View {
     var pendingRestart: Bool = false
     let onGrant: () -> Void
     var onRestart: (() -> Void)? = nil
+    var onOpenSettings: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 16) {
@@ -1012,12 +1055,21 @@ struct PermissionRow: View {
                 .foregroundStyle(.green)
                 .font(.title2)
         } else if pendingRestart {
-            Button("Restart to apply") {
-                onRestart?()
+            HStack(spacing: 8) {
+                if let onOpenSettings {
+                    Button("Open System Settings") {
+                        onOpenSettings()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                Button("Restart to apply") {
+                    onRestart?()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+                .controlSize(.small)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.orange)
-            .controlSize(.small)
         } else {
             Button("Grant") {
                 onGrant()
