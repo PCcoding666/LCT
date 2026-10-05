@@ -46,6 +46,9 @@ struct SpeechSelfTestOptions: Equatable {
 struct SpeechSelfTestReport: Codable, Equatable {
     var locale: String
     var finalTexts: [String] = []
+    /// Latest text of every recognized segment, final or still partial — SF
+    /// only emits isFinal on long pauses, so short clips may have no finals.
+    var segmentTexts: [String] = []
     var partialCount: Int = 0
     var error1110Count: Int = 0
     var restartCount: Int = 0
@@ -221,8 +224,12 @@ final class SpeechSelfTestRunner {
         let service = SpeechAnalyzerService(language: language)
         var finalTexts: [String] = []
         var partialCount = 0
+        var segmentOrder: [UUID] = []
+        var segmentLatest: [UUID: String] = [:]
         var lastActivity = Date()
         service.onTranscription = { result in
+            if segmentLatest[result.id] == nil { segmentOrder.append(result.id) }
+            segmentLatest[result.id] = result.text
             if result.isVolatile {
                 partialCount += 1
             } else {
@@ -254,6 +261,7 @@ final class SpeechSelfTestRunner {
         service.stop()
 
         report.finalTexts = finalTexts
+        report.segmentTexts = segmentOrder.compactMap { segmentLatest[$0] }
         report.partialCount = partialCount
         report.error1110Count = stats?.error1110Count ?? 0
         report.restartCount = stats?.restartCount ?? 0
