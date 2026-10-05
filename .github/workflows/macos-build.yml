@@ -41,12 +41,17 @@ on:
 jobs:
   build-test:
     name: Build and test (no secrets required)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
 
       - name: Build and run tests
         working-directory: macos
@@ -54,17 +59,52 @@ jobs:
 
   deliver:
     name: Sign, notarize, and upload DMG
-    runs-on: macos-14
+    runs-on: macos-15
     needs: build-test
-    # Manual delivery only; skips cleanly when signing secrets are absent.
-    if: github.event_name == 'workflow_dispatch' && secrets.LCT_DEVELOPER_ID_CERTIFICATE != ''
+    # Manual delivery only; the first step fails fast and names any missing
+    # signing secrets.
+    if: github.event_name == 'workflow_dispatch'
     env:
       KEYCHAIN_NAME: lct-delivery.keychain-db
     steps:
+      - name: Check required signing secrets
+        env:
+          LCT_DEVELOPER_ID_CERTIFICATE: ${{ secrets.LCT_DEVELOPER_ID_CERTIFICATE }}
+          LCT_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.LCT_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          LCT_SIGN_IDENTITY: ${{ secrets.LCT_SIGN_IDENTITY }}
+          LCT_NOTARY_PROFILE: ${{ secrets.LCT_NOTARY_PROFILE }}
+          LCT_APPLE_ID: ${{ secrets.LCT_APPLE_ID }}
+          LCT_APPLE_ID_PASSWORD: ${{ secrets.LCT_APPLE_ID_PASSWORD }}
+          LCT_TEAM_ID: ${{ secrets.LCT_TEAM_ID }}
+        run: |
+          missing=""
+          check() {
+            if [ -z "$2" ]; then
+              missing="$missing $1"
+            fi
+          }
+          check LCT_DEVELOPER_ID_CERTIFICATE "${LCT_DEVELOPER_ID_CERTIFICATE:-}"
+          check LCT_DEVELOPER_ID_CERTIFICATE_PASSWORD "${LCT_DEVELOPER_ID_CERTIFICATE_PASSWORD:-}"
+          check LCT_SIGN_IDENTITY "${LCT_SIGN_IDENTITY:-}"
+          check LCT_NOTARY_PROFILE "${LCT_NOTARY_PROFILE:-}"
+          check LCT_APPLE_ID "${LCT_APPLE_ID:-}"
+          check LCT_APPLE_ID_PASSWORD "${LCT_APPLE_ID_PASSWORD:-}"
+          check LCT_TEAM_ID "${LCT_TEAM_ID:-}"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secrets:${missing# }"
+            exit 1
+          fi
+          echo "All required signing secrets are present."
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
 
       # Credentials are passed through environment variables, never echoed,
       # and live only in a temporary keychain that is deleted at the end.

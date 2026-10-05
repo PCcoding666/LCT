@@ -74,4 +74,65 @@ final class DeliveryWorkflowTests: XCTestCase {
         XCTAssertTrue(source.contains("delete-credentials"), "must delete the stored notarytool profile")
         XCTAssertTrue(source.contains("if: always()"), "cleanup must run even when delivery steps fail")
     }
+
+    func testIfConditions_AnyLine_NeverReferenceSecrets() throws {
+        let source = try workflowSource()
+        for (index, line) in source.components(separatedBy: .newlines).enumerated() {
+            guard line.contains("if:") else { continue }
+            XCTAssertFalse(
+                line.contains("secrets."),
+                "line \(index + 1) uses the secrets context in an if condition, which GitHub Actions forbids: \(line)"
+            )
+        }
+    }
+
+    func testRunnerImage_EachJob_UsesMacOS15() throws {
+        let source = try workflowSource()
+        let runsOnLines = source.components(separatedBy: .newlines).filter { $0.contains("runs-on:") }
+        XCTAssertEqual(runsOnLines.count, 2, "both jobs must declare runs-on, got: \(runsOnLines)")
+        for line in runsOnLines {
+            XCTAssertTrue(line.contains("macos-15"), "every job must run on macos-15, got: \(line)")
+        }
+        XCTAssertFalse(
+            source.contains("macos-14"),
+            "macos-14 ships Apple Swift 5.10, which cannot build swift-tools-version 6.0"
+        )
+    }
+
+    func testDeliverJob_MissingSigningSecrets_FailsFastListingMissingNames() throws {
+        let source = try workflowSource()
+        guard let deliverStart = source.range(of: "\n  deliver:") else {
+            XCTFail("deliver job must exist")
+            return
+        }
+        let deliverSource = String(source[deliverStart.upperBound...])
+        guard let checkStart = deliverSource.range(of: "- name: Check required signing secrets") else {
+            XCTFail("deliver job must open with a step that checks the required signing secrets")
+            return
+        }
+        guard let checkoutStart = deliverSource.range(of: "- name: Checkout code") else {
+            XCTFail("deliver job must check out the code")
+            return
+        }
+        XCTAssertLessThan(
+            deliverSource.distance(from: deliverSource.startIndex, to: checkStart.lowerBound),
+            deliverSource.distance(from: deliverSource.startIndex, to: checkoutStart.lowerBound),
+            "the secrets check must be the first step, before checkout"
+        )
+        let remainder = deliverSource[checkStart.upperBound...]
+        let stepEnd = remainder.range(of: "\n      - ")?.lowerBound ?? remainder.endIndex
+        let stepSource = String(deliverSource[checkStart.lowerBound..<stepEnd])
+        let requiredSecrets = [
+            "LCT_DEVELOPER_ID_CERTIFICATE",
+            "LCT_DEVELOPER_ID_CERTIFICATE_PASSWORD",
+            "LCT_SIGN_IDENTITY",
+            "LCT_NOTARY_PROFILE",
+            "LCT_APPLE_ID",
+            "LCT_APPLE_ID_PASSWORD",
+            "LCT_TEAM_ID",
+        ]
+        for name in requiredSecrets {
+            XCTAssertTrue(stepSource.contains(name), "secrets check step must verify \(name)")
+        }
+    }
 }
