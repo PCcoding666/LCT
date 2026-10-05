@@ -74,6 +74,11 @@ final class AppNoticeTests: XCTestCase {
     @MainActor
     func testRetryCaptureClearsNoticeImmediately() {
         let viewModel = TranscriptionViewModel()
+        // retryCapture spawns a real start() that outlives this test. With no
+        // capture source it fails fast instead of reaching TCC prompts or a
+        // live Ollama (which crashed the xctest host via the speech prompt).
+        viewModel.settings.captureSystemAudio = false
+        viewModel.settings.captureMicrophone = false
         viewModel.notice = .error("boom", actions: [.retryCapture])
         // retryCapture clears the notice synchronously before the async start()
         viewModel.perform(.retryCapture)
