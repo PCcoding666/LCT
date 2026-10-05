@@ -33,15 +33,17 @@ LiveCaptions Translator (LCT) 是一款专为 macOS 设计的原生级实时语�
 
 ## 🚀 开发者构建指南
 
-本项目需要 **Xcode 16 / Swift 6.0** 环境：
+本项目需要 **Xcode 16 / Swift 6.0** 环境。日常开发用一条命令完成构建、签名和运行：
 
 ```bash
 # 进入项目目录
 cd macos
-# 启动 Release 编译
-swift build -c release
-# 运行编译后的程序
-./.build/release/LCTMac
+# 退出旧实例 → 打包签名 → 启动（--no-launch 只构建不启动，--log 启动后跟踪日志）
+./Scripts/dev-run.sh
 ```
+
+`dev-run.sh` 会自动挑选签名身份：优先使用 `LCT_SIGN_IDENTITY`；未设置时取钥匙串里第一个 Apple Development 证书的 SHA-1 哈希，并打印出来。想固定身份，把它写进 `~/.zshrc`：`export LCT_SIGN_IDENTITY=<哈希>`（同名证书有多张时必须用哈希）。
+
+**不要**用 `swift run` 启动或直接运行 `.build/.../LCTMac` 来测试权限相关功能：macOS 按签名身份记录隐私授权，裸可执行文件会把权限记到终端名下，和打包后的 app 对不上，表现为"授权过却失效"。
 
 (注：你也可以直接利用已经配置好的 GitHub Actions 自动获取每日构建的 `LCTMac-macOS.zip` 包)

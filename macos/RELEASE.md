@@ -44,6 +44,8 @@ macOS 按应用的签名身份记录隐私授权。ad-hoc 签名每次构建都�
    - 签名带 `--timestamp`，需要能连上 Apple 的时间戳服务器。
    - 换成新的签名身份后，需要重新授权一次。之后用同一身份重新构建，授权会一直保持。
 
+日常开发可以不用手动走上面第 3 步：`Scripts/dev-run.sh` 会自动选择签名身份（未设置 `LCT_SIGN_IDENTITY` 时取第一个 Apple Development 证书的 SHA-1 并打印出来）、退出正在运行的 LCT、打包并启动。
+
 `Scripts/dev-cert.sh` 生成的自签名 "LCT Dev" 身份仍可使用，但 Apple Development 证书更可靠，推荐优先使用。
 
 ## 二、对外发布：一次性配置
