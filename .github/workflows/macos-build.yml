@@ -1,9 +1,23 @@
 name: macOS Build and Release
 
+# Continuous jobs (push / pull_request) need no signing secrets at all: they
+# only build and test.
+#
+# The delivery job is manual (workflow_dispatch) and requires these GitHub Secrets:
+#   LCT_DEVELOPER_ID_CERTIFICATE           Base64-encoded Developer ID .p12
+#   LCT_DEVELOPER_ID_CERTIFICATE_PASSWORD  Password protecting the .p12
+#   LCT_SIGN_IDENTITY                      e.g. "Developer ID Application: Name (TEAMID)"
+#   LCT_NOTARY_PROFILE                     Name for the stored notarytool keychain profile
+#   LCT_APPLE_ID                           Apple ID used for notarization
+#   LCT_APPLE_ID_PASSWORD                  App-specific password for that Apple ID
+#   LCT_TEAM_ID                            Apple Developer team ID
+#
+# Versions are never derived from git: they come from macos/VERSION or the
+# explicit release-version input, and checkout fetches no history.
+
 on:
   push:
     branches: [ master, main, develop, 'release/*' ]
-    tags: [ 'v*' ]
     paths:
       - 'macos/**'
       - '.github/workflows/macos-build.yml'
@@ -13,53 +27,132 @@ on:
       - 'macos/**'
       - '.github/workflows/macos-build.yml'
   workflow_dispatch:
+    inputs:
+      release-version:
+        description: 'Release version (x.y.z). Defaults to macos/VERSION.'
+        required: false
+        type: string
+      build-number:
+        description: 'Integer build number stamped into CFBundleVersion.'
+        required: false
+        default: '0'
+        type: string
 
 jobs:
-  build:
-    name: Build macOS App
+  build-test:
+    name: Build and test (no secrets required)
     runs-on: macos-14
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0 # Full history so git describe / rev-list can stamp versions
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-    - name: Setup Swift
-      uses: swift-actions/setup-swift@v2
-      with:
-        swift-version: "6.0" # Match the swift-tools-version in Package.swift
+      - name: Build and run tests
+        working-directory: macos
+        run: ./Scripts/run_tests.sh
 
-    - name: Build and Package App Bundle
-      run: |
-        cd macos
-        ./package-app.sh
-        zip -r LCTMac-macOS.zip LCTMac.app
-
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: LCTMac-macOS
-        path: macos/LCTMac-macOS.zip
-        retention-days: 7
-
-  release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    
+  deliver:
+    name: Sign, notarize, and upload DMG
+    runs-on: macos-14
+    needs: build-test
+    # Manual delivery only; skips cleanly when signing secrets are absent.
+    if: github.event_name == 'workflow_dispatch' && secrets.LCT_DEVELOPER_ID_CERTIFICATE != ''
+    env:
+      KEYCHAIN_NAME: lct-delivery.keychain-db
     steps:
-    - name: Download Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: LCTMac-macOS
-        path: ./release
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
-      with:
-        files: ./release/LCTMac-macOS.zip
-        generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Credentials are passed through environment variables, never echoed,
+      # and live only in a temporary keychain that is deleted at the end.
+      - name: Prepare temporary signing keychain
+        run: |
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_NAME"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.LCT_DEVELOPER_ID_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.LCT_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/lct-developer-id.p12"
+          echo "CERT_PATH=$CERT_PATH" >> "$GITHUB_ENV"
+          base64 -D <<< "$CERTIFICATE_BASE64" > "$CERT_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_NAME" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$CERT_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+          security list-keychains -d user -s "$KEYCHAIN_NAME" $(security list-keychains -d user | tr -d '"')
+
+      - name: Store notarytool keychain profile
+        env:
+          LCT_NOTARY_PROFILE: ${{ secrets.LCT_NOTARY_PROFILE }}
+          APPLE_ID: ${{ secrets.LCT_APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.LCT_APPLE_ID_PASSWORD }}
+          TEAM_ID: ${{ secrets.LCT_TEAM_ID }}
+        run: |
+          xcrun notarytool store-credentials "$LCT_NOTARY_PROFILE" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$TEAM_ID"
+
+      - name: Package and sign app
+        working-directory: macos
+        env:
+          LCT_SIGN_IDENTITY: ${{ secrets.LCT_SIGN_IDENTITY }}
+          RELEASE_VERSION: ${{ inputs.release-version }}
+          BUILD_NUMBER: ${{ inputs.build-number }}
+        run: |
+          if [ -z "$RELEASE_VERSION" ]; then
+            RELEASE_VERSION="$(tr -d '[:space:]' < VERSION)"
+          fi
+          if ! printf '%s\n' "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::release-version must be strict x.y.z, got '$RELEASE_VERSION'"
+            exit 1
+          fi
+          case "$BUILD_NUMBER" in
+            ''|*[!0-9]*)
+              echo "::error::build-number must be an integer, got '$BUILD_NUMBER'"
+              exit 1
+              ;;
+          esac
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_ENV"
+          ./package-app.sh
+
+      - name: Create final DMG
+        working-directory: macos
+        run: Scripts/create-dmg.sh LCTMac.app "LCT-$RELEASE_VERSION.dmg"
+
+      - name: Notarize and staple DMG
+        working-directory: macos
+        env:
+          LCT_NOTARY_PROFILE: ${{ secrets.LCT_NOTARY_PROFILE }}
+        run: Scripts/notarize-dmg.sh "LCT-$RELEASE_VERSION.dmg"
+
+      - name: Gatekeeper verification
+        working-directory: macos
+        run: Scripts/verify-release-dmg.sh "LCT-$RELEASE_VERSION.dmg"
+
+      - name: Upload notarized DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LCT-macOS-dmg
+          path: macos/LCT-${{ env.RELEASE_VERSION }}.dmg
+          retention-days: 30
+
+      - name: Clean up notarytool profile
+        if: always()
+        env:
+          LCT_NOTARY_PROFILE: ${{ secrets.LCT_NOTARY_PROFILE }}
+        run: xcrun notarytool delete-credentials "$LCT_NOTARY_PROFILE" || true
+
+      - name: Clean up temporary keychain
+        if: always()
+        run: |
+          security delete-keychain "$KEYCHAIN_NAME" || true
+          rm -f "${CERT_PATH:-}"

@@ -69,7 +69,10 @@ class OllamaGuardian: ObservableObject {
     // MARK: - Configuration
     
     private let ollamaPath: String
-    private let ollamaURL: String
+    /// Validated endpoint for the local Ollama service, or nil when the
+    /// configured URL was malformed or not loopback. No request is made while
+    /// this is nil.
+    let endpoint: OllamaEndpoint?
     private var healthCheckTask: Task<Void, Never>?
     private var startupTask: Task<Void, Never>?
     
@@ -82,7 +85,13 @@ class OllamaGuardian: ObservableObject {
     init(ollamaPath: String? = nil, ollamaURL: String = "http://localhost:11434") {
         // Dynamically resolve path if not explicitly provided
         self.ollamaPath = ollamaPath ?? OllamaGuardian.findOllamaPath() ?? "/usr/local/bin/ollama"
-        self.ollamaURL = ollamaURL
+        self.endpoint = OllamaEndpoint.parsedLoopback(from: ollamaURL)
+    }
+
+    /// Build a request URL for an Ollama API path from the validated
+    /// endpoint, or nil when no valid endpoint exists.
+    func requestURL(apiPath: String) -> URL? {
+        endpoint?.baseURL.appendingPathComponent(apiPath)
     }
     
     /// Find Ollama executable path from common install locations
@@ -188,7 +197,7 @@ class OllamaGuardian: ObservableObject {
     
     /// Check if Ollama service is running
     func checkServiceStatus() async -> Bool {
-        guard let url = URL(string: "\(ollamaURL)/api/tags") else {
+        guard let url = requestURL(apiPath: "api/tags") else {
             return false
         }
         
@@ -205,7 +214,7 @@ class OllamaGuardian: ObservableObject {
     
     /// Get Ollama version
     func getVersion() async -> String? {
-        guard let url = URL(string: "\(ollamaURL)/api/version") else {
+        guard let url = requestURL(apiPath: "api/version") else {
             return nil
         }
         
