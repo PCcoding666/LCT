@@ -54,6 +54,18 @@ final class SignAppTests: XCTestCase {
         )
     }
 
+    func testEmptyIdentity_ErrorOutput_ListsAvailableSigningIdentities() throws {
+        let result = try runSignScript(
+            arguments: ["LCTMac.app"],
+            environment: ["LCT_SIGN_IDENTITY": ""]
+        )
+        XCTAssertNotEqual(result.exitStatus, 0, "sign-app.sh must still fail when LCT_SIGN_IDENTITY is empty")
+        XCTAssertTrue(
+            result.stderr.contains("Available signing identities:"),
+            "empty LCT_SIGN_IDENTITY must list available signing identities, got: \(result.stderr)"
+        )
+    }
+
     func testScriptRequiresExistingBundlePath() throws {
         let missing = packageDir.appendingPathComponent("DoesNotExist.app")
         let result = try runSignScript(

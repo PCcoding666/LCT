@@ -19,7 +19,22 @@ fi
 APP="$1"
 
 if [ -z "${LCT_SIGN_IDENTITY:-}" ]; then
-    echo "sign-app.sh: error: LCT_SIGN_IDENTITY must be set to a Developer ID signing identity" >&2
+    {
+        echo "sign-app.sh: error: LCT_SIGN_IDENTITY is not set; a signing identity is required."
+        echo
+        echo "  Release builds: set it to your Developer ID Application identity, e.g."
+        echo "    export LCT_SIGN_IDENTITY=\"Developer ID Application: Name (TEAMID)\""
+        echo
+        echo "  Local builds: an Apple Development certificate also works. If your"
+        echo "  keychain holds several certificates with the same name, use the"
+        echo "  certificate's 40-character SHA-1 hash instead."
+        echo
+        echo "  Example (add it to ~/.zshrc to make it permanent):"
+        echo "    export LCT_SIGN_IDENTITY=<SHA-1 or identity name>"
+        echo
+        echo "Available signing identities:"
+        security find-identity -v -p codesigning >&2 || true
+    } >&2
     exit 1
 fi
 
