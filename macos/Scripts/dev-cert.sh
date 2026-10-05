@@ -7,7 +7,7 @@
 # re-grant permissions. A stable self-signed identity fixes that — grant once,
 # then permissions persist across rebuilds.
 #
-# Run once: ./scripts/dev-cert.sh   (then rebuild with ./package-app.sh)
+# Run once: ./Scripts/dev-cert.sh   (then rebuild with ./package-app.sh)
 # The certificate is local-only, needs no Apple account, and never leaves your Mac.
 set -euo pipefail
 
