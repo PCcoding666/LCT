@@ -1,5 +1,5 @@
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 import Speech
 import AppKit
 
@@ -122,17 +122,17 @@ enum SelfTestAudio {
         }
 
         var conversionError: NSError?
-        var sourceConsumed = false
+        let input = ConverterInput(buffer: sourceBuffer)
         converter.convert(to: converted, error: &conversionError) { _, outStatus in
-            if sourceConsumed {
+            if input.consumed {
                 // Signal end of input (not .noDataNow) so the converter
                 // flushes the resampler tail into the output buffer.
                 outStatus.pointee = .endOfStream
                 return nil
             }
-            sourceConsumed = true
+            input.consumed = true
             outStatus.pointee = .haveData
-            return sourceBuffer
+            return input.buffer
         }
         if let conversionError {
             throw SpeechSelfTestError.audioConversionFailed(conversionError.localizedDescription)
@@ -266,5 +266,17 @@ final class SpeechSelfTestRunner {
         } catch {
             appLog("[SpeechSelfTest] ❌ Failed to write report to \(path): \(error.localizedDescription)")
         }
+    }
+}
+
+/// Single-shot input for AVAudioConverter's pull block. The block runs
+/// synchronously inside convert(to:error:withInputFrom:), so the unchecked
+/// Sendable box is never touched concurrently.
+private final class ConverterInput: @unchecked Sendable {
+    let buffer: AVAudioPCMBuffer
+    var consumed = false
+
+    init(buffer: AVAudioPCMBuffer) {
+        self.buffer = buffer
     }
 }

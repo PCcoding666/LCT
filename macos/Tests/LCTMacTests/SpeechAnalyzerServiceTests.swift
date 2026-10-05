@@ -1,5 +1,5 @@
 import XCTest
-import AVFoundation
+@preconcurrency import AVFoundation
 @testable import LCTMac
 
 /// Guards the thread-safety contract of the lock-protected lane registry:
