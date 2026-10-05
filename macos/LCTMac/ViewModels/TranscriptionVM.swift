@@ -35,6 +35,10 @@ class TranscriptionViewModel: ObservableObject {
     @Published var micLevel: Float = 0
     @Published var captureSources: [AudioSource] = []
 
+    /// Microphone input device actually in use (nil when the mic lane is off)
+    @Published var microphoneDeviceName: String?
+    @Published var microphoneDeviceIsVirtual: Bool = false
+
     /// Current user-facing notice (info / warning / error with optional actions)
     @Published var notice: AppNotice?
 
@@ -89,7 +93,8 @@ class TranscriptionViewModel: ObservableObject {
         self.audioCaptureService = AudioCaptureService(
             config: AudioCaptureConfig(
                 captureSystemAudio: loadedSettings.captureSystemAudio,
-                captureMicrophone: loadedSettings.captureMicrophone
+                captureMicrophone: loadedSettings.captureMicrophone,
+                microphoneDeviceUID: loadedSettings.microphoneDeviceUID
             )
         )
         self.ollamaService = OllamaService(settings: loadedSettings)
@@ -134,6 +139,15 @@ class TranscriptionViewModel: ObservableObject {
         audioCaptureService.$activeSources
             .receive(on: DispatchQueue.main)
             .assign(to: &$captureSources)
+
+        // Bind the mic input device actually in use (for the meter UI)
+        audioCaptureService.$microphoneDeviceName
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$microphoneDeviceName)
+
+        audioCaptureService.$microphoneDeviceIsVirtual
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$microphoneDeviceIsVirtual)
 
         // Bind capture state
         audioCaptureService.$isCapturing
@@ -209,6 +223,12 @@ class TranscriptionViewModel: ObservableObject {
             self.speechAnalyzerService.stop()
             self.translationQueue.cancelAll()
             self.notice = .error("Audio capture interrupted: \(error.localizedDescription)", actions: [.retryCapture])
+        }
+
+        // Mic lane delivered only digital silence for a full session streak —
+        // almost always the wrong input device (e.g. an idle virtual sound card).
+        audioCaptureService.onMicrophoneSilenceDetected = { [weak self] in
+            self?.handleMicrophoneSilence()
         }
 
     }
@@ -400,6 +420,20 @@ class TranscriptionViewModel: ObservableObject {
                 )
             }
 
+            // A virtual sound card (BlackHole & co.) carries no microphone
+            // signal — tell the user right away instead of waiting for the
+            // silence watchdog.
+            if activeSources.contains(.microphone),
+               let micDevice = audioCaptureService.activeMicrophoneDevice,
+               micDevice.isVirtual,
+               notice?.severity != .error {
+                notice = AppNotice(
+                    severity: .warning,
+                    message: "Microphone input is \"\(micDevice.name)\", a virtual device with no microphone signal. Pick your real microphone in Settings.",
+                    actions: [.openAppSettings]
+                )
+            }
+
             // Start local health monitoring only for local Ollama.
             if settings.isLocalOllama {
                 ollamaGuardian.startHealthMonitoring(interval: 30)
@@ -452,6 +486,20 @@ class TranscriptionViewModel: ObservableObject {
     }
 
     // MARK: - Notice Handling
+
+    /// The mic lane produced nothing but digital silence for 6 straight
+    /// seconds — almost always a wrong or idle input device (e.g. BlackHole).
+    private func handleMicrophoneSilence() {
+        // A live error (permission lost, stream interrupted) outranks this warning.
+        guard notice?.severity != .error else { return }
+        let deviceName = audioCaptureService.activeMicrophoneDevice?.name ?? "unknown"
+        appLog("[TranscriptionVM] ⚠️ Microphone lane silent for 6s (device: \(deviceName))")
+        notice = AppNotice(
+            severity: .warning,
+            message: "Microphone \"\(deviceName)\" is sending no audio. If it's a virtual device (e.g. BlackHole), pick your real microphone in Settings.",
+            actions: [.openAppSettings]
+        )
+    }
 
     /// Dismiss the current notice.
     func dismissNotice() {
@@ -616,7 +664,8 @@ class TranscriptionViewModel: ObservableObject {
         // Update services
         audioCaptureService.config = AudioCaptureConfig(
             captureSystemAudio: newSettings.captureSystemAudio,
-            captureMicrophone: newSettings.captureMicrophone
+            captureMicrophone: newSettings.captureMicrophone,
+            microphoneDeviceUID: newSettings.microphoneDeviceUID
         )
         ollamaService.updateSettings(newSettings)
         caption.maxContextEntries = newSettings.maxContextEntries
@@ -631,6 +680,7 @@ class TranscriptionViewModel: ObservableObject {
         if isCapturing {
             let needsRestart = oldSettings.captureSystemAudio != newSettings.captureSystemAudio
                 || oldSettings.captureMicrophone != newSettings.captureMicrophone
+                || oldSettings.microphoneDeviceUID != newSettings.microphoneDeviceUID
                 || oldSettings.sourceLanguage != newSettings.sourceLanguage
                 || oldSettings.ollamaModel != newSettings.ollamaModel
             if needsRestart {

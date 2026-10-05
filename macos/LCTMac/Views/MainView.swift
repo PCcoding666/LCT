@@ -277,7 +277,9 @@ struct MainView: View {
                 systemLevel: viewModel.systemLevel,
                 micLevel: viewModel.micLevel,
                 sources: viewModel.captureSources,
-                isActive: viewModel.isCapturing && !viewModel.isPaused
+                isActive: viewModel.isCapturing && !viewModel.isPaused,
+                micDeviceName: viewModel.microphoneDeviceName,
+                micDeviceIsVirtual: viewModel.microphoneDeviceIsVirtual
             )
 
             Text("⌘␣ start · ⌘P pause · ⇧⌘C copy · ⌘O overlay")
@@ -554,6 +556,8 @@ struct AudioMetersView: View {
     let micLevel: Float
     let sources: [AudioSource]
     let isActive: Bool
+    var micDeviceName: String? = nil
+    var micDeviceIsVirtual: Bool = false
 
     var body: some View {
         // When idle (no capture session yet), preview the lanes implied by nothing —
@@ -565,7 +569,9 @@ struct AudioMetersView: View {
                 LaneMeterView(
                     lane: lane,
                     level: lane == .microphone ? micLevel : systemLevel,
-                    isActive: isActive
+                    isActive: isActive,
+                    deviceName: lane == .microphone ? micDeviceName : nil,
+                    deviceIsVirtual: lane == .microphone && micDeviceIsVirtual
                 )
             }
         }
@@ -578,6 +584,8 @@ struct LaneMeterView: View {
     let lane: AudioSource
     let level: Float   // 0...1, normalized -60dB…0dB
     let isActive: Bool
+    var deviceName: String? = nil
+    var deviceIsVirtual: Bool = false
 
     private var tint: Color {
         lane == .microphone ? .orange : .cyan
@@ -591,42 +599,55 @@ struct LaneMeterView: View {
     }
 
     var body: some View {
-        HStack(spacing: 5) {
-            Text(lane.label)
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                .foregroundStyle(isActive ? tint : Color.secondary.opacity(0.5))
-                .frame(width: 24, alignment: .leading)
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 5) {
+                Text(lane.label)
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundStyle(isActive ? tint : Color.secondary.opacity(0.5))
+                    .frame(width: 24, alignment: .leading)
 
-            GeometryReader { geo in
-                let fill = geo.size.width * CGFloat(isActive ? max(0, min(level, 1)) : 0)
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.white.opacity(0.08))
+                GeometryReader { geo in
+                    let fill = geo.size.width * CGFloat(isActive ? max(0, min(level, 1)) : 0)
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color.white.opacity(0.08))
 
-                    // Gradient spans the FULL track; mask reveals only up to the
-                    // current level so colors stay anchored to dB zones (OBS-style)
-                    LinearGradient(
-                        colors: [HUD.accent, HUD.accent, .yellow, .red],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                    .frame(width: geo.size.width, height: 6)
-                    .mask(
-                        HStack(spacing: 0) {
-                            Rectangle().frame(width: fill)
-                            Spacer(minLength: 0)
-                        }
-                    )
+                        // Gradient spans the FULL track; mask reveals only up to the
+                        // current level so colors stay anchored to dB zones (OBS-style)
+                        LinearGradient(
+                            colors: [HUD.accent, HUD.accent, .yellow, .red],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: geo.size.width, height: 6)
+                        .mask(
+                            HStack(spacing: 0) {
+                                Rectangle().frame(width: fill)
+                                Spacer(minLength: 0)
+                            }
+                        )
+                    }
                 }
-            }
-            .frame(height: 6)
+                .frame(height: 6)
 
-            Text(dBText)
-                .font(.system(size: 8, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .frame(width: 28, alignment: .trailing)
+                Text(dBText)
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 28, alignment: .trailing)
+            }
+            .frame(height: 10)
+
+            // The mic lane names its input device so a silent virtual sound card
+            // (e.g. BlackHole) is identifiable at a glance.
+            if lane == .microphone, let deviceName, !deviceName.isEmpty {
+                Text(deviceIsVirtual ? "\(deviceName) · virtual" : deviceName)
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundStyle(deviceIsVirtual ? Color.orange : Color.secondary.opacity(0.6))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.leading, 29)
+            }
         }
-        .frame(height: 10)
         .animation(.linear(duration: 0.06), value: level)
         .help(lane == .microphone ? "Microphone input level" : "System audio level")
     }
