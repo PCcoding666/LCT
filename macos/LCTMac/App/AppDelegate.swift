@@ -22,12 +22,26 @@ private final class FileLogStream {
 nonisolated(unsafe) private var _logStream: FileLogStream?
 private let _logLock = NSLock()
 
-/// Global log function that writes to both console and file
+/// Timestamp prefix for log lines: "HH:mm:ss.SSS" in local time.
+enum LogTimestamp {
+    static func makeFormatter() -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter
+    }
+}
+
+// Only touched while holding _logLock, so sharing the formatter is safe.
+private let _timestampFormatter = LogTimestamp.makeFormatter()
+
+/// Global log function that writes to both console and file.
+/// Every line is prefixed with a local-time "HH:mm:ss.SSS" timestamp.
 func appLog(_ message: String) {
-    let line = "\(message)\n"
     _logLock.lock()
     defer { _logLock.unlock() }
 
+    let line = "\(_timestampFormatter.string(from: Date())) \(message)\n"
     _logStream?.write(line)
     fputs(line, stderr)
 }
@@ -49,7 +63,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         appLog("LCT for macOS launched successfully — log: \(logPath.path)")
-        
+
+        // Speech recognition self-test mode (diagnostics): runs the real
+        // recognition pipeline against an audio file, writes a JSON report,
+        // and terminates. Skips the normal startup flow entirely — no status
+        // item, no hotkeys, no permission preflight, no capture.
+        if let options = SpeechSelfTestOptions.parse(arguments: ProcessInfo.processInfo.arguments) {
+            appLog("[SpeechSelfTest] Self-test mode: locale=\(options.localeIdentifier)")
+            Task {
+                await SpeechSelfTestRunner().run(options: options)
+            }
+            return
+        }
+
         // Ensure the app is recognized as a foreground GUI application
         // This is critical for SPM-built executables that aren't inside a .app bundle
         NSApp.setActivationPolicy(.regular)
