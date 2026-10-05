@@ -1,6 +1,7 @@
 import Foundation
 @preconcurrency import ScreenCaptureKit
 import AVFoundation
+import AudioUnit
 import Combine
 import CoreGraphics
 
@@ -37,6 +38,8 @@ struct AudioCaptureConfig {
     var captureMicrophone: Bool = true
     var sampleRate: Double = 16000  // Whisper expects 16kHz
     var channelCount: Int = 1       // Mono for speech recognition
+    /// Core Audio UID of the microphone input device; nil follows the system default.
+    var microphoneDeviceUID: String? = nil
 }
 
 /// Service for capturing system audio and microphone input using ScreenCaptureKit
@@ -52,20 +55,27 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     /// Lanes actually running in the current capture session
     @MainActor @Published private(set) var activeSources: [AudioSource] = []
     @MainActor @Published private(set) var lastError: String?
-    
+    /// Microphone input device actually in use for the current session (nil when the mic lane is off)
+    @MainActor @Published private(set) var microphoneDeviceName: String?
+    @MainActor @Published private(set) var microphoneDeviceIsVirtual: Bool = false
+
     // MARK: - Configuration
     var config: AudioCaptureConfig
-    
+
     // MARK: - Audio Callback
     // These callbacks are marked nonisolated(unsafe) because they are called from background threads
     // The callbacks themselves must be thread-safe (e.g., SFSpeechAudioBufferRecognitionRequest.append is thread-safe)
     // The AudioSource tag tells the consumer which capture lane the buffer came from.
     nonisolated(unsafe) var onAudioBuffer: (@Sendable (AVAudioPCMBuffer, AudioSource) -> Void)?
     nonisolated(unsafe) var onAudioData: (@Sendable (Data) -> Void)?
-    
+
     /// Callback when the SCStream is interrupted (e.g., display disconnected).
     /// Called on MainActor so the ViewModel can react (show error, attempt restart).
     var onStreamInterrupted: ((Error) -> Void)?
+
+    /// Fired on the MainActor when the mic lane stays completely silent for a
+    /// whole SilenceDetector streak (typically a wrong/idle input device).
+    var onMicrophoneSilenceDetected: (@MainActor () -> Void)?
     
     // MARK: - Private Properties
     private var stream: SCStream?
@@ -73,6 +83,12 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     private var videoOutput: VideoStreamOutput?
     private let streamOutputQueue = DispatchQueue(label: "com.lct.audioCapture.streamOutput", qos: .userInitiated)
     private var audioEngine: AVAudioEngine?
+    /// Mic input device in use for the current session, recorded synchronously
+    /// when the engine starts so callers can inspect it right after `await
+    /// start…Capture()` returns (the @Published mirror above hops to MainActor).
+    private(set) var activeMicrophoneDevice: AudioInputDevice?
+    /// Watchdog for a mic lane that delivers only digital silence.
+    private var micSilenceDetector = SilenceDetector()
     private var cancellables = Set<AnyCancellable>()
     private var isStarting = false
     private var isStopping = false
@@ -237,14 +253,9 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
         do {
             try startMicrophoneEngine()
         } catch {
-            // Mic failed after the system stream started — tear the stream back
+            // Mic failed after the system stream started — tear everything back
             // down so we don't run a half-configured session.
-            if let stream = stream {
-                try? await stream.stopCapture()
-                self.stream = nil
-                self.streamOutput = nil
-                self.videoOutput = nil
-            }
+            await teardownCapture()
             throw error
         }
 
@@ -346,35 +357,57 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     /// Caller must have ensured microphone TCC permission first
     /// (`ensureMicrophonePermission`) — unauthorized processes receive silent buffers.
     private func startMicrophoneEngine() throws {
+        // Never stack engines: a previous session's engine/tap must go first.
+        if audioEngine != nil {
+            teardownMicrophoneEngine()
+        }
+        micSilenceDetector.reset()
+
         let audioEngine = AVAudioEngine()
         let inputNode = audioEngine.inputNode
+
+        // Apply the configured input device BEFORE reading the native format —
+        // kAudioOutputUnitProperty_CurrentDevice changes what the input node runs.
+        var effectiveDevice = resolveMicrophoneDevice()
+        if let device = effectiveDevice, config.microphoneDeviceUID != nil {
+            var deviceID = device.id
+            let status = inputNode.audioUnit.map {
+                AudioUnitSetProperty(
+                    $0,
+                    kAudioOutputUnitProperty_CurrentDevice,
+                    kAudioUnitScope_Global,
+                    0,
+                    &deviceID,
+                    UInt32(MemoryLayout<AudioDeviceID>.size)
+                )
+            } ?? -1
+            if status != noErr {
+                appLog("[AudioCaptureService] ⚠️ Could not select microphone \"\(device.name)\" (status \(status)); using the system default device instead")
+                effectiveDevice = AudioInputDevices.systemDefaultInputDevice()
+            }
+        }
+
         let inputFormat = inputNode.outputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw AudioCaptureError.captureSetupFailed("No usable microphone input device")
+        }
+        appLog("Microphone native format: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount) channels, device: \(effectiveDevice?.name ?? "system default")")
 
-        appLog("Microphone native format: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount) channels")
+        guard let converter = MicrophoneFormatConverter(
+            inputFormat: inputFormat,
+            targetSampleRate: config.sampleRate,
+            targetChannels: config.channelCount
+        ) else {
+            throw AudioCaptureError.captureSetupFailed("Could not create microphone format converter")
+        }
 
-        // Target format for SFSpeechRecognizer (16kHz Mono PCM)
-        let targetFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: config.sampleRate,
-            channels: AVAudioChannelCount(config.channelCount),
-            interleaved: false
-        )!
-
-        // Use an AVAudioMixerNode to perform safe sample rate conversion
-        let mixer = AVAudioMixerNode()
-        audioEngine.attach(mixer)
-
-        // Connect input -> mixer (native format)
-        audioEngine.connect(inputNode, to: mixer, format: inputFormat)
-
-        // Connect mixer -> mainMixerNode (target format) to ensure the graph runs
-        // Mute the mixer so we don't get audio feedback through speakers
-        audioEngine.connect(mixer, to: audioEngine.mainMixerNode, format: targetFormat)
-        mixer.outputVolume = 0.0
-
-        // Install tap on the mixer's output to get the correctly converted 16kHz buffers
-        mixer.installTap(onBus: 0, bufferSize: 4096, format: targetFormat) { [weak self] buffer, _ in
-            self?.processAudioBufferBackground(buffer, source: .microphone)
+        // Tap the input node directly in its native format (same structure as
+        // Apple's SpokenWord sample): no mixer and no output-volume node in the
+        // data path, so the tap can't be muted by the graph and nothing is fed
+        // back to the speakers.
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+            guard let converted = converter.convert(buffer) else { return }
+            self?.processAudioBufferBackground(converted, source: .microphone)
         }
 
         // Start audio engine
@@ -382,40 +415,76 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
             audioEngine.prepare()
             try audioEngine.start()
         } catch {
+            inputNode.removeTap(onBus: 0)
             throw AudioCaptureError.captureSetupFailed("Could not start audio engine: \(error.localizedDescription)")
         }
 
         self.audioEngine = audioEngine
-        appLog("Microphone engine started (format: \(targetFormat.sampleRate)Hz, \(targetFormat.channelCount) channels)")
+        self.activeMicrophoneDevice = effectiveDevice
+        let deviceName = effectiveDevice?.name
+        let deviceIsVirtual = effectiveDevice?.isVirtual ?? false
+        Task { @MainActor in
+            self.microphoneDeviceName = deviceName
+            self.microphoneDeviceIsVirtual = deviceIsVirtual
+        }
+        appLog("Microphone engine started (device: \(effectiveDevice?.name ?? "system default"), \(Int(config.sampleRate))Hz mono)")
     }
-    
-    /// Stop capturing audio
-    func stopCapture() async {
-        let isCapturingCurrently = await MainActor.run { isCapturing }
-        guard isCapturingCurrently else { return }
-        guard !isStopping else { return }
-        isStopping = true
-        defer { isStopping = false }
 
-        // Stop ScreenCaptureKit stream if active
+    /// Pick the Core Audio input device for the mic lane: the configured UID
+    /// when it still exists, otherwise the system default input device.
+    private func resolveMicrophoneDevice() -> AudioInputDevice? {
+        let devices = AudioInputDevices.listInputDevices()
+        if let uid = config.microphoneDeviceUID {
+            if let match = devices.first(where: { $0.uid == uid }) {
+                return match
+            }
+            let fallback = devices.first(where: { $0.isSystemDefault })
+            appLog("[AudioCaptureService] ⚠️ Configured microphone is no longer available; falling back to system default \"\(fallback?.name ?? "unknown")\"")
+            return fallback
+        }
+        return devices.first(where: { $0.isSystemDefault })
+    }
+
+    /// Stop and clear the ScreenCaptureKit stream and the microphone engine,
+    /// regardless of capture state. Idempotent — every exit path (user stop,
+    /// SCStream error, failed start) funnels through here.
+    private func teardownCapture() async {
         if let stream = stream {
             do {
                 try await stream.stopCapture()
             } catch {
-                print("Error stopping capture: \(error)")
+                appLog("[AudioCaptureService] Error stopping stream during teardown: \(error.localizedDescription)")
             }
             self.stream = nil
             self.streamOutput = nil
             self.videoOutput = nil
         }
-        
-        // Stop AVAudioEngine if active
-        if let audioEngine = audioEngine {
-            audioEngine.inputNode.removeTap(onBus: 0)
-            audioEngine.stop()
-            self.audioEngine = nil
+        teardownMicrophoneEngine()
+    }
+
+    /// Stop the mic engine and remove its tap. Idempotent.
+    private func teardownMicrophoneEngine() {
+        guard let audioEngine else { return }
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.stop()
+        self.audioEngine = nil
+        self.activeMicrophoneDevice = nil
+        Task { @MainActor in
+            self.microphoneDeviceName = nil
+            self.microphoneDeviceIsVirtual = false
         }
-        
+    }
+
+    /// Stop capturing audio
+    func stopCapture() async {
+        guard !isStopping else { return }
+        isStopping = true
+        defer { isStopping = false }
+
+        // Tear down unconditionally: an SCStream error flips isCapturing to
+        // false while the mic engine may still be running.
+        await teardownCapture()
+
         Task { @MainActor in
             self.isCapturing = false
             self.activeSources = []
@@ -423,7 +492,7 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
             self.micLevel = 0
             self.audioLevel = 0
         }
-        
+
         appLog("Audio capture stopped")
     }
     
@@ -454,6 +523,14 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
             }
             let rms = sqrt(sum / Float(frames))
             let level = 20 * log10(max(rms, 0.000001))
+
+            // Watch the mic lane for a session-long silent streak (usually a
+            // wrong or idle input device); fires at most once per session.
+            if source == .microphone, micSilenceDetector.process(rms: rms, at: Date()) {
+                Task { @MainActor [weak self] in
+                    self?.onMicrophoneSilenceDetected?()
+                }
+            }
 
             // Log RMS occasionally to verify audio isn't silent (tagged by lane)
             if Int(Date().timeIntervalSince1970 * 10) % 50 == 0 {
@@ -517,17 +594,15 @@ extension AudioCaptureService: SCStreamDelegate {
     /// process interrupted, or system-level error).
     nonisolated func stream(_ stream: SCStream, didStopWithError error: any Error) {
         appLog("[AudioCaptureService] ⚠️ SCStream stopped with error: \(error.localizedDescription)")
-        
+
         Task { @MainActor [weak self] in
             guard let self = self else { return }
+            // Stop everything — including the mic engine, which would otherwise
+            // outlive the stream and leak until the next start overwrites it.
+            await self.teardownCapture()
             self.isCapturing = false
             self.lastError = "Audio capture interrupted: \(error.localizedDescription). Please click Start to resume."
-            
-            // Clean up stream references
-            self.stream = nil
-            self.streamOutput = nil
-            self.videoOutput = nil
-            
+
             // Notify the ViewModel so it can handle recovery
             self.onStreamInterrupted?(error)
         }

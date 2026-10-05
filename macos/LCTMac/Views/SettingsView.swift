@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var modelListError: String?
     @State private var isLoadingModels = false
     @State private var diagnosticsMessage: String?
+    @State private var inputDevices: [AudioInputDevice] = []
 
     init(settings: Binding<AppSettings>, onSave: @escaping (AppSettings) -> Void) {
         self._settings = settings
@@ -75,6 +76,7 @@ struct SettingsView: View {
             PromptEditorView(prompt: $localSettings.customPrompt)
         }
         .task {
+            refreshInputDevices()
             await refreshInstalledModels()
         }
     }
@@ -86,6 +88,15 @@ struct SettingsView: View {
         Section("Audio Capture") {
             Toggle("Capture System Audio", isOn: $localSettings.captureSystemAudio)
             Toggle("Capture Microphone", isOn: $localSettings.captureMicrophone)
+
+            Picker("Microphone Device", selection: $localSettings.microphoneDeviceUID) {
+                Text("System Default (\(systemDefaultInputName))").tag(String?.none)
+                ForEach(inputDevices) { device in
+                    Text(device.isVirtual ? "\(device.name) (virtual)" : device.name)
+                        .tag(String?.some(device.uid))
+                }
+            }
+            .help("Which input device LCT listens to for microphone capture")
         }
 
         Section("Language") {
@@ -344,6 +355,14 @@ struct SettingsView: View {
     }
 
     // MARK: - Installed Models
+
+    private var systemDefaultInputName: String {
+        inputDevices.first(where: { $0.isSystemDefault })?.name ?? "unavailable"
+    }
+
+    private func refreshInputDevices() {
+        inputDevices = AudioInputDevices.listInputDevices()
+    }
 
     private func refreshInstalledModels() async {
         isLoadingModels = true
