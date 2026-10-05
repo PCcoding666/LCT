@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 
 /// Converts microphone input buffers from the device's native format (any
 /// sample rate / channel count) to the pipeline's speech format: 16 kHz mono
@@ -37,21 +37,33 @@ final class MicrophoneFormatConverter {
             return nil
         }
 
-        var consumed = false
+        let input = SingleShotInput(buffer: inputBuffer)
         var error: NSError?
         converter.convert(to: outputBuffer, error: &error) { _, outStatus in
             // Hand the input block over exactly once. A second pull answers
             // .noDataNow so the same samples are never delivered twice.
-            guard !consumed else {
+            guard !input.consumed else {
                 outStatus.pointee = .noDataNow
                 return nil
             }
-            consumed = true
+            input.consumed = true
             outStatus.pointee = .haveData
-            return inputBuffer
+            return input.buffer
         }
 
         guard error == nil, outputBuffer.frameLength > 0 else { return nil }
         return outputBuffer
+    }
+}
+
+/// One input buffer handed to AVAudioConverter's pull block. The block runs
+/// synchronously inside convert(to:error:withInputFrom:), so this unchecked
+/// Sendable box is never touched concurrently.
+private final class SingleShotInput: @unchecked Sendable {
+    let buffer: AVAudioPCMBuffer
+    var consumed = false
+
+    init(buffer: AVAudioPCMBuffer) {
+        self.buffer = buffer
     }
 }
