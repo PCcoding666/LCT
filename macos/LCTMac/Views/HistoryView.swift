@@ -68,8 +68,9 @@ struct HistoryView: View {
             
             Divider()
             
-            // Entry list
-            if isLoading {
+            if !viewModel.settings.historyEnabled {
+                historyDisabledState
+            } else if isLoading {
                 VStack(spacing: 12) {
                     ProgressView()
                     Text("Loading history...")
@@ -119,6 +120,7 @@ struct HistoryView: View {
                     }
                 }
             }
+            .disabled(!viewModel.settings.historyEnabled)
             .padding()
         }
         .frame(width: 650, height: 550)
@@ -136,6 +138,25 @@ struct HistoryView: View {
         }
     }
     
+    private var historyDisabledState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "hand.raised.fill")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+
+            Text("History is off")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+
+            Text("Saving translation history is opt-in. Previously saved entries are kept on this Mac and will reappear if you enable history in Settings — nothing is deleted.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 400)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "clock.arrow.circlepath")
@@ -154,6 +175,11 @@ struct HistoryView: View {
     }
     
     private func loadHistory() async {
+        guard viewModel.settings.historyEnabled else {
+            persistentEntries = []
+            isLoading = false
+            return
+        }
         isLoading = true
         persistentEntries = await viewModel.loadPersistentHistory(limit: 500)
         isLoading = false

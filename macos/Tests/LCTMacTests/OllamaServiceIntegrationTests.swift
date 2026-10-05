@@ -86,6 +86,7 @@ final class OllamaServiceIntegrationTests: XCTestCase {
         var settings = AppSettings()
         settings.ollamaHost = "mock.local"
         settings.ollamaPort = 80
+        settings.remoteOllamaOptIn = true
         settings.ollamaModel = "missing-model"
         settings.ollamaTimeout = 1
 

@@ -90,6 +90,16 @@ class OllamaService: ObservableObject {
     private var session: URLSession
     private let injectedSession: URLSession?
 
+    /// Validated chat endpoint; nil when the configured endpoint is invalid or
+    /// the remote opt-in is missing, so no request can be created.
+    private var chatEndpointURL: URL? {
+        settings.validatedOllamaEndpoint?.baseURL.appendingPathComponent("api/chat")
+    }
+
+    private var tagsEndpointURL: URL? {
+        settings.validatedOllamaEndpoint?.baseURL.appendingPathComponent("api/tags")
+    }
+
     init(settings: AppSettings = .load(), session: URLSession? = nil) {
         self.settings = settings
         self.injectedSession = session
@@ -118,7 +128,7 @@ class OllamaService: ObservableObject {
     func prewarmModel() async throws -> Int {
         let startTime = Date()
 
-        guard let url = URL(string: settings.ollamaAPIEndpoint) else {
+        guard let url = chatEndpointURL else {
             throw OllamaError.invalidURL
         }
 
@@ -168,7 +178,7 @@ class OllamaService: ObservableObject {
 
     /// Check if Ollama server is running
     func checkHealth() async -> Bool {
-        guard let url = URL(string: "\(settings.ollamaURL)/api/tags") else {
+        guard let url = tagsEndpointURL else {
             return false
         }
 
@@ -223,7 +233,7 @@ class OllamaService: ObservableObject {
         isTranslating = true
         defer { isTranslating = false }
 
-        guard let url = URL(string: settings.ollamaAPIEndpoint) else {
+        guard let url = chatEndpointURL else {
             throw OllamaError.invalidURL
         }
 
@@ -312,7 +322,7 @@ class OllamaService: ObservableObject {
         isTranslating = true
         defer { isTranslating = false }
 
-        guard let url = URL(string: settings.ollamaAPIEndpoint) else {
+        guard let url = chatEndpointURL else {
             throw OllamaError.invalidURL
         }
 
@@ -398,7 +408,7 @@ class OllamaService: ObservableObject {
 
     /// Unload the model from memory
     func unloadModel() async throws {
-        guard let url = URL(string: settings.ollamaAPIEndpoint) else {
+        guard let url = chatEndpointURL else {
             throw OllamaError.invalidURL
         }
 
@@ -455,7 +465,7 @@ class OllamaService: ObservableObject {
 
     /// Get available models from Ollama
     func getAvailableModels() async throws -> [String] {
-        guard let url = URL(string: "\(settings.ollamaURL)/api/tags") else {
+        guard let url = tagsEndpointURL else {
             throw OllamaError.invalidURL
         }
 

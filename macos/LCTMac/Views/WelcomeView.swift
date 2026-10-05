@@ -164,7 +164,7 @@ struct WelcomeView: View {
                 .multilineTextAlignment(.center)
             
             VStack(alignment: .leading, spacing: 16) {
-                FeatureRow(icon: "waveform", title: "Speech Recognition", description: "Apple's native speech recognition")
+                FeatureRow(icon: "waveform", title: "Speech Recognition", description: "Apple's native speech recognition, processed on-device")
                 FeatureRow(icon: "globe", title: "Local Translation", description: "Private, offline translation with Ollama")
                 FeatureRow(icon: "lock.shield", title: "Privacy First", description: "All processing happens on your device")
             }
@@ -184,7 +184,7 @@ struct WelcomeView: View {
                 .font(.title)
                 .fontWeight(.bold)
             
-            Text("Grant microphone and speech recognition to get started. Screen recording is optional — it lets LCT caption audio from videos and meetings.")
+            Text("Grant microphone and speech recognition to get started. Speech is processed on-device and never leaves your Mac. Screen recording is optional — it lets LCT caption audio from videos and meetings. A language without on-device support requires downloading its on-device speech model in System Settings.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -685,10 +685,22 @@ struct WelcomeView: View {
             return
         }
 
-        guard let url = URL(string: "\(config.baseURL)/api/tags") else {
-            setupError = "Invalid remote Ollama URL."
+        // Remote connections require the explicit opt-in already enabled in
+        // Settings; it is never inferred or enabled here.
+        let settings = AppSettings.load()
+        let endpoint: OllamaEndpoint
+        do {
+            endpoint = try OllamaEndpoint.validated(
+                host: config.host,
+                port: config.port,
+                remoteOptIn: settings.remoteOllamaOptIn
+            )
+        } catch {
+            setupError = error.localizedDescription
             return
         }
+
+        let url = endpoint.baseURL.appendingPathComponent("api/tags")
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 8
@@ -708,7 +720,7 @@ struct WelcomeView: View {
                 return
             }
 
-            var settings = AppSettings.load()
+            var settings = settings
             settings.ollamaHost = config.host
             settings.ollamaPort = config.port
             settings.ollamaModel = config.model

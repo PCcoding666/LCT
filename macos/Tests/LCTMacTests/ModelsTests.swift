@@ -268,8 +268,14 @@ final class ModelsTests: XCTestCase {
         settings.ollamaHost = "192.168.1.100"
         settings.ollamaPort = 8080
 
-        XCTAssertEqual(settings.ollamaURL, "http://192.168.1.100:8080")
-        XCTAssertEqual(settings.ollamaAPIEndpoint, "http://192.168.1.100:8080/api/chat")
+        // Without the remote opt-in, a non-loopback host is invalid and must
+        // not produce a requestable URL.
+        XCTAssertNil(settings.validatedOllamaEndpoint)
+        XCTAssertFalse(settings.ollamaURL.contains("192.168.1.100"))
+
+        settings.remoteOllamaOptIn = true
+        XCTAssertEqual(settings.ollamaURL, "https://192.168.1.100:8080")
+        XCTAssertEqual(settings.ollamaAPIEndpoint, "https://192.168.1.100:8080/api/chat")
     }
 
     func testAppSettings_IsLocalOllama() {
@@ -288,6 +294,7 @@ final class ModelsTests: XCTestCase {
         XCTAssertTrue(settings.isLocalOllama)
 
         settings.ollamaHost = "192.168.1.20"
+        settings.remoteOllamaOptIn = true
         XCTAssertFalse(settings.isLocalOllama)
     }
 

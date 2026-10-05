@@ -159,6 +159,11 @@ struct AppSettings: Codable, Equatable {
     // MARK: - Ollama Settings
     var ollamaHost: String = "localhost"
     var ollamaPort: Int = 11434
+    /// Explicit consent to connect to a non-loopback Ollama server. Defaults
+    /// to false; a missing key (older installs) decodes as disabled. Only the
+    /// dedicated Settings toggle may enable it — never inferred from the host.
+    /// Remote endpoints are constructed and requested over HTTPS only.
+    var remoteOllamaOptIn: Bool = false
     var ollamaModel: String = "qwen3.5:4b-mlx"
     var ollamaTimeout: Int = 30
     var ollamaTemperature: Double = 0.3
@@ -175,6 +180,10 @@ struct AppSettings: Codable, Equatable {
     var liveDraftTranslation: Bool = true
 
     // MARK: - History Settings
+    /// Opt-in consent to persist transcripts/translations to disk. Default
+    /// disabled: a missing key (existing installs predating consent) decodes
+    /// as false via the synthesized Codable default.
+    var historyEnabled: Bool = false
     var historyRetentionDays: Int = 30
     var historyMaxEntries: Int = 5000
 
@@ -194,8 +203,26 @@ struct AppSettings: Codable, Equatable {
 
     // MARK: - Computed Properties
 
+    /// The validated Ollama endpoint, or nil when the configuration is
+    /// invalid (malformed host/port, or remote without consent).
+    var validatedOllamaEndpoint: OllamaEndpoint? {
+        try? OllamaEndpoint.validated(host: ollamaHost, port: ollamaPort, remoteOptIn: remoteOllamaOptIn)
+    }
+
+    /// Human-readable reason the current Ollama configuration is invalid, if so.
+    var ollamaEndpointError: String? {
+        do {
+            _ = try OllamaEndpoint.validated(host: ollamaHost, port: ollamaPort, remoteOptIn: remoteOllamaOptIn)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Base URL for the configured endpoint. Invalid configurations yield a
+    /// non-requestable sentinel so no network request can be constructed.
     var ollamaURL: String {
-        "http://\(ollamaHost):\(ollamaPort)"
+        validatedOllamaEndpoint?.baseURL.absoluteString ?? "lct-invalid://endpoint-disabled"
     }
 
     var ollamaAPIEndpoint: String {
@@ -203,14 +230,7 @@ struct AppSettings: Codable, Equatable {
     }
 
     var isLocalOllama: Bool {
-        let host = ollamaHost
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-
-        return host == "localhost"
-            || host == "127.0.0.1"
-            || host == "::1"
-            || host == "[::1]"
+        validatedOllamaEndpoint?.isLoopback ?? true
     }
 
     // MARK: - Persistence
@@ -283,6 +303,45 @@ struct AppSettings: Codable, Equatable {
         return defaultSettings
     }
 
+}
+
+// MARK: - Versioning-Tolerant Decoding
+
+extension AppSettings {
+    /// Decode with per-key defaults so settings saved by older versions
+    /// (missing newer keys) still load safely. A missing `historyEnabled`
+    /// key means no consent decision was ever recorded: decode as disabled.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        captureSystemAudio = try container.decodeIfPresent(Bool.self, forKey: .captureSystemAudio) ?? true
+        captureMicrophone = try container.decodeIfPresent(Bool.self, forKey: .captureMicrophone) ?? true
+        sourceLanguage = try container.decodeIfPresent(SourceLanguage.self, forKey: .sourceLanguage) ?? .english
+        ollamaHost = try container.decodeIfPresent(String.self, forKey: .ollamaHost) ?? "localhost"
+        ollamaPort = try container.decodeIfPresent(Int.self, forKey: .ollamaPort) ?? 11434
+        remoteOllamaOptIn = try container.decodeIfPresent(Bool.self, forKey: .remoteOllamaOptIn) ?? false
+        ollamaModel = try container.decodeIfPresent(String.self, forKey: .ollamaModel) ?? "qwen3.5:4b-mlx"
+        ollamaTimeout = try container.decodeIfPresent(Int.self, forKey: .ollamaTimeout) ?? 30
+        ollamaTemperature = try container.decodeIfPresent(Double.self, forKey: .ollamaTemperature) ?? 0.3
+        targetLanguage = try container.decodeIfPresent(TargetLanguage.self, forKey: .targetLanguage) ?? .chinese
+        translationModelType = try container.decodeIfPresent(TranslationModelType.self, forKey: .translationModelType) ?? .standard
+        contextAware = try container.decodeIfPresent(Bool.self, forKey: .contextAware) ?? true
+        maxContextEntries = try container.decodeIfPresent(Int.self, forKey: .maxContextEntries) ?? 5
+        customPrompt = try container.decodeIfPresent(String.self, forKey: .customPrompt) ?? ""
+        liveDraftTranslation = try container.decodeIfPresent(Bool.self, forKey: .liveDraftTranslation) ?? true
+        historyEnabled = try container.decodeIfPresent(Bool.self, forKey: .historyEnabled) ?? false
+        historyRetentionDays = try container.decodeIfPresent(Int.self, forKey: .historyRetentionDays) ?? 30
+        historyMaxEntries = try container.decodeIfPresent(Int.self, forKey: .historyMaxEntries) ?? 5000
+        overlayOpacity = try container.decodeIfPresent(Double.self, forKey: .overlayOpacity) ?? 0.85
+        overlayFontSize = try container.decodeIfPresent(Double.self, forKey: .overlayFontSize) ?? 14.0
+        showLatency = try container.decodeIfPresent(Bool.self, forKey: .showLatency) ?? true
+        maxDisplayCards = try container.decodeIfPresent(Int.self, forKey: .maxDisplayCards) ?? 5
+        overlayPositionX = try container.decodeIfPresent(Double.self, forKey: .overlayPositionX) ?? 0.0
+        overlayPositionY = try container.decodeIfPresent(Double.self, forKey: .overlayPositionY) ?? 0.0
+        overlayWidth = try container.decodeIfPresent(Double.self, forKey: .overlayWidth) ?? 400.0
+        overlayHeight = try container.decodeIfPresent(Double.self, forKey: .overlayHeight) ?? 200.0
+        overlayClickThrough = try container.decodeIfPresent(Bool.self, forKey: .overlayClickThrough) ?? false
+        overlayStayOnTop = try container.decodeIfPresent(Bool.self, forKey: .overlayStayOnTop) ?? true
+    }
 }
 
 // MARK: - Hex Color Extension

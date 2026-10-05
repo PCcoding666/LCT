@@ -225,6 +225,14 @@ class TranscriptionViewModel: ObservableObject {
         do {
             notice = nil
 
+            // Fail closed on an invalid or non-consented Ollama endpoint before
+            // any service is started or request can be made.
+            if let endpointError = settings.ollamaEndpointError {
+                appLog("[TranscriptionVM] ❌ Invalid Ollama endpoint: \(endpointError)")
+                notice = .error("Ollama configuration is invalid: \(endpointError)", actions: [.openAppSettings])
+                return
+            }
+
             // Resolve which capture lanes to run: each enabled source needs its
             // own permission. system → screen recording TCC, mic → microphone TCC.
             appLog("[TranscriptionVM] captureSystemAudio: \(settings.captureSystemAudio), captureMicrophone: \(settings.captureMicrophone)")
@@ -409,6 +417,11 @@ class TranscriptionViewModel: ObservableObject {
                     "Speech recognition is unavailable for \(settings.sourceLanguage.displayName). Try another language.",
                     actions: [.openAppSettings]
                 )
+            case .onDeviceRecognitionUnavailable:
+                notice = .error(
+                    "On-device speech recognition is not available for \(settings.sourceLanguage.displayName). Download its on-device speech model in System Settings, or choose another language.",
+                    actions: [.openAppSettings]
+                )
             case .audioSessionFailed:
                 notice = .error("Failed to configure audio session.", actions: [.retryCapture])
             }
@@ -540,8 +553,9 @@ class TranscriptionViewModel: ObservableObject {
         clearTransientSegmentBookkeeping()
     }
 
-    /// Clear all persistent history from SQLite
+    /// Clear all persistent history from SQLite (only while history is enabled)
     func clearPersistentHistory() {
+        guard settings.historyEnabled else { return }
         do {
             try historyService.clearHistory()
         } catch {
@@ -549,8 +563,9 @@ class TranscriptionViewModel: ObservableObject {
         }
     }
 
-    /// Load persistent history from SQLite
+    /// Load persistent history from SQLite (only while history is enabled)
     func loadPersistentHistory(limit: Int = 200) async -> [TranslationEntry] {
+        guard settings.historyEnabled else { return [] }
         do {
             return try await historyService.loadRecentTranslationsAsync(limit: limit)
         } catch {
@@ -559,8 +574,9 @@ class TranscriptionViewModel: ObservableObject {
         }
     }
 
-    /// Search persistent history
+    /// Search persistent history (only while history is enabled)
     func searchPersistentHistory(query: String) -> [TranslationEntry] {
+        guard settings.historyEnabled else { return [] }
         do {
             return try historyService.searchTranslations(query: query)
         } catch {
@@ -569,8 +585,9 @@ class TranscriptionViewModel: ObservableObject {
         }
     }
 
-    /// Delete a single history entry from SQLite
+    /// Delete a single history entry from SQLite (only while history is enabled)
     func deletePersistentEntry(_ entry: TranslationEntry) {
+        guard settings.historyEnabled else { return }
         do {
             try historyService.deleteTranslation(withId: entry.id)
         } catch {
@@ -578,8 +595,9 @@ class TranscriptionViewModel: ObservableObject {
         }
     }
 
-    /// Export history to CSV string
+    /// Export history to CSV string (only while history is enabled)
     func exportHistoryCSV() -> String? {
+        guard settings.historyEnabled else { return nil }
         do {
             return try historyService.exportToCSV()
         } catch {
@@ -786,12 +804,16 @@ class TranscriptionViewModel: ObservableObject {
             }
             caption.addToContext(entry)
 
-            Task { try? await historyService.logTranslationAsync(entry) }
-            Task {
-                try? await historyService.pruneHistoryAsync(
-                    retentionDays: settings.historyRetentionDays,
-                    maxEntries: settings.historyMaxEntries
-                )
+            // History persistence is opt-in; without consent nothing is written
+            // to disk. Existing entries are retained, never silently deleted.
+            if settings.historyEnabled {
+                Task { try? await historyService.logTranslationAsync(entry) }
+                Task {
+                    try? await historyService.pruneHistoryAsync(
+                        retentionDays: settings.historyRetentionDays,
+                        maxEntries: settings.historyMaxEntries
+                    )
+                }
             }
 
             // Keep history limited

@@ -140,14 +140,18 @@ class OllamaModelManager: ObservableObject {
 
     // MARK: - Configuration
 
-    private let baseURL: String
+    let endpoint: OllamaEndpoint
     private var pullTask: Task<Void, Never>?
     private static let modelDownloadFreeSpaceBufferBytes: Int64 = 2_000_000_000
 
     // MARK: - Initialization
 
-    init(baseURL: String = "http://localhost:11434") {
-        self.baseURL = baseURL
+    init(endpoint: OllamaEndpoint = .local) {
+        self.endpoint = endpoint
+    }
+
+    private func apiURL(_ path: String) -> URL {
+        endpoint.baseURL.appendingPathComponent(path)
     }
 
     // MARK: - Model Listing
@@ -157,10 +161,7 @@ class OllamaModelManager: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        guard let url = URL(string: "\(baseURL)/api/tags") else {
-            lastError = "Invalid API URL"
-            return
-        }
+        let url = apiURL("api/tags")
 
         do {
             let (data, response) = try await URLSession.shared.data(from: url)
@@ -215,9 +216,7 @@ class OllamaModelManager: ObservableObject {
             currentPullingModel = nil
         }
 
-        guard let url = URL(string: "\(baseURL)/api/pull") else {
-            throw OllamaModelError.invalidURL
-        }
+        let url = apiURL("api/pull")
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -273,9 +272,7 @@ class OllamaModelManager: ObservableObject {
 
     /// Delete a model
     func deleteModel(_ modelName: String) async throws {
-        guard let url = URL(string: "\(baseURL)/api/delete") else {
-            throw OllamaModelError.invalidURL
-        }
+        let url = apiURL("api/delete")
 
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
@@ -299,9 +296,7 @@ class OllamaModelManager: ObservableObject {
 
     /// Preload a model into memory
     func loadModel(_ modelName: String) async throws {
-        guard let url = URL(string: "\(baseURL)/api/generate") else {
-            throw OllamaModelError.invalidURL
-        }
+        let url = apiURL("api/generate")
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -326,9 +321,7 @@ class OllamaModelManager: ObservableObject {
 
     /// Unload a model from memory
     func unloadModel(_ modelName: String) async throws {
-        guard let url = URL(string: "\(baseURL)/api/generate") else {
-            throw OllamaModelError.invalidURL
-        }
+        let url = apiURL("api/generate")
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -394,7 +387,6 @@ class OllamaModelManager: ObservableObject {
 // MARK: - Errors
 
 enum OllamaModelError: Error, LocalizedError {
-    case invalidURL
     case pullFailed(String)
     case deleteFailed(String)
     case loadFailed(String)
@@ -406,8 +398,6 @@ enum OllamaModelError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidURL:
-            return "Invalid Ollama API URL"
         case .pullFailed(let message):
             return "Failed to pull model: \(message)"
         case .deleteFailed(let message):

@@ -114,6 +114,13 @@ class SpeechAnalyzerService: ObservableObject {
         return recognizer?.isAvailable ?? false
     }
 
+    /// Whether on-device recognition is available for a locale. A missing
+    /// recognizer or missing on-device model both count as unavailable — we
+    /// never fall back to Apple's network recognition.
+    func isOnDeviceRecognitionAvailable(locale: Locale) -> Bool {
+        SFSpeechRecognizer(locale: locale)?.supportsOnDeviceRecognition ?? false
+    }
+
     /// Get all available languages on this device
     func availableLanguages() -> [SourceLanguage] {
         SourceLanguage.allCases.filter { isLanguageAvailable($0) }
@@ -167,6 +174,14 @@ class SpeechAnalyzerService: ObservableObject {
         }
         appLog("[SpeechAnalyzerService] Recognizer available: \(recognizer.isAvailable)")
 
+        // On-device recognition is mandatory. Fail before any lane starts
+        // rather than silently sending audio to Apple's servers.
+        guard recognizer.supportsOnDeviceRecognition else {
+            lastError = "On-device speech recognition is not available for \(currentLanguage.displayName)."
+            appLog("[SpeechAnalyzerService] ❌ On-device recognition unavailable for \(currentLanguage.displayName)")
+            throw SpeechAnalyzerError.onDeviceRecognitionUnavailable
+        }
+
         // Stop any existing recognition
         appLog("[SpeechAnalyzerService] Stopping any existing recognition...")
         stop()
@@ -184,7 +199,7 @@ class SpeechAnalyzerService: ObservableObject {
     private func startLane(source: AudioSource, recognizer: SFSpeechRecognizer) {
         let lane = RecognitionLane(source: source)
 
-        let request = makeRequest()
+        let request = makeRecognitionRequest()
         appLog("[SpeechAnalyzerService] [\(source.rawValue)] Recognition request native format: \(request.nativeAudioFormat.sampleRate)Hz, \(request.nativeAudioFormat.channelCount)ch")
 
         lane.sharedState.request = request
@@ -202,12 +217,14 @@ class SpeechAnalyzerService: ObservableObject {
         appLog("[SpeechAnalyzerService] ✅ [\(source.rawValue)] lane started")
     }
 
-    private func makeRequest() -> SFSpeechAudioBufferRecognitionRequest {
+    /// Build the only kind of recognition request this app ever uses:
+    /// on-device is required, so a request can never silently fall back to
+    /// Apple's network recognition.
+    func makeRecognitionRequest() -> SFSpeechAudioBufferRecognitionRequest {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = false // Allow network if needed for better quality
+        request.requiresOnDeviceRecognition = true
 
-        // Configure for real-time transcription
         if #available(macOS 13.0, *) {
             request.addsPunctuation = true
         }
@@ -273,7 +290,7 @@ class SpeechAnalyzerService: ObservableObject {
             appLog("[SpeechAnalyzerService] ⚠️ [\(lane.source.rawValue)] handleRecognitionResult called with nil result and nil error")
             return
         }
-        appLog("[SpeechAnalyzerService] 📝 [\(lane.source.rawValue)] Recognition result: isFinal=\(result.isFinal), text=\"\(result.bestTranscription.formattedString.prefix(80))\"")
+        appLog("[SpeechAnalyzerService] 📝 [\(lane.source.rawValue)] Recognition result: isFinal=\(result.isFinal), length=\(result.bestTranscription.formattedString.count)")
 
         let transcript = result.bestTranscription.formattedString
 
@@ -347,7 +364,7 @@ class SpeechAnalyzerService: ObservableObject {
         // This way, when we swap the request, appendAudioBuffer() immediately
         // starts feeding buffers to the new request with no gap.
 
-        let newRequest = makeRequest()
+        let newRequest = makeRecognitionRequest()
 
         // Capture old references before swapping
         let oldRequest = lane.sharedState.request
@@ -379,6 +396,7 @@ class SpeechAnalyzerService: ObservableObject {
 enum SpeechAnalyzerError: Error, LocalizedError {
     case notAuthorized
     case recognizerUnavailable
+    case onDeviceRecognitionUnavailable
     case audioSessionFailed
 
     var errorDescription: String? {
@@ -387,6 +405,8 @@ enum SpeechAnalyzerError: Error, LocalizedError {
             return "Speech recognition is not authorized"
         case .recognizerUnavailable:
             return "Speech recognizer is unavailable"
+        case .onDeviceRecognitionUnavailable:
+            return "On-device speech recognition is not available for this language. Download its on-device speech model in System Settings, or choose another language. LCT never sends audio to the network."
         case .audioSessionFailed:
             return "Failed to configure audio session"
         }
