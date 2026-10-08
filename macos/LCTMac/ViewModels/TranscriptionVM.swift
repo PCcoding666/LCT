@@ -71,7 +71,10 @@ class TranscriptionViewModel: ObservableObject {
     private let ollamaService: OllamaService
     private let translationQueue: TranslationQueue
     private let speakerManager: SpeakerManager
-    private let speechAnalyzerService: SpeechAnalyzerService
+    /// The selected speech recognition engine (SpeechAnalyzer on macOS 26+,
+    /// legacy SFSpeechRecognizer below). Only touched through the protocol.
+    private let speechEngine: any SpeechRecognitionEngine
+    private let speechEngineKind: SpeechEngineKind
     private let caption: Caption
     /// One segmenter per capture lane — each lane's transcript evolves
     /// independently and must not be fed into a shared segmenter.
@@ -105,6 +108,9 @@ class TranscriptionViewModel: ObservableObject {
     /// Identifies the mic-silence warning currently on screen so the recovery
     /// callback retracts exactly that notice and nothing else.
     private var micSilenceNoticeId: UUID?
+    /// Identifies the on-device speech model download notice currently on
+    /// screen, so the download-finished callback retracts exactly that one.
+    private var modelDownloadNoticeId: UUID?
 
     // MARK: - Initialization
 
@@ -121,7 +127,12 @@ class TranscriptionViewModel: ObservableObject {
         self.ollamaService = OllamaService(settings: loadedSettings)
         self.translationQueue = TranslationQueue(ollamaService: ollamaService)
         self.speakerManager = SpeakerManager()
-        self.speechAnalyzerService = SpeechAnalyzerService(language: loadedSettings.sourceLanguage)
+        let engineKind = SpeechEngineSelection.engineKind(
+            transcriberEngineAvailable: SpeechEngineAvailability.isTranscriberEngineAvailable
+        )
+        self.speechEngineKind = engineKind
+        self.speechEngine = SpeechEngineFactory.makeEngine(kind: engineKind, language: loadedSettings.sourceLanguage)
+        appLog("[TranscriptionVM] Speech engine: \(engineKind.rawValue)")
         self.caption = Caption.shared
 
         caption.maxContextEntries = loadedSettings.maxContextEntries
@@ -198,7 +209,7 @@ class TranscriptionViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        speechAnalyzerService.$lastError
+        speechEngine.lastErrorPublisher
             .receive(on: DispatchQueue.main)
             .compactMap { $0 }
             .sink { [weak self] error in
@@ -207,8 +218,14 @@ class TranscriptionViewModel: ObservableObject {
             .store(in: &cancellables)
 
         // Handle speech recognition results
-        speechAnalyzerService.onTranscription = { [weak self] result in
+        speechEngine.onTranscription = { [weak self] result in
             self?.handleTranscriptionResult(result)
+        }
+
+        // The SpeechAnalyzer engine downloads on-device speech models on first
+        // use; keep a non-auto-dismissing info notice up while that runs.
+        speechEngine.onModelDownloadStatus = { [weak self] language in
+            self?.handleModelDownloadStatus(language)
         }
 
         // Handle translation results
@@ -236,7 +253,7 @@ class TranscriptionViewModel: ObservableObject {
             guard let self = self else { return }
             appLog("[TranscriptionVM] ⚠️ Audio stream interrupted: \(error.localizedDescription)")
             // Stop speech recognition and translation queue since audio is gone
-            self.speechAnalyzerService.stop()
+            Task { await self.speechEngine.stop() }
             self.translationQueue.cancelAll()
             self.captureState = .idle
             self.captureStartedAt = nil
@@ -342,6 +359,16 @@ class TranscriptionViewModel: ObservableObject {
                 )
                 return
             }
+
+            // The legacy engine runs only one on-device recognition task per
+            // process, so a dual-lane request degrades to system audio only.
+            let (engineSources, droppedMicrophoneLane) = SpeechEngineSelection.effectiveSources(
+                activeSources, for: speechEngineKind
+            )
+            if droppedMicrophoneLane {
+                appLog("[TranscriptionVM] ⚠️ Dual-lane recognition needs macOS 26+ — dropping the microphone lane")
+            }
+            activeSources = engineSources
             appLog("[TranscriptionVM] Active sources: \(activeSources.map { $0.rawValue })")
 
             if settings.isLocalOllama {
@@ -425,17 +452,20 @@ class TranscriptionViewModel: ObservableObject {
 
             // Update speech recognizer language
             appLog("[TranscriptionVM] Setting speech language: \(settings.sourceLanguage.displayName)")
-            speechAnalyzerService.setLanguage(settings.sourceLanguage)
+            speechEngine.setLanguage(settings.sourceLanguage)
 
-            // Start speech recognition — one independent lane per active source
+            // Start speech recognition — one independent lane per active source.
+            // Both lanes use the same recognition language for now (per-lane
+            // language selection is a separate feature).
             appLog("[TranscriptionVM] Starting speech recognition...")
-            try await speechAnalyzerService.start(sources: activeSources)
+            let laneLanguages = Dictionary(uniqueKeysWithValues: activeSources.map { ($0, settings.sourceLanguage) })
+            try await speechEngine.start(sources: activeSources, languages: laneLanguages)
             appLog("[TranscriptionVM] ✅ Speech recognition started")
 
             // Connect audio capture to speech recognizer (buffers stay tagged per lane)
-            let analyzer = self.speechAnalyzerService
-            audioCaptureService.onAudioBuffer = { [weak analyzer] buffer, source in
-                analyzer?.appendAudioBuffer(buffer, source: source)
+            let engine = self.speechEngine
+            audioCaptureService.onAudioBuffer = { [weak engine] buffer, source in
+                engine?.appendAudioBuffer(buffer, source: source)
             }
             audioCaptureService.onAudioData = nil
 
@@ -469,6 +499,8 @@ class TranscriptionViewModel: ObservableObject {
                     message: "No microphone permission — capturing system audio only.",
                     actions: [.openMicrophoneSettings]
                 )
+            } else if droppedMicrophoneLane, notice?.severity != .error {
+                notice = .warning("Capturing system audio and the microphone at the same time needs macOS 26 or later — capturing system audio only.")
             }
 
             // A virtual sound card (BlackHole & co.) carries no microphone
@@ -537,6 +569,27 @@ class TranscriptionViewModel: ObservableObject {
     }
 
     // MARK: - Notice Handling
+
+    /// The SpeechAnalyzer engine started (non-nil) or finished (nil)
+    /// downloading an on-device speech model. Downloads can take minutes, so
+    /// the notice must not auto-dismiss; a live error outranks it.
+    private func handleModelDownloadStatus(_ language: SourceLanguage?) {
+        if let language {
+            guard notice?.severity != .error else { return }
+            let downloadNotice = AppNotice(
+                severity: .info,
+                message: "Downloading the on-device speech model for \(language.displayName)…",
+                autoDismiss: false
+            )
+            modelDownloadNoticeId = downloadNotice.id
+            notice = downloadNotice
+        } else {
+            if let id = modelDownloadNoticeId, notice?.id == id {
+                notice = nil
+            }
+            modelDownloadNoticeId = nil
+        }
+    }
 
     /// The mic lane produced nothing but digital silence for 6 straight
     /// seconds — almost always a wrong or idle input device (e.g. BlackHole).
@@ -665,9 +718,10 @@ class TranscriptionViewModel: ObservableObject {
         captureStartedAt = nil
         stopStallMonitoring()
         micSilenceNoticeId = nil
+        modelDownloadNoticeId = nil
         await audioCaptureService.stopCapture()
         translationQueue.cancelAll()
-        speechAnalyzerService.stop()
+        await speechEngine.stop()
         liveDrafts.removeAll()
         liveTranslations.removeAll()
         liveSourceText = ""
@@ -802,8 +856,8 @@ class TranscriptionViewModel: ObservableObject {
         trimSegmentsIfNeeded()
 
         // Update speech recognizer language if changed
-        if speechAnalyzerService.currentLanguage != newSettings.sourceLanguage {
-            speechAnalyzerService.setLanguage(newSettings.sourceLanguage)
+        if speechEngine.currentLanguage != newSettings.sourceLanguage {
+            speechEngine.setLanguage(newSettings.sourceLanguage)
         }
 
         // Notify user if a restart is needed for certain settings
@@ -854,7 +908,7 @@ class TranscriptionViewModel: ObservableObject {
             return s
         }()
 
-        let (newlyFinalized, draft, invalidatedTailCount) = segmenter.process(result: result)
+        let (newlyFinalized, draft, invalidatedTailCount, flushedFromPreviousTask) = segmenter.process(result: result)
         liveDrafts[lane] = draft
         refreshLiveSourceText()
 
@@ -863,27 +917,44 @@ class TranscriptionViewModel: ObservableObject {
             caption.updateOriginal(draft)
         }
 
-        for text in newlyFinalized {
-            let newSegment = TranslationSegment(sourceText: text, state: isPaused ? .pending : .translating, source: lane)
-            activeTaskSegmentIds[lane, default: []].append(newSegment.id)
-            segments.append(newSegment)
-            trimSegmentsIfNeeded()
-
-            caption.updateOriginal(text)
-
-            if !isPaused {
-                let context = settings.contextAware ? caption.getContextForTranslation() : []
-                translationQueue.enqueue(
-                    segmentId: newSegment.id,
-                    text: text,
-                    context: context,
-                    priority: .high,
-                    isFinal: true
-                )
-            }
+        // The previous ASR task's uncommitted draft, kept as a caption instead
+        // of being dropped. It belongs to a FINISHED task, so it must not
+        // enter the new task's rollback bookkeeping.
+        if let flushed = flushedFromPreviousTask {
+            appendFinalizedSegment(text: flushed, lane: lane, trackForRollback: false)
         }
 
-        updateLiveDraftTranslation(draft: draft, didFinalize: !newlyFinalized.isEmpty, source: lane)
+        for text in newlyFinalized {
+            appendFinalizedSegment(text: text, lane: lane, trackForRollback: true)
+        }
+
+        updateLiveDraftTranslation(draft: draft, didFinalize: !newlyFinalized.isEmpty || flushedFromPreviousTask != nil, source: lane)
+    }
+
+    /// Emit one finalized caption: create the segment, send it to translation
+    /// and context. Only segments of the lane's ACTIVE ASR task are tracked
+    /// for rollback — a flushed leftover from a finished task can no longer be
+    /// revised by the recognizer.
+    private func appendFinalizedSegment(text: String, lane: AudioSource, trackForRollback: Bool) {
+        let newSegment = TranslationSegment(sourceText: text, state: isPaused ? .pending : .translating, source: lane)
+        if trackForRollback {
+            activeTaskSegmentIds[lane, default: []].append(newSegment.id)
+        }
+        segments.append(newSegment)
+        trimSegmentsIfNeeded()
+
+        caption.updateOriginal(text)
+
+        if !isPaused {
+            let context = settings.contextAware ? caption.getContextForTranslation() : []
+            translationQueue.enqueue(
+                segmentId: newSegment.id,
+                text: text,
+                context: context,
+                priority: .high,
+                isFinal: true
+            )
+        }
     }
 
     /// Rebuild the combined live source text from all lanes' drafts.
