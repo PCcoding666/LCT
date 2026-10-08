@@ -301,7 +301,10 @@ final class SpeechTranscriberEngine: SpeechRecognitionEngine {
 
     func stop() async {
         let activeLanes = lanes
-        lanes.removeAll()
+        // Stop accepting audio right away, but keep `lanes` populated until
+        // finalization is done: the analyzer delivers the last utterance's
+        // final result during finalize, and handleTranscriberResult drops
+        // results for lanes that are no longer registered.
         laneBoxes.removeAll()
         isRunning = false
 
@@ -311,12 +314,24 @@ final class SpeechTranscriberEngine: SpeechRecognitionEngine {
 
         for (source, lane) in activeLanes.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
             await finalize(lane.analyzer, source: source)
-            lane.resultsTask.cancel()
+            // Finishing the analyzer ends the results sequence; let the
+            // consumer drain what is already queued before cancelling it.
+            await drain(lane.resultsTask, source: source)
         }
 
-        if !activeLanes.isEmpty {
-            lastSessionStats = activeLanes.mapValues { $0.stats }
-            let summary = activeLanes
+        // Remove only the lanes this call finalized: a start() that ran while
+        // we were awaiting may already have registered fresh lanes.
+        var finishedLanes: [AudioSource: LaneContext] = [:]
+        for (source, lane) in activeLanes {
+            if let current = lanes[source], current.box === lane.box {
+                finishedLanes[source] = current
+                lanes[source] = nil
+            }
+        }
+
+        if !finishedLanes.isEmpty {
+            lastSessionStats = finishedLanes.mapValues { $0.stats }
+            let summary = finishedLanes
                 .sorted { $0.key.rawValue < $1.key.rawValue }
                 .map { source, lane in
                     "\(source.rawValue) results=\(lane.stats.resultCount) finals=\(lane.stats.finalCount) errors=\(lane.stats.errorCount)"
@@ -350,6 +365,34 @@ final class SpeechTranscriberEngine: SpeechRecognitionEngine {
             group.cancelAll()
             while await group.next() != nil {}
         }
+    }
+
+    /// Wait (at most 1 second) for a lane's results consumer to finish
+    /// delivering queued results, then make sure it is cancelled.
+    private func drain(_ resultsTask: Task<Void, Never>, source: AudioSource) async {
+        let drained = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                await resultsTask.value
+                return true
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                return false
+            }
+            let first = await group.next() ?? true
+            // The group waits for every child before returning, and awaiting
+            // `resultsTask.value` ignores child cancellation — so on timeout
+            // cancel the consumer itself, which ends its iteration.
+            if !first {
+                resultsTask.cancel()
+            }
+            group.cancelAll()
+            return first
+        }
+        if !drained {
+            appLog("[SpeechTranscriberEngine] ⚠️ [\(source.rawValue)] results did not drain within 1s; cancelling")
+        }
+        resultsTask.cancel()
     }
 
     nonisolated func appendAudioBuffer(_ buffer: AVAudioPCMBuffer, source: AudioSource) {
