@@ -48,6 +48,21 @@ jobs:
         with:
           fetch-depth: 1
 
+      # SpeechAnalyzer (macOS 26+ speech engine) needs the macOS 26 SDK, which
+      # only Xcode 26+ provides. Pick the newest Xcode 26 when the runner has
+      # one; otherwise keep the default toolchain — the new engine is compiled
+      # out there and the app falls back to SFSpeechRecognizer.
+      - name: Select newest Xcode 26 if present
+        run: |
+          newest="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -t. -k2,2n -k3,3n | tail -n 1 || true)"
+          if [ -n "$newest" ]; then
+            echo "Selecting $newest (provides the macOS 26 SDK)"
+            sudo xcode-select -s "$newest/Contents/Developer"
+            echo "DEVELOPER_DIR=$newest/Contents/Developer" >> "$GITHUB_ENV"
+          else
+            echo "No /Applications/Xcode_26*.app on this runner; using the default toolchain"
+          fi
+
       - name: Show toolchain
         run: |
           xcodebuild -version
@@ -100,6 +115,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      # Same Xcode 26 selection as the build-test job: the packaged app must
+      # ship the SpeechAnalyzer engine, which needs the macOS 26 SDK.
+      - name: Select newest Xcode 26 if present
+        run: |
+          newest="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -t. -k2,2n -k3,3n | tail -n 1 || true)"
+          if [ -n "$newest" ]; then
+            echo "Selecting $newest (provides the macOS 26 SDK)"
+            sudo xcode-select -s "$newest/Contents/Developer"
+            echo "DEVELOPER_DIR=$newest/Contents/Developer" >> "$GITHUB_ENV"
+          else
+            echo "No /Applications/Xcode_26*.app on this runner; using the default toolchain"
+          fi
 
       - name: Show toolchain
         run: |
