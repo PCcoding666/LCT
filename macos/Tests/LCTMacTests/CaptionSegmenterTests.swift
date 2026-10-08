@@ -160,4 +160,85 @@ final class CaptionSegmenterTests: XCTestCase {
         XCTAssertEqual(r4.finalized, ["Completely different revision that has grown long enough to end."])
         XCTAssertEqual(r4.invalidatedTailCount, 0)
     }
+
+    // MARK: - Task switch flush
+
+    func testTaskSwitch_UncommittedDraft_FlushedFromPreviousTask() {
+        let segmenter = CaptionSegmenter()
+        let draft = "the speaker was mid sentence when the task ended"
+
+        let first = segmenter.process(result: TranscriptionResult(
+            id: UUID(), text: draft, isVolatile: true
+        ))
+        XCTAssertEqual(first.liveDraft, draft)
+        XCTAssertNil(first.flushedFromPreviousTask,
+                     "the very first task has no predecessor to flush")
+
+        let second = segmenter.process(result: TranscriptionResult(
+            id: UUID(), text: "a fresh task begins", isVolatile: true
+        ))
+        XCTAssertEqual(second.flushedFromPreviousTask, draft,
+                       "the previous task's uncommitted draft must survive as a flushed caption")
+        XCTAssertEqual(second.liveDraft, "a fresh task begins",
+                       "the new task's own text must still be processed normally")
+        XCTAssertTrue(second.finalized.isEmpty)
+        XCTAssertEqual(second.invalidatedTailCount, 0,
+                       "a flushed draft belongs to the finished task and is never a rollback")
+    }
+
+    func testTaskSwitch_DraftCommittedByFinal_FlushesNothing() {
+        let segmenter = CaptionSegmenter()
+
+        _ = segmenter.process(result: TranscriptionResult(
+            id: UUID(), text: "a complete utterance.", isVolatile: false
+        ))
+
+        let next = segmenter.process(result: TranscriptionResult(
+            id: UUID(), text: "next task", isVolatile: true
+        ))
+        XCTAssertNil(next.flushedFromPreviousTask,
+                     "a task whose draft was committed by a final result has nothing to flush")
+    }
+
+    func testTaskSwitch_WhitespaceOnlyDraft_FlushesNothing() {
+        let segmenter = CaptionSegmenter()
+
+        _ = segmenter.process(result: TranscriptionResult(
+            id: UUID(), text: "   ", isVolatile: true
+        ))
+
+        let next = segmenter.process(result: TranscriptionResult(
+            id: UUID(), text: "next task", isVolatile: true
+        ))
+        XCTAssertNil(next.flushedFromPreviousTask,
+                     "a whitespace-only draft must not become an empty caption")
+    }
+
+    func testTaskSwitch_NewTaskBookkeeping_CleanAfterFlush() {
+        let segmenter = CaptionSegmenter()
+        let newTaskId = UUID()
+
+        _ = segmenter.process(result: TranscriptionResult(
+            id: UUID(), text: "leftover draft", isVolatile: true
+        ))
+
+        // First result of the new task: flush fires, and the new task's own
+        // text is segmented from scratch (force cut at 120 chars).
+        let longText = String(repeating: "中", count: 121)
+        let switched = segmenter.process(result: TranscriptionResult(
+            id: newTaskId, text: longText, isVolatile: true
+        ))
+        XCTAssertEqual(switched.flushedFromPreviousTask, "leftover draft")
+        XCTAssertEqual(switched.finalized.count, 1)
+        XCTAssertEqual(switched.finalized.first?.count, 100)
+
+        // A revision on the new task must roll back only the new task's
+        // segment — the flushed caption is untouchable.
+        let revised = segmenter.process(result: TranscriptionResult(
+            id: newTaskId, text: String(repeating: "文", count: 80), isVolatile: true
+        ))
+        XCTAssertNil(revised.flushedFromPreviousTask,
+                     "the flush is reported exactly once, on the task-switching result")
+        XCTAssertEqual(revised.invalidatedTailCount, 1)
+    }
 }

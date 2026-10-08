@@ -99,6 +99,47 @@ final class DeliveryWorkflowTests: XCTestCase {
         )
     }
 
+    func testXcode26Selection_BothJobs_RunsBeforeShowToolchain() throws {
+        let source = try workflowSource()
+        let stepName = "- name: Select newest Xcode 26 if present"
+        XCTAssertEqual(
+            source.components(separatedBy: stepName).count - 1, 2,
+            "both jobs must select the newest Xcode 26 (macOS 26 SDK) when the runner has one"
+        )
+        XCTAssertTrue(source.contains("/Applications/Xcode_26*.app"),
+                      "the selection step must look for /Applications/Xcode_26*.app")
+        XCTAssertTrue(source.contains("xcode-select -s"),
+                      "the selection step must switch the active developer directory")
+        XCTAssertTrue(source.contains("DEVELOPER_DIR"),
+                      "the selection step must export DEVELOPER_DIR so later script steps inherit it")
+        XCTAssertTrue(source.contains("using the default toolchain"),
+                      "runners without Xcode 26 must keep the default toolchain instead of failing")
+
+        guard let deliverStart = source.range(of: "\n  deliver:") else {
+            XCTFail("deliver job must exist")
+            return
+        }
+        let jobs: [(name: String, source: Substring)] = [
+            ("build-test", source[..<deliverStart.lowerBound]),
+            ("deliver", source[deliverStart.upperBound...]),
+        ]
+        for job in jobs {
+            guard let selectStep = job.source.range(of: stepName) else {
+                XCTFail("\(job.name) job must contain the Xcode 26 selection step")
+                continue
+            }
+            guard let showToolchain = job.source.range(of: "- name: Show toolchain") else {
+                XCTFail("\(job.name) job must contain the Show toolchain step")
+                continue
+            }
+            XCTAssertLessThan(
+                job.source.distance(from: job.source.startIndex, to: selectStep.lowerBound),
+                job.source.distance(from: job.source.startIndex, to: showToolchain.lowerBound),
+                "\(job.name): the Xcode 26 selection step must run before Show toolchain"
+            )
+        }
+    }
+
     func testDeliverJob_MissingSigningSecrets_FailsFastListingMissingNames() throws {
         let source = try workflowSource()
         guard let deliverStart = source.range(of: "\n  deliver:") else {
