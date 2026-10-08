@@ -185,4 +185,17 @@ final class TextUtilsTests: XCTestCase {
     func testExtractLastSentence_EmptyString_ReturnsNil() {
         XCTAssertNil(TextUtils.extractLastSentence(""))
     }
+
+    func testHasSpeechContent_PunctuationOnly_ReturnsFalse() {
+        XCTAssertFalse(TextUtils.hasSpeechContent("."))
+        XCTAssertFalse(TextUtils.hasSpeechContent("。"))
+        XCTAssertFalse(TextUtils.hasSpeechContent(" ，！？ "))
+        XCTAssertFalse(TextUtils.hasSpeechContent(""))
+    }
+
+    func testHasSpeechContent_WordsOrDigits_ReturnsTrue() {
+        XCTAssertTrue(TextUtils.hasSpeechContent("Thank you."))
+        XCTAssertTrue(TextUtils.hasSpeechContent("你好。"))
+        XCTAssertTrue(TextUtils.hasSpeechContent("42"))
+    }
 }

@@ -940,6 +940,11 @@ class TranscriptionViewModel: ObservableObject {
         if trackForRollback {
             activeTaskSegmentIds[lane, default: []].append(newSegment.id)
         }
+        // Punctuation-only segments (e.g. a lone "." finalized on its own)
+        // carry nothing to caption or translate. The id above is still
+        // recorded so rollback counts stay aligned with the segmenter's;
+        // revoking an id that never became a segment is a no-op.
+        guard TextUtils.hasSpeechContent(text) else { return }
         segments.append(newSegment)
         trimSegmentsIfNeeded()
 
