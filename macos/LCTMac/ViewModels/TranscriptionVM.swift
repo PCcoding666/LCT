@@ -298,7 +298,7 @@ class TranscriptionViewModel: ObservableObject {
         modelStateTimer = Timer.publish(every: 60, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
-                guard let self, self.captureState == .idle, NSApp.isActive else { return }
+                guard let self, self.captureState == .idle, NSApp?.isActive == true else { return }
                 Task { await self.refreshModelState() }
             }
     }
