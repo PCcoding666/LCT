@@ -181,6 +181,16 @@ struct SettingsView: View {
                 }
                 .controlSize(.small)
             }
+
+            Picker("Keep Model Loaded", selection: $localSettings.modelKeepAlive) {
+                ForEach(ModelKeepAlive.allCases) { option in
+                    Text(option.displayName).tag(option)
+                }
+            }
+            .help("How long Ollama keeps the translation model in memory after its last use")
+
+            Toggle("Unload Model When LCT Quits", isOn: $localSettings.unloadModelOnQuit)
+                .help("Free the model's memory when LCT exits")
         }
     }
 

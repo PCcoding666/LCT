@@ -294,53 +294,27 @@ class OllamaModelManager: ObservableObject {
 
     // MARK: - Model Loading
 
-    /// Preload a model into memory
+    /// Preload a model into memory. Forwards to OllamaService, the single
+    /// implementation of the load/unload requests; `keep_alive` comes from
+    /// the user's saved settings.
     func loadModel(_ modelName: String) async throws {
-        let url = apiURL("api/generate")
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 120  // Loading can take time
-
-        // Send empty prompt to just load the model
-        let body: [String: Any] = [
-            "model": modelName,
-            "prompt": "",
-            "keep_alive": "5m"
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (_, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw OllamaModelError.loadFailed("Failed to load model")
-        }
+        try await makeLifecycleService().loadModel(modelName)
     }
 
-    /// Unload a model from memory
+    /// Unload a model from memory. Forwards to OllamaService, the single
+    /// implementation of the load/unload requests.
     func unloadModel(_ modelName: String) async throws {
-        let url = apiURL("api/generate")
+        try await makeLifecycleService().unloadModel(modelName)
+    }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        // Set keep_alive to 0 to unload immediately
-        let body: [String: Any] = [
-            "model": modelName,
-            "prompt": "",
-            "keep_alive": 0
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (_, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw OllamaModelError.unloadFailed("Failed to unload model")
-        }
+    /// An OllamaService pointed at this manager's endpoint, using the saved
+    /// settings for everything else (keep_alive, timeouts).
+    private func makeLifecycleService() -> OllamaService {
+        var settings = AppSettings.load()
+        settings.ollamaHost = endpoint.host
+        settings.ollamaPort = endpoint.port
+        settings.remoteOllamaOptIn = !endpoint.isLoopback
+        return OllamaService(settings: settings, session: .shared)
     }
 
     // MARK: - Recommendations

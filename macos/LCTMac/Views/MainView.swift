@@ -46,6 +46,18 @@ struct MainView: View {
             HistoryView(viewModel: viewModel)
         }
         .animation(.easeInOut(duration: 0.3), value: viewModel.notice)
+        .task {
+            // Warm the translation model in the background right after the
+            // main window appears, so the first start() finds it in memory.
+            await viewModel.prepareModelOnLaunch()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .settingsDidChange)) { notification in
+            // The ⌘, settings window saved new settings — apply them to the
+            // running app. updateSettings never re-posts this notification.
+            guard let newSettings = notification.object as? AppSettings,
+                  newSettings != viewModel.settings else { return }
+            viewModel.updateSettings(newSettings)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .toggleCapture)) { notification in
             Task {
                 if let shouldStart = notification.object as? Bool {
@@ -117,9 +129,18 @@ struct MainView: View {
 
                 OllamaStatusIndicator(isConnected: viewModel.isOllamaConnected)
 
-                Text(viewModel.settings.ollamaModel)
-                    .font(HUD.mono(.caption))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text(viewModel.settings.ollamaModel)
+                        .font(HUD.mono(.caption))
+                        .foregroundStyle(modelNameColor)
+
+                    if viewModel.modelState == .loading {
+                        Text("loading…")
+                            .font(HUD.mono(.caption))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .help(modelStateHelp)
 
                 if viewModel.lastLatencyMs > 0 {
                     Text("· \(viewModel.lastLatencyMs) ms")
@@ -360,6 +381,32 @@ struct MainView: View {
         case .starting: return HUD.accent
         case .capturing: return viewModel.isPaused ? Color.orange : HUD.accent
         case .stopping: return Color.orange
+        }
+    }
+
+    /// Model name in the HUD: full brightness while loading/loaded (or before
+    /// the first probe), dimmed when the model is known to be out of memory.
+    private var modelNameColor: Color {
+        switch viewModel.modelState {
+        case .notLoaded, .failed:
+            return .secondary.opacity(0.5)
+        case .unknown, .loading, .loaded:
+            return .secondary
+        }
+    }
+
+    private var modelStateHelp: String {
+        switch viewModel.modelState {
+        case .unknown:
+            return "Translation model"
+        case .loading:
+            return "Model is loading into memory…"
+        case .loaded:
+            return "Model loaded in memory"
+        case .notLoaded:
+            return "Model not loaded — it will load when you start"
+        case .failed(let reason):
+            return "Model not loaded — \(reason)"
         }
     }
 
@@ -731,7 +778,7 @@ struct OllamaStatusIndicator: View {
         .onHover { hovering in
             isHovering = hovering
         }
-        .help((guardian.status == .running || isConnected) ? "Ollama is running" : "Click to start Ollama")
+        .help((guardian.status == .running || isConnected) ? "Ollama service running" : "Click to start Ollama")
     }
 
     private var statusColor: Color {

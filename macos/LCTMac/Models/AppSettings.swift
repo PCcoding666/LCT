@@ -133,6 +133,40 @@ enum TranslationModelType: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// How long Ollama keeps the translation model in memory after the last
+/// request. Ollama's `keep_alive` is an idle timeout reset by every request.
+enum ModelKeepAlive: String, Codable, CaseIterable, Identifiable {
+    case minutes5 = "5m"
+    case minutes15 = "15m"
+    case minutes30 = "30m"
+    case hour1 = "1h"
+    case untilQuit = "untilQuit"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .minutes5: return "5 minutes"
+        case .minutes15: return "15 minutes"
+        case .minutes30: return "30 minutes"
+        case .hour1: return "1 hour"
+        case .untilQuit: return "Until LCT quits"
+        }
+    }
+
+    /// Value sent as `keep_alive` in Ollama requests. A negative duration
+    /// tells Ollama to keep the model loaded indefinitely.
+    var ollamaValue: String {
+        switch self {
+        case .minutes5: return "5m"
+        case .minutes15: return "15m"
+        case .minutes30: return "30m"
+        case .hour1: return "60m"
+        case .untilQuit: return "-1m"
+        }
+    }
+}
+
 enum AppSettingsPersistenceError: LocalizedError {
     case saveFailed(Error)
     case loadFailed(Error)
@@ -170,6 +204,10 @@ struct AppSettings: Codable, Equatable {
     var ollamaModel: String = "qwen3.5:4b-mlx"
     var ollamaTimeout: Int = 30
     var ollamaTemperature: Double = 0.3
+    /// How long the translation model stays in memory after the last request.
+    var modelKeepAlive: ModelKeepAlive = .minutes30
+    /// Unload the translation model from Ollama's memory when LCT quits.
+    var unloadModelOnQuit: Bool = true
 
     // MARK: - Translation Settings
     var targetLanguage: TargetLanguage = .chinese
@@ -326,6 +364,8 @@ extension AppSettings {
         ollamaModel = try container.decodeIfPresent(String.self, forKey: .ollamaModel) ?? "qwen3.5:4b-mlx"
         ollamaTimeout = try container.decodeIfPresent(Int.self, forKey: .ollamaTimeout) ?? 30
         ollamaTemperature = try container.decodeIfPresent(Double.self, forKey: .ollamaTemperature) ?? 0.3
+        modelKeepAlive = try container.decodeIfPresent(ModelKeepAlive.self, forKey: .modelKeepAlive) ?? .minutes30
+        unloadModelOnQuit = try container.decodeIfPresent(Bool.self, forKey: .unloadModelOnQuit) ?? true
         targetLanguage = try container.decodeIfPresent(TargetLanguage.self, forKey: .targetLanguage) ?? .chinese
         translationModelType = try container.decodeIfPresent(TranslationModelType.self, forKey: .translationModelType) ?? .standard
         contextAware = try container.decodeIfPresent(Bool.self, forKey: .contextAware) ?? true

@@ -87,11 +87,14 @@ struct LCTMacApp: App {
 @MainActor
 struct SettingsWindowView: View {
     @State private var settings = AppSettings.load()
-    
+
     var body: some View {
         SettingsView(settings: $settings) { newSettings in
             newSettings.save()
             settings = newSettings
+            // Let the running MainView apply the change immediately; the
+            // view model never re-posts this notification, so no loop.
+            NotificationCenter.default.post(name: .settingsDidChange, object: newSettings)
         }
     }
 }
@@ -104,4 +107,5 @@ extension Notification.Name {
     static let showHistory = Notification.Name("LCT.showHistory")
     static let toggleCapture = Notification.Name("LCT.toggleCapture")
     static let togglePause = Notification.Name("LCT.togglePause")
+    static let settingsDidChange = Notification.Name("LCT.settingsDidChange")
 }

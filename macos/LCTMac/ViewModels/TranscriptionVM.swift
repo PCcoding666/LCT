@@ -12,6 +12,17 @@ enum CaptureState: String, Equatable {
     case stopping
 }
 
+/// Whether the translation model is currently held in Ollama's memory.
+/// Drives the HUD model indicator; kept in sync by prewarm, start/stop,
+/// settings changes, and a slow poll while the app is idle.
+enum ModelState: Equatable {
+    case unknown
+    case loading
+    case loaded
+    case notLoaded
+    case failed(String)
+}
+
 /// Main transcription and translation view model
 @MainActor
 class TranscriptionViewModel: ObservableObject {
@@ -31,6 +42,9 @@ class TranscriptionViewModel: ObservableObject {
 
     /// Capture lifecycle state; the single source of truth for start/stop UI.
     @Published var captureState: CaptureState = .idle
+
+    /// Whether the translation model is held in Ollama's memory right now.
+    @Published var modelState: ModelState = .unknown
 
     /// Is currently capturing audio (derived from `captureState`).
     var isCapturing: Bool { captureState == .capturing }
@@ -79,7 +93,7 @@ class TranscriptionViewModel: ObservableObject {
     /// One segmenter per capture lane — each lane's transcript evolves
     /// independently and must not be fed into a shared segmenter.
     private var captionSegmenters: [AudioSource: CaptionSegmenter] = [:]
-    private let ollamaGuardian = OllamaGuardian.shared
+    private let ollamaGuardian: OllamaGuardian
     private let historyService = HistoryService()
 
     // MARK: - Settings
@@ -105,6 +119,8 @@ class TranscriptionViewModel: ObservableObject {
     /// wrong recognition language); fed by `stallTimer` while capturing.
     private var stallDetector = RecognitionStallDetector()
     private var stallTimer: AnyCancellable?
+    /// Slow poll that keeps `modelState` in sync with Ollama while idle.
+    private var modelStateTimer: AnyCancellable?
     /// Identifies the mic-silence warning currently on screen so the recovery
     /// callback retracts exactly that notice and nothing else.
     private var micSilenceNoticeId: UUID?
@@ -114,8 +130,10 @@ class TranscriptionViewModel: ObservableObject {
 
     // MARK: - Initialization
 
-    init() {
-        let loadedSettings = AppSettings.load()
+    init(settings: AppSettings = .load(),
+         ollamaService: OllamaService? = nil,
+         ollamaGuardian: OllamaGuardian = .shared) {
+        let loadedSettings = settings
         self.settings = loadedSettings
         self.audioCaptureService = AudioCaptureService(
             config: AudioCaptureConfig(
@@ -124,8 +142,9 @@ class TranscriptionViewModel: ObservableObject {
                 microphoneDeviceUID: loadedSettings.microphoneDeviceUID
             )
         )
-        self.ollamaService = OllamaService(settings: loadedSettings)
-        self.translationQueue = TranslationQueue(ollamaService: ollamaService)
+        self.ollamaService = ollamaService ?? OllamaService(settings: loadedSettings)
+        self.ollamaGuardian = ollamaGuardian
+        self.translationQueue = TranslationQueue(ollamaService: self.ollamaService)
         self.speakerManager = SpeakerManager()
         let engineKind = SpeechEngineSelection.engineKind(
             transcriberEngineAvailable: SpeechEngineAvailability.isTranscriberEngineAvailable
@@ -146,8 +165,8 @@ class TranscriptionViewModel: ObservableObject {
         // Probe Ollama on launch so the status indicator reflects reality
         // immediately, instead of showing the default "stopped" until first use.
         Task {
-            await ollamaGuardian.checkStatus()
-            isOllamaConnected = await ollamaService.checkHealth()
+            await self.ollamaGuardian.checkStatus()
+            isOllamaConnected = await self.ollamaService.checkHealth()
         }
     }
 
@@ -272,9 +291,68 @@ class TranscriptionViewModel: ObservableObject {
             self?.handleMicrophoneAudioResumed()
         }
 
+        // While the app is foreground and idle, re-check whether the model is
+        // still in memory — Ollama unloads it when keep_alive expires, and the
+        // HUD indicator must keep up. During capture the translation requests
+        // themselves keep the model loaded, so no polling is needed.
+        modelStateTimer = Timer.publish(every: 60, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self, self.captureState == .idle, NSApp.isActive else { return }
+                Task { await self.refreshModelState() }
+            }
     }
 
     // MARK: - Actions
+
+    /// Warm the translation model right after launch so the first start()
+    /// doesn't pay the cold-load cost. Local Ollama only, and only after
+    /// onboarding completed. Failures are logged, never shown — start() has
+    /// its own checks with actionable notices. Called from MainView's `.task`,
+    /// not from init, so tests constructing view models never hit a real
+    /// Ollama.
+    func prepareModelOnLaunch() async {
+        guard AppSettings.hasCompletedSetup else { return }
+        guard settings.isLocalOllama, settings.validatedOllamaEndpoint != nil else { return }
+
+        do {
+            try await ollamaGuardian.ensureRunning()
+            guard await ollamaService.checkHealth() else {
+                modelState = .notLoaded
+                appLog("[TranscriptionVM] prepareModelOnLaunch: Ollama not reachable")
+                return
+            }
+            let availableModels = try await ollamaService.getAvailableModels()
+            guard isModelInstalled(settings.ollamaModel, in: availableModels) else {
+                modelState = .notLoaded
+                appLog("[TranscriptionVM] prepareModelOnLaunch: model not installed")
+                return
+            }
+            modelState = .loading
+            let latencyMs = try await ollamaService.prewarmModel()
+            modelState = .loaded
+            appLog("[TranscriptionVM] ✅ Model prewarmed on launch in \(latencyMs)ms")
+        } catch {
+            modelState = .failed(error.localizedDescription)
+            appLog("[TranscriptionVM] ⚠️ prepareModelOnLaunch failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Re-read which models Ollama currently holds in memory and update
+    /// `modelState`. A failed probe keeps the previous state — a temporarily
+    /// unreachable server says nothing about the model.
+    func refreshModelState() async {
+        guard settings.validatedOllamaEndpoint != nil else {
+            modelState = .unknown
+            return
+        }
+        do {
+            let names = try await ollamaService.loadedModels()
+            modelState = isModelInstalled(settings.ollamaModel, in: names) ? .loaded : .notLoaded
+        } catch {
+            appLog("[TranscriptionVM] refreshModelState probe failed: \(error.localizedDescription)")
+        }
+    }
 
     /// Start capturing and translating. Ignored (with a log line) unless the
     /// capture state is idle, so concurrent start requests — button, menu,
@@ -426,26 +504,37 @@ class TranscriptionViewModel: ObservableObject {
                 return
             }
 
-            // Cold-loading the model can take far longer than an auto-dismiss
-            // interval — keep this notice up until the load finishes.
-            let loadingNotice = AppNotice(
+            // If the model is already in memory (launch prewarm, or a
+            // previous session within keep_alive), skip the loading notice —
+            // prewarm below is then a fast keep_alive refresh. Cold-loading
+            // can take far longer than an auto-dismiss interval, so the
+            // notice stays up until the load finishes.
+            let loadedModelNames = (try? await ollamaService.loadedModels()) ?? []
+            let modelAlreadyLoaded = isModelInstalled(settings.ollamaModel, in: loadedModelNames)
+            modelState = modelAlreadyLoaded ? .loaded : .loading
+            let loadingNotice = modelAlreadyLoaded ? nil : AppNotice(
                 severity: .info,
                 message: "Loading translation model \"\(settings.ollamaModel)\"… the first run can take up to 30 seconds.",
                 autoDismiss: false
             )
-            notice = loadingNotice
+            if let loadingNotice {
+                notice = loadingNotice
+            }
             do {
                 let latencyMs = try await ollamaService.prewarmModel()
                 appLog("[TranscriptionVM] ✅ Ollama model prewarmed in \(latencyMs)ms")
+                modelState = .loaded
                 // Clear only the loading notice; an error that arrived
                 // meanwhile (e.g. from a service binding) must survive.
-                if notice?.id == loadingNotice.id {
+                if let loadingNotice, notice?.id == loadingNotice.id {
                     notice = nil
                 }
             } catch let error as OllamaError {
+                modelState = .notLoaded
                 notice = .error("Cannot load model '\(settings.ollamaModel)': \(error.localizedDescription)", actions: [.retryCapture])
                 return
             } catch {
+                modelState = .notLoaded
                 notice = .error("Cannot load model '\(settings.ollamaModel)': \(error.localizedDescription)", actions: [.retryCapture])
                 return
             }
@@ -731,10 +820,12 @@ class TranscriptionViewModel: ObservableObject {
         // Stop health monitoring
         ollamaGuardian.stopHealthMonitoring()
 
-        // Unload model to free memory
-        try? await ollamaService.unloadModel()
-
         captureState = .idle
+
+        // The model intentionally stays in memory (keep_alive governs its
+        // idle timeout; quitting LCT unloads it). Re-sync the HUD indicator
+        // in the background so stop() returns immediately.
+        Task { await refreshModelState() }
     }
 
     /// Toggle pause state
@@ -879,11 +970,46 @@ class TranscriptionViewModel: ObservableObject {
             )
         }
 
-        // Unload old model if model changed
+        // Unload the OLD model by name when the model changed (the service
+        // already carries the new settings, so an unqualified unload would
+        // target the wrong model), then warm the new one in the background.
+        // While capturing, the restart warning above covers the switch.
         if oldSettings.ollamaModel != newSettings.ollamaModel {
+            let oldModelName = oldSettings.ollamaModel
+            modelState = .unknown
             Task {
-                try? await ollamaService.unloadModel()
+                if newSettings.isLocalOllama {
+                    try? await ollamaService.unloadModel(oldModelName)
+                    guard !isCapturing else {
+                        await refreshModelState()
+                        return
+                    }
+                    do {
+                        modelState = .loading
+                        _ = try await ollamaService.prewarmModel()
+                        modelState = .loaded
+                        appLog("[TranscriptionVM] ✅ New translation model prewarmed after settings change")
+                    } catch {
+                        modelState = .failed(error.localizedDescription)
+                        appLog("[TranscriptionVM] ⚠️ Prewarm after model change failed: \(error.localizedDescription)")
+                    }
+                } else {
+                    await refreshModelState()
+                }
             }
+        } else if oldSettings.modelKeepAlive != newSettings.modelKeepAlive {
+            // A keep_alive change applies to the next request. If the model
+            // is currently loaded, touch it with a prewarm so the new idle
+            // timeout takes effect immediately; never load it just for this.
+            Task {
+                let loaded = (try? await ollamaService.loadedModels()) ?? []
+                if isModelInstalled(newSettings.ollamaModel, in: loaded) {
+                    _ = try? await ollamaService.prewarmModel()
+                }
+                await refreshModelState()
+            }
+        } else {
+            Task { await refreshModelState() }
         }
     }
 

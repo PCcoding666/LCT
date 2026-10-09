@@ -79,6 +79,39 @@ struct OllamaHealthResponse: Codable {
     let status: String?
 }
 
+/// Body for loading a model into memory via /api/generate: no prompt, so no
+/// inference runs — Ollama only maps the model into memory.
+struct OllamaLoadRequest: Codable {
+    let model: String
+    let keepAlive: String
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case keepAlive = "keep_alive"
+    }
+}
+
+/// Body for unloading a model via /api/generate: `keep_alive: 0` is Ollama's
+/// documented "unload immediately" form and runs no inference.
+struct OllamaUnloadRequest: Codable {
+    let model: String
+    let keepAlive: Int
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case keepAlive = "keep_alive"
+    }
+}
+
+/// Response of `GET /api/ps` (models currently loaded in memory).
+struct OllamaPSResponse: Decodable {
+    struct Model: Decodable {
+        let name: String?
+        let model: String?
+    }
+    let models: [Model]
+}
+
 /// Service for interacting with local Ollama API
 @MainActor
 class OllamaService: ObservableObject {
@@ -98,6 +131,19 @@ class OllamaService: ObservableObject {
 
     private var tagsEndpointURL: URL? {
         settings.validatedOllamaEndpoint?.baseURL.appendingPathComponent("api/tags")
+    }
+
+    private var generateEndpointURL: URL? {
+        settings.validatedOllamaEndpoint?.baseURL.appendingPathComponent("api/generate")
+    }
+
+    private var psEndpointURL: URL? {
+        settings.validatedOllamaEndpoint?.baseURL.appendingPathComponent("api/ps")
+    }
+
+    /// The `keep_alive` value every model-loading request shares, from settings.
+    private var keepAliveValue: String {
+        settings.modelKeepAlive.ollamaValue
     }
 
     init(settings: AppSettings = .load(), session: URLSession? = nil) {
@@ -137,7 +183,7 @@ class OllamaService: ObservableObject {
             messages: [OllamaMessage(role: "user", content: "hi")],
             stream: false,
             temperature: 0.1,
-            keepAlive: "5m",
+            keepAlive: keepAliveValue,
             think: false
         )
 
@@ -254,7 +300,7 @@ class OllamaService: ObservableObject {
             messages: messages,
             stream: false,
             temperature: settings.translationModelType == .translateGemma ? 0.1 : settings.ollamaTemperature,
-            keepAlive: "5m",
+            keepAlive: keepAliveValue,
             think: false
         )
 
@@ -343,7 +389,7 @@ class OllamaService: ObservableObject {
             messages: messages,
             stream: true,  // Enable streaming
             temperature: settings.translationModelType == .translateGemma ? 0.1 : settings.ollamaTemperature,
-            keepAlive: "5m",
+            keepAlive: keepAliveValue,
             think: false
         )
 
@@ -406,29 +452,67 @@ class OllamaService: ObservableObject {
         }
     }
 
-    /// Unload the model from memory
-    func unloadModel() async throws {
-        guard let url = chatEndpointURL else {
+    /// Unload a model from memory by name. Sends only the model name and
+    /// `keep_alive: 0` — no prompt, no inference.
+    func unloadModel(_ name: String) async throws {
+        guard let url = generateEndpointURL else {
             throw OllamaError.invalidURL
         }
-
-        let request = OllamaChatRequest(
-            model: settings.ollamaModel,
-            messages: [OllamaMessage(role: "user", content: "exit")],
-            stream: false,
-            temperature: nil,
-            keepAlive: "0",  // Immediately unload
-            think: false
-        )
 
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.httpBody = try JSONEncoder().encode(request)
-        urlRequest.timeoutInterval = 10
+        urlRequest.httpBody = try JSONEncoder().encode(OllamaUnloadRequest(model: name, keepAlive: 0))
+        urlRequest.timeoutInterval = 5
 
-        _ = try await session.data(for: urlRequest)
-        print("Model unloaded successfully")
+        let (_, response) = try await session.data(for: urlRequest)
+
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw OllamaError.invalidResponse
+        }
+        appLog("[OllamaService] Model \(name) unloaded")
+    }
+
+    /// Load a model into memory by name without running inference. The
+    /// `keep_alive` value comes from settings.
+    func loadModel(_ name: String) async throws {
+        guard let url = generateEndpointURL else {
+            throw OllamaError.invalidURL
+        }
+
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try JSONEncoder().encode(OllamaLoadRequest(model: name, keepAlive: keepAliveValue))
+        urlRequest.timeoutInterval = 120  // Loading can take time
+
+        let (_, response) = try await session.data(for: urlRequest)
+
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw OllamaError.invalidResponse
+        }
+    }
+
+    /// Names of the models currently held in memory (`GET /api/ps`).
+    func loadedModels() async throws -> [String] {
+        guard let url = psEndpointURL else {
+            throw OllamaError.invalidURL
+        }
+
+        let (data, response) = try await session.data(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw OllamaError.invalidResponse
+        }
+
+        return try Self.parseLoadedModels(from: data)
+    }
+
+    /// Parse a `/api/ps` response into model names. Accepts both the `name`
+    /// and the `model` field spelling used by different Ollama versions.
+    static func parseLoadedModels(from data: Data) throws -> [String] {
+        let response = try JSONDecoder().decode(OllamaPSResponse.self, from: data)
+        return response.models.compactMap { $0.name ?? $0.model }
     }
 
     /// Remove thinking/reasoning tags from model output
