@@ -95,6 +95,11 @@ class TranscriptionViewModel: ObservableObject {
     private var captionSegmenters: [AudioSource: CaptionSegmenter] = [:]
     private let ollamaGuardian: OllamaGuardian
     private let historyService = HistoryService()
+    /// Chip/memory of this Mac — decides whether the configured model can run
+    /// locally at all (MLX builds need Apple Silicon).
+    private let hardwareProfile: HardwareProfile
+    /// Factory for the model downloader; tests substitute a stub-session manager.
+    private let makeModelManager: (OllamaEndpoint) -> OllamaModelManager
 
     // MARK: - Settings
 
@@ -127,14 +132,21 @@ class TranscriptionViewModel: ObservableObject {
     /// Identifies the on-device speech model download notice currently on
     /// screen, so the download-finished callback retracts exactly that one.
     private var modelDownloadNoticeId: UUID?
+    /// The task pulling the translation model from the Download notice
+    /// action; non-nil only while a download is in flight.
+    private var modelDownloadTask: Task<Void, Never>?
 
     // MARK: - Initialization
 
     init(settings: AppSettings = .load(),
          ollamaService: OllamaService? = nil,
-         ollamaGuardian: OllamaGuardian = .shared) {
+         ollamaGuardian: OllamaGuardian = .shared,
+         hardwareProfile: HardwareProfile = .current(),
+         makeModelManager: @escaping (OllamaEndpoint) -> OllamaModelManager = { OllamaModelManager(endpoint: $0) }) {
         let loadedSettings = settings
         self.settings = loadedSettings
+        self.hardwareProfile = hardwareProfile
+        self.makeModelManager = makeModelManager
         self.audioCaptureService = AudioCaptureService(
             config: AudioCaptureConfig(
                 captureSystemAudio: loadedSettings.captureSystemAudio,
@@ -386,6 +398,18 @@ class TranscriptionViewModel: ObservableObject {
                 return
             }
 
+            // A model this Mac cannot run at all (MLX build on Intel) fails
+            // here, before permissions, services, or any loading attempt.
+            if settings.isLocalOllama,
+               !ModelCatalog.isCompatible(modelName: settings.ollamaModel, with: hardwareProfile) {
+                appLog("[TranscriptionVM] ❌ Model is incompatible with this Mac's chip")
+                notice = .error(
+                    "Model '\(settings.ollamaModel)' is an MLX model and needs Apple Silicon. Pick a GGUF model in Settings.",
+                    actions: [.openAppSettings]
+                )
+                return
+            }
+
             // Resolve which capture lanes to run: each enabled source needs its
             // own permission. system → screen recording TCC, mic → microphone TCC.
             appLog("[TranscriptionVM] captureSystemAudio: \(settings.captureSystemAudio), captureMicrophone: \(settings.captureMicrophone)")
@@ -490,13 +514,18 @@ class TranscriptionViewModel: ObservableObject {
             do {
                 let availableModels = try await ollamaService.getAvailableModels()
                 guard isModelInstalled(settings.ollamaModel, in: availableModels) else {
-                    let installHint = settings.isLocalOllama
-                        ? "Run: ollama pull \(settings.ollamaModel)"
-                        : "Install it on the configured remote Ollama server."
-                    notice = .error(
-                        "Model '\(settings.ollamaModel)' is not installed. \(installHint)",
-                        actions: [.openAppSettings]
-                    )
+                    if settings.isLocalOllama {
+                        // Local Ollama can pull the model right from this notice.
+                        notice = .error(
+                            "Model '\(settings.ollamaModel)' is not installed.",
+                            actions: [.downloadModel, .openAppSettings]
+                        )
+                    } else {
+                        notice = .error(
+                            "Model '\(settings.ollamaModel)' is not installed. Install it on the configured remote Ollama server.",
+                            actions: [.openAppSettings]
+                        )
+                    }
                     return
                 }
             } catch {
@@ -777,8 +806,69 @@ class TranscriptionViewModel: ObservableObject {
         case .retryCapture:
             notice = nil
             Task { await start() }
+        case .downloadModel:
+            guard captureState == .idle, modelDownloadTask == nil else { return }
+            modelDownloadTask = Task {
+                await downloadSelectedModel()
+                modelDownloadTask = nil
+            }
         case .openAppSettings:
             break // handled by the view
+        }
+    }
+
+    /// Pull the configured model into local Ollama, driven by the Download
+    /// notice action. Progress lives in a non-auto-dismissing info notice; a
+    /// successful download restarts capture automatically.
+    private func downloadSelectedModel() async {
+        let modelName = settings.ollamaModel
+        guard let endpoint = settings.validatedOllamaEndpoint, endpoint.isLoopback else {
+            notice = .error("Model downloads need a local Ollama server.", actions: [.openAppSettings])
+            return
+        }
+
+        let manager = makeModelManager(endpoint)
+        let progressNotice = AppNotice(
+            severity: .info,
+            message: "Downloading \(modelName)…",
+            autoDismiss: false
+        )
+        notice = progressNotice
+
+        let progressUpdates = manager.$pullProgress
+            .combineLatest(manager.$pullCompletedBytes, manager.$pullTotalBytes)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] progress, completed, total in
+                guard let self, self.notice?.id == progressNotice.id else { return }
+                var message = "Downloading \(modelName)… \(Int((progress * 100).rounded()))%"
+                if total > 0 {
+                    message += " (\(ByteFormatting.string(completed)) / \(ByteFormatting.string(total)))"
+                }
+                self.notice?.message = message
+            }
+        defer { progressUpdates.cancel() }
+
+        do {
+            try await manager.pullModel(modelName)
+            retractOllamaDownloadNotice(progressNotice)
+            notice = .info("Model \(modelName) downloaded — starting capture…")
+            await start()
+        } catch is CancellationError {
+            retractOllamaDownloadNotice(progressNotice)
+        } catch {
+            retractOllamaDownloadNotice(progressNotice)
+            appLog("[TranscriptionVM] ❌ Model download failed: \(error.localizedDescription)")
+            // The Download button on this notice retries the pull.
+            notice = .error(
+                "Download of '\(modelName)' failed: \(error.localizedDescription)",
+                actions: [.downloadModel, .openAppSettings]
+            )
+        }
+    }
+
+    private func retractOllamaDownloadNotice(_ progressNotice: AppNotice) {
+        if notice?.id == progressNotice.id {
+            notice = nil
         }
     }
 

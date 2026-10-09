@@ -22,21 +22,53 @@ enum OnboardingResumeStore {
     }
 }
 
+/// Which model onboarding settles on, and the persistence of that choice.
+/// Free of SwiftUI so the decision logic stays testable.
+enum OnboardingModelSelection {
+    /// The model to use when Ollama already has compatible ones installed:
+    /// the recommendation wins, otherwise the first installed alternative.
+    static func preferredInstalledModel(
+        recommendation: ModelRecommendation,
+        isInstalled: (String) -> Bool
+    ) -> String? {
+        if isInstalled(recommendation.recommended.name) {
+            return recommendation.recommended.name
+        }
+        return recommendation.alternatives.first { isInstalled($0.name) }?.name
+    }
+
+    /// Write the chosen model into settings. Returns an error message when
+    /// the save fails — onboarding must not silently complete with a model
+    /// the capture flow will not use.
+    @discardableResult
+    static func saveChosenModel(_ modelName: String) -> String? {
+        var settings = AppSettings.load()
+        settings.ollamaModel = modelName
+        guard settings.save() else {
+            return AppSettings.consumeLastPersistenceError() ?? "Failed to save the selected model."
+        }
+        return nil
+    }
+}
+
 /// Welcome/Setup view for first-time users
 @MainActor
 struct WelcomeView: View {
     @StateObject private var guardian = OllamaGuardian.shared
     @StateObject private var modelManager = OllamaModelManager()
-    
+
     @State private var currentStep: SetupStep = .welcome
     @State private var isSettingUp = false
     @State private var setupError: String?
     @State private var remoteHost = ""
     @State private var remotePortText = "11434"
-    @State private var remoteModel = RecommendedModel.defaultModel.name
-    @State private var readyModelName = RecommendedModel.defaultModel.name
+    @State private var remoteModel = ModelRecommender.recommend(for: HardwareProfile.current()).recommended.name
+    @State private var readyModelName = ""
     @State private var setupSkipped = false
-    
+    @State private var selectedModelName = ModelRecommender.recommend(for: HardwareProfile.current()).recommended.name
+    @State private var downloadFailed = false
+    @State private var downloadError: String?
+
     // Permission states
     @State private var hasScreenCapturePermission = false
     @State private var hasMicrophonePermission = false
@@ -45,9 +77,15 @@ struct WelcomeView: View {
     /// Set once the user has triggered the screen-recording prompt; until the
     /// app restarts, CGPreflight keeps returning false even after granting.
     @State private var screenRecordingRequested = false
-    
-    /// Default model to use
-    private let defaultModel = RecommendedModel.defaultModel
+
+    /// This Mac's chip/memory and the model picked for it.
+    private let hardware = HardwareProfile.current()
+    private var recommendation: ModelRecommendation {
+        ModelRecommender.recommend(for: hardware)
+    }
+    private var selectedModel: TranslationModelInfo {
+        ModelCatalog.entry(named: selectedModelName) ?? recommendation.recommended
+    }
     
     let onComplete: () -> Void
     
@@ -328,7 +366,7 @@ struct WelcomeView: View {
                 Button(action: {
                     remoteHost = ""
                     remotePortText = "11434"
-                    remoteModel = defaultModel.name
+                    remoteModel = recommendation.recommended.name
                     setupError = nil
                     currentStep = .remoteOllama
                 }) {
@@ -358,24 +396,48 @@ struct WelcomeView: View {
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("Ollama is running, but \(defaultModel.displayName) is not installed.")
+            Text("Ollama is running, but no compatible translation model is installed.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
             VStack(alignment: .leading, spacing: 12) {
+                Text("Recommended for your Mac (\(hardware.chipName), \(hardware.memoryGB) GB):")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 HStack {
-                    Text("Model")
-                        .foregroundStyle(.secondary)
+                    Text(recommendation.recommended.displayName)
+                        .font(.headline)
                     Spacer()
-                    Text(defaultModel.name)
-                        .monospaced()
+                    Text(recommendation.recommended.formattedDownloadSize)
+                        .foregroundStyle(.secondary)
                 }
+
+                Text(recommendation.reason)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Divider()
+
+                Picker("Model", selection: $selectedModelName) {
+                    Text("\(recommendation.recommended.displayName) (recommended)")
+                        .tag(recommendation.recommended.name)
+                    ForEach(recommendation.alternatives) { alternative in
+                        Text(alternative.displayName)
+                            .tag(alternative.name)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Text(selectedModel.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 HStack {
                     Text("Download Size")
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(defaultModel.size)
+                    Text(selectedModel.formattedDownloadSize)
                 }
 
                 Divider()
@@ -384,7 +446,7 @@ struct WelcomeView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Text("ollama pull \(defaultModel.name)")
+                Text("ollama pull \(selectedModelName)")
                     .font(.system(.body, design: .monospaced))
                     .textSelection(.enabled)
             }
@@ -431,7 +493,7 @@ struct WelcomeView: View {
                         Text("Model")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        TextField(defaultModel.name, text: $remoteModel)
+                        TextField(recommendation.recommended.name, text: $remoteModel)
                             .textFieldStyle(.roundedBorder)
                     }
                 }
@@ -450,9 +512,25 @@ struct WelcomeView: View {
     
     private var downloadingModelContent: some View {
         VStack(spacing: 24) {
-            if modelManager.pullProgress < 1.0 {
+            if downloadFailed {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 60))
+                    .foregroundStyle(.orange)
+
+                Text("Download Failed")
+                    .font(.title)
+                    .fontWeight(.bold)
+
+                if let error = downloadError {
+                    Text(error)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else if modelManager.pullProgress < 1.0 {
                 ProgressView(value: modelManager.pullProgress) {
-                    Text("Downloading \(defaultModel.displayName)")
+                    Text("Downloading \(selectedModel.displayName)")
                         .font(.headline)
                 } currentValueLabel: {
                     Text(modelManager.pullStatus)
@@ -460,29 +538,35 @@ struct WelcomeView: View {
                         .foregroundStyle(.secondary)
                 }
                 .progressViewStyle(.linear)
-                
+
                 Text("\(Int(modelManager.pullProgress * 100))%")
                     .font(.largeTitle)
                     .fontWeight(.bold)
                     .monospacedDigit()
-                
-                Text("Size: \(defaultModel.size)")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+
+                if modelManager.pullTotalBytes > 0 {
+                    Text("\(ByteFormatting.string(modelManager.pullCompletedBytes)) / \(ByteFormatting.string(modelManager.pullTotalBytes))")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                } else {
+                    Text("Size: \(selectedModel.formattedDownloadSize)")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
             } else {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 60))
                     .foregroundStyle(.green)
-                
+
                 Text("Download Complete!")
                     .font(.title)
                     .fontWeight(.bold)
             }
-            
+
             if modelManager.isPulling {
                 Button("Cancel") {
                     modelManager.cancelPull()
-                    currentStep = .modelMissing
                 }
                 .buttonStyle(.bordered)
             }
@@ -580,7 +664,10 @@ struct WelcomeView: View {
         case .remoteOllama:
             return isSettingUp ? "Testing..." : "Test Connection"
         case .downloadingModel:
-            return modelManager.isPulling ? "Downloading..." : "Continue"
+            if modelManager.isPulling {
+                return "Downloading..."
+            }
+            return downloadFailed ? "Retry" : "Continue"
         case .complete:
             return "Get Started"
         }
@@ -626,6 +713,7 @@ struct WelcomeView: View {
             currentStep = .complete
 
         case .modelMissing:
+            downloadFailed = false
             currentStep = .downloadingModel
             Task {
                 await downloadModel()
@@ -635,9 +723,15 @@ struct WelcomeView: View {
             Task {
                 await testRemoteOllama()
             }
-            
+
         case .downloadingModel:
-            if !modelManager.isPulling {
+            if downloadFailed {
+                downloadError = nil
+                downloadFailed = false
+                Task {
+                    await downloadModel()
+                }
+            } else if !modelManager.isPulling {
                 currentStep = .complete
             }
             
@@ -650,35 +744,32 @@ struct WelcomeView: View {
         isSettingUp = true
         setupError = nil
         defer { isSettingUp = false }
-        
+
         await guardian.checkStatus()
-        
+
         switch guardian.status {
         case .notInstalled:
             currentStep = .ollamaNotInstalled
-            
+
         case .running:
             await modelManager.fetchInstalledModels()
-            
-            // Check if default model is installed
-            if modelManager.isModelInstalled(defaultModel.name) {
-                setupSkipped = false
-                readyModelName = defaultModel.name
-                currentStep = .complete
+
+            // Any compatible installed model will do — no re-download needed;
+            // the recommendation is preferred when several are present.
+            if let installed = preferredInstalledModel() {
+                completeWithLocalModel(installed)
             } else {
                 currentStep = .modelMissing
             }
-            
+
         case .installed, .stopped:
             // Try to start Ollama
             do {
                 try await guardian.startService()
                 await modelManager.fetchInstalledModels()
-                
-                if modelManager.isModelInstalled(defaultModel.name) {
-                    setupSkipped = false
-                    readyModelName = defaultModel.name
-                    currentStep = .complete
+
+                if let installed = preferredInstalledModel() {
+                    completeWithLocalModel(installed)
                 } else {
                     currentStep = .modelMissing
                 }
@@ -686,28 +777,60 @@ struct WelcomeView: View {
                 setupError = "Failed to start Ollama: \(error.localizedDescription)"
                 currentStep = .ollamaNotInstalled
             }
-            
+
         case .starting:
             // Wait for it
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             await checkOllama()
-            
+
         case .error(let message):
             setupError = message
             currentStep = .ollamaNotInstalled
         }
     }
-    
-    private func downloadModel() async {
-        do {
-            try await modelManager.pullModel(defaultModel.name)
-            setupSkipped = false
-            readyModelName = defaultModel.name
-            currentStep = .complete
-        } catch {
-            setupError = error.localizedDescription
-            currentStep = .modelMissing
+
+    private func preferredInstalledModel() -> String? {
+        OnboardingModelSelection.preferredInstalledModel(recommendation: recommendation) {
+            modelManager.isModelInstalled($0)
         }
+    }
+
+    /// Settle on an already-installed model: persist it so the capture flow
+    /// uses exactly what onboarding verified, then show the final step.
+    private func completeWithLocalModel(_ modelName: String) {
+        guard let saveError = OnboardingModelSelection.saveChosenModel(modelName) else {
+            setupSkipped = false
+            readyModelName = modelName
+            currentStep = .complete
+            return
+        }
+        setupError = saveError
+        currentStep = .modelMissing
+    }
+
+    private func downloadModel() async {
+        let modelName = selectedModelName
+        downloadError = nil
+        do {
+            try await modelManager.pullModel(modelName)
+        } catch is CancellationError {
+            currentStep = .modelMissing
+            return
+        } catch {
+            downloadError = error.localizedDescription
+            downloadFailed = true
+            return
+        }
+
+        if let saveError = OnboardingModelSelection.saveChosenModel(modelName) {
+            downloadError = saveError
+            downloadFailed = true
+            return
+        }
+
+        setupSkipped = false
+        readyModelName = modelName
+        currentStep = .complete
     }
 
     private func testRemoteOllama() async {

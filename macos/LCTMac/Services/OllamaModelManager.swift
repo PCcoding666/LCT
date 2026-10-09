@@ -58,71 +58,97 @@ struct OllamaModelsResponse: Codable {
     let models: [OllamaModel]
 }
 
-/// Pull progress information
-struct OllamaPullProgress: Codable {
-    let status: String
-    let digest: String?
-    let total: Int64?
-    let completed: Int64?
+/// Pure NDJSON parsing for `/api/pull` streams. Ollama reports progress per
+/// layer (digest) and each layer restarts `completed` at zero, so a naive
+/// read makes the progress bar jump backwards; here per-layer totals are
+/// accumulated and a high-water mark keeps the overall fraction monotonic.
+struct PullStreamAccumulator {
+    struct Snapshot: Equatable, Sendable {
+        var overallProgress: Double
+        var completedBytes: Int64
+        var totalBytes: Int64
+        var status: String
+        var isComplete: Bool
+    }
 
-    var progress: Double {
-        guard let total = total, let completed = completed, total > 0 else {
-            return 0
+    private struct Layer: Equatable {
+        var total: Int64
+        var completed: Int64
+    }
+
+    private struct Line: Decodable {
+        let status: String?
+        let digest: String?
+        let total: Int64?
+        let completed: Int64?
+        let error: String?
+    }
+
+    private var layers: [String: Layer] = [:]
+    private var status: String = ""
+    private var peakProgress: Double = 0
+    private var sawSuccess = false
+
+    /// Feed one NDJSON line. Returns a state snapshot, or nil for blank and
+    /// unparseable lines. Throws when the stream carries an `error` object.
+    mutating func ingest(line rawLine: String) throws -> Snapshot? {
+        let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !line.isEmpty,
+              let data = line.data(using: .utf8),
+              let parsed = try? JSONDecoder().decode(Line.self, from: data) else {
+            return nil
         }
-        return Double(completed) / Double(total)
-    }
 
-    var isComplete: Bool {
-        status == "success"
-    }
-}
+        if let error = parsed.error, !error.isEmpty {
+            throw OllamaModelError.pullFailed(error)
+        }
 
-/// Recommended models for translation
-struct RecommendedModel {
-    let name: String
-    let displayName: String
-    let description: String
-    let size: String
-    let sizeBytes: Int64
-    let isDefault: Bool
+        if let status = parsed.status {
+            self.status = status
+        }
 
-    /// Default model for translation - MLX-optimized Qwen 4B
-    static let defaultModel = RecommendedModel(
-        name: "qwen3.5:4b-mlx",
-        displayName: "Qwen3.5 4B MLX",
-        description: "MLX-optimized 4B model for low-latency local translation",
-        size: "~4.0GB",
-        sizeBytes: 4_000_000_000,
-        isDefault: true
-    )
+        if let digest = parsed.digest {
+            var layer = layers[digest] ?? Layer(total: 0, completed: 0)
+            if let total = parsed.total {
+                layer.total = max(layer.total, total)
+            }
+            if let completed = parsed.completed {
+                layer.completed = max(layer.completed, completed)
+            }
+            layers[digest] = layer
+        }
 
-    static let all: [RecommendedModel] = [
-        defaultModel,
-        RecommendedModel(
-            name: "translategemma:4b-it-q4_K_M",
-            displayName: "TranslateGemma 4B",
-            description: "Google's specialized translation model (55 languages)",
-            size: "~3.3GB",
-            sizeBytes: 3_300_000_000,
-            isDefault: false
-        ),
-        RecommendedModel(
-            name: "qwen2.5:3b",
-            displayName: "Qwen 2.5 3B",
-            description: "Fast and efficient, great for translation",
-            size: "~2GB",
-            sizeBytes: 2_000_000_000,
-            isDefault: false
-        ),
-        RecommendedModel(
-            name: "llama3.2:3b",
-            displayName: "Llama 3.2 3B",
-            description: "Meta's latest small model",
-            size: "~2GB",
-            sizeBytes: 2_000_000_000,
-            isDefault: false
+        if parsed.status == "success" {
+            sawSuccess = true
+            peakProgress = 1.0
+        }
+
+        var completedBytes: Int64 = 0
+        var totalBytes: Int64 = 0
+        for layer in layers.values {
+            completedBytes += layer.completed
+            totalBytes += layer.total
+        }
+        if totalBytes > 0 {
+            peakProgress = max(peakProgress, min(Double(completedBytes) / Double(totalBytes), 1.0))
+        }
+
+        return Snapshot(
+            overallProgress: peakProgress,
+            completedBytes: completedBytes,
+            totalBytes: totalBytes,
+            status: status,
+            isComplete: sawSuccess
         )
-    ]
+    }
+
+    /// Validate the stream once it ends. A pull that never reported
+    /// `{"status": "success"}` did not finish, whatever the HTTP status said.
+    func finish() throws {
+        guard sawSuccess else {
+            throw OllamaModelError.pullFailed("Download ended before completing")
+        }
+    }
 }
 
 /// Service for managing Ollama models
@@ -134,20 +160,24 @@ class OllamaModelManager: ObservableObject {
     @Published private(set) var isLoading: Bool = false
     @Published private(set) var isPulling: Bool = false
     @Published private(set) var pullProgress: Double = 0
+    @Published private(set) var pullCompletedBytes: Int64 = 0
+    @Published private(set) var pullTotalBytes: Int64 = 0
     @Published private(set) var pullStatus: String = ""
     @Published private(set) var currentPullingModel: String?
     @Published private(set) var lastError: String?
 
     // MARK: - Configuration
 
-    let endpoint: OllamaEndpoint
-    private var pullTask: Task<Void, Never>?
+    var endpoint: OllamaEndpoint
+    private let session: URLSession
+    private var pullTask: Task<Void, Error>?
     private static let modelDownloadFreeSpaceBufferBytes: Int64 = 2_000_000_000
 
     // MARK: - Initialization
 
-    init(endpoint: OllamaEndpoint = .local) {
+    init(endpoint: OllamaEndpoint = .local, session: URLSession = .shared) {
         self.endpoint = endpoint
+        self.session = session
     }
 
     private func apiURL(_ path: String) -> URL {
@@ -164,7 +194,7 @@ class OllamaModelManager: ObservableObject {
         let url = apiURL("api/tags")
 
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await session.data(from: url)
 
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
@@ -195,27 +225,60 @@ class OllamaModelManager: ObservableObject {
 
     // MARK: - Model Pulling
 
-    /// Pull (download) a model
+    /// Pull (download) a model. Streams progress into the published pull
+    /// properties; throws `CancellationError` after `cancelPull()`, a
+    /// `pullFailed` error when the stream reports one or ends early.
     func pullModel(_ modelName: String) async throws {
         guard !isPulling else {
             throw OllamaModelError.alreadyPulling
         }
 
-        if let recommendedModel = RecommendedModel.all.first(where: { $0.name == modelName }) {
-            try ensureSufficientDiskSpace(for: recommendedModel)
+        // The disk-space check only applies to catalog models whose download
+        // size is known; a hand-typed model name skips it.
+        if let entry = ModelCatalog.entry(named: modelName) {
+            try ensureSufficientDiskSpace(for: entry)
         }
 
         isPulling = true
         pullProgress = 0
+        pullCompletedBytes = 0
+        pullTotalBytes = 0
         pullStatus = "Starting download..."
         currentPullingModel = modelName
         lastError = nil
 
+        // The download runs in a task the manager owns so cancelPull() can
+        // actually stop it — the caller's task alone is not enough.
+        let task = Task { try await performPull(modelName) }
+        pullTask = task
+
         defer {
+            pullTask = nil
             isPulling = false
             currentPullingModel = nil
         }
 
+        do {
+            try await task.value
+            pullProgress = 1.0
+            pullStatus = "Download complete!"
+
+            // Refresh model list
+            await fetchInstalledModels()
+        } catch is CancellationError {
+            pullStatus = "Cancelled"
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            pullStatus = "Cancelled"
+            throw CancellationError()
+        } catch {
+            pullStatus = "Download failed"
+            lastError = error.localizedDescription
+            throw error
+        }
+    }
+
+    private func performPull(_ modelName: String) async throws {
         let url = apiURL("api/pull")
 
         var request = URLRequest(url: url)
@@ -226,36 +289,29 @@ class OllamaModelManager: ObservableObject {
         request.httpBody = try JSONEncoder().encode(body)
 
         // Use streaming to get progress updates
-        let (asyncBytes, response) = try await URLSession.shared.bytes(for: request)
+        let (asyncBytes, response) = try await session.bytes(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
             throw OllamaModelError.pullFailed("Server returned error")
         }
 
-        // Process streaming response
+        var accumulator = PullStreamAccumulator()
         for try await line in asyncBytes.lines {
-            guard !Task.isCancelled else {
-                throw CancellationError()
-            }
+            try Task.checkCancellation()
 
-            guard let data = line.data(using: .utf8),
-                  let progress = try? JSONDecoder().decode(OllamaPullProgress.self, from: data) else {
-                continue
-            }
+            if let snapshot = try accumulator.ingest(line: line) {
+                pullProgress = snapshot.overallProgress
+                pullCompletedBytes = snapshot.completedBytes
+                pullTotalBytes = snapshot.totalBytes
+                pullStatus = snapshot.status
 
-            pullStatus = progress.status
-            pullProgress = progress.progress
-
-            if progress.isComplete {
-                pullProgress = 1.0
-                pullStatus = "Download complete!"
-
-                // Refresh model list
-                await fetchInstalledModels()
-                return
+                if snapshot.isComplete {
+                    break
+                }
             }
         }
+        try accumulator.finish()
     }
 
     /// Cancel ongoing model pull
@@ -281,7 +337,7 @@ class OllamaModelManager: ObservableObject {
         let body = ["name": modelName]
         request.httpBody = try JSONEncoder().encode(body)
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await session.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
@@ -317,17 +373,7 @@ class OllamaModelManager: ObservableObject {
         return OllamaService(settings: settings, session: .shared)
     }
 
-    // MARK: - Recommendations
-
-    /// Get recommended models that are not yet installed
-    func getRecommendedModelsToInstall() -> [RecommendedModel] {
-        RecommendedModel.all.filter { !isModelInstalled($0.name) }
-    }
-
-    /// Check if any recommended model is installed
-    func hasAnyRecommendedModel() -> Bool {
-        RecommendedModel.all.contains { isModelInstalled($0.name) }
-    }
+    // MARK: - Disk Space
 
     /// Check available disk capacity for the volume that stores the user's Ollama models.
     func availableDiskSpaceBytes() throws -> Int64 {
@@ -348,9 +394,9 @@ class OllamaModelManager: ObservableObject {
         throw OllamaModelError.diskSpaceUnavailable
     }
 
-    func ensureSufficientDiskSpace(for model: RecommendedModel) throws {
+    func ensureSufficientDiskSpace(for model: TranslationModelInfo) throws {
         let availableBytes = try availableDiskSpaceBytes()
-        let requiredBytes = model.sizeBytes + Self.modelDownloadFreeSpaceBufferBytes
+        let requiredBytes = model.downloadBytes + Self.modelDownloadFreeSpaceBufferBytes
 
         guard availableBytes >= requiredBytes else {
             throw OllamaModelError.insufficientDiskSpace(required: requiredBytes, available: availableBytes)
