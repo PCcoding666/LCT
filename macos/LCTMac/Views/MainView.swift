@@ -27,6 +27,8 @@ struct MainView: View {
             hudBar
             Rectangle().fill(HUD.hairline).frame(height: 1)
 
+            errorBanner
+
             transcriptFeed
 
             Rectangle().fill(HUD.hairline).frame(height: 1)
@@ -43,9 +45,6 @@ struct MainView: View {
         .sheet(isPresented: $showHistory) {
             HistoryView(viewModel: viewModel)
         }
-        .overlay(alignment: .top) {
-            errorBanner
-        }
         .animation(.easeInOut(duration: 0.3), value: viewModel.notice)
         .onReceive(NotificationCenter.default.publisher(for: .toggleCapture)) { notification in
             Task {
@@ -56,12 +55,7 @@ struct MainView: View {
                         await viewModel.stop()
                     }
                 } else {
-                    // Toggle
-                    if viewModel.isCapturing {
-                        await viewModel.stop()
-                    } else {
-                        await viewModel.start()
-                    }
+                    await viewModel.toggleCapture()
                 }
             }
         }
@@ -86,19 +80,30 @@ struct MainView: View {
             // Recording status + elapsed time
             HStack(spacing: 6) {
                 Circle()
-                    .fill(viewModel.isCapturing ? (viewModel.isPaused ? Color.orange : HUD.accent) : Color.secondary.opacity(0.5))
+                    .fill(statusDotColor)
                     .frame(width: 7, height: 7)
 
-                if viewModel.isCapturing, let startedAt = viewModel.captureStartedAt {
-                    TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                        Text(viewModel.isPaused ? "paused" : "rec \(elapsedString(since: startedAt, now: timeline.date))")
-                            .font(HUD.mono(.caption))
-                            .foregroundStyle(viewModel.isPaused ? Color.orange : .secondary)
+                switch viewModel.captureState {
+                case .capturing:
+                    if let startedAt = viewModel.captureStartedAt {
+                        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                            Text(viewModel.isPaused ? "paused" : "rec \(elapsedString(since: startedAt, now: timeline.date))")
+                                .font(HUD.mono(.caption))
+                                .foregroundStyle(viewModel.isPaused ? Color.orange : .secondary)
+                        }
                     }
-                } else {
+                case .idle:
                     Text("idle")
                         .font(HUD.mono(.caption))
                         .foregroundStyle(.secondary)
+                case .starting:
+                    Text("starting…")
+                        .font(HUD.mono(.caption))
+                        .foregroundStyle(HUD.accent)
+                case .stopping:
+                    Text("stopping…")
+                        .font(HUD.mono(.caption))
+                        .foregroundStyle(.orange)
                 }
             }
 
@@ -220,12 +225,21 @@ struct MainView: View {
 
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("// no transcriptions yet")
-                .font(HUD.mono(.body))
-                .foregroundStyle(.secondary)
-            Text("// press ⌘space or hit start to begin capturing")
-                .font(HUD.mono(.body))
-                .foregroundStyle(.tertiary)
+            if viewModel.isCapturing {
+                Text("// listening (\(viewModel.settings.sourceLanguage.isoCode.uppercased()))…")
+                    .font(HUD.mono(.body))
+                    .foregroundStyle(.secondary)
+                Text("// speak or play audio — captions appear here")
+                    .font(HUD.mono(.body))
+                    .foregroundStyle(.tertiary)
+            } else {
+                Text("// no transcriptions yet")
+                    .font(HUD.mono(.body))
+                    .foregroundStyle(.secondary)
+                Text("// press ⌘␣ or hit start to begin capturing")
+                    .font(HUD.mono(.body))
+                    .foregroundStyle(.tertiary)
+            }
         }
         .padding(.top, 24)
     }
@@ -282,7 +296,9 @@ struct MainView: View {
                 micDeviceIsVirtual: viewModel.microphoneDeviceIsVirtual
             )
 
-            Text("⌘␣ start · ⌘P pause · ⇧⌘C copy · ⌘O overlay")
+            Text(viewModel.isCapturing
+                 ? "⌘␣ stop · ⌘P pause · ⇧⌘C copy · ⌘O overlay"
+                 : "⌘␣ start · ⌘P pause · ⇧⌘C copy · ⌘O overlay")
                 .font(HUD.mono(.caption2))
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
@@ -306,27 +322,45 @@ struct MainView: View {
                 .help(viewModel.isPaused ? "Resume (⌘P)" : "Pause (⌘P)")
 
                 Button(action: {
-                    Task {
-                        if viewModel.isCapturing {
-                            await viewModel.stop()
-                        } else {
-                            await viewModel.start()
-                        }
-                    }
+                    Task { await viewModel.toggleCapture() }
                 }) {
-                    Label(
-                        viewModel.isCapturing ? "stop" : "start",
-                        systemImage: viewModel.isCapturing ? "stop.fill" : "play.fill"
-                    )
-                    .font(HUD.mono(.body))
-                    .frame(minWidth: 56)
+                    Label(captureButtonTitle, systemImage: captureButtonIcon)
+                        .font(HUD.mono(.body))
+                        .frame(minWidth: 56)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(viewModel.isCapturing ? .red : HUD.accent)
+                .tint(viewModel.captureState == .capturing ? .red : HUD.accent)
+                .disabled(viewModel.captureState == .starting || viewModel.captureState == .stopping)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    private var captureButtonTitle: String {
+        switch viewModel.captureState {
+        case .idle: return "start"
+        case .starting: return "starting…"
+        case .capturing: return "stop"
+        case .stopping: return "stopping…"
+        }
+    }
+
+    private var captureButtonIcon: String {
+        switch viewModel.captureState {
+        case .idle: return "play.fill"
+        case .capturing: return "stop.fill"
+        case .starting, .stopping: return "hourglass"
+        }
+    }
+
+    private var statusDotColor: Color {
+        switch viewModel.captureState {
+        case .idle: return Color.secondary.opacity(0.5)
+        case .starting: return HUD.accent
+        case .capturing: return viewModel.isPaused ? Color.orange : HUD.accent
+        case .stopping: return Color.orange
+        }
     }
 
     // MARK: - Error Banner
@@ -375,7 +409,7 @@ struct MainView: View {
                     )
             )
             .padding(.horizontal, 16)
-            .padding(.top, 44)
+            .padding(.vertical, 10)
             .transition(.move(edge: .top).combined(with: .opacity))
             .onAppear {
                 guard notice.autoDismiss else { return }

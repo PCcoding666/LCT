@@ -76,6 +76,10 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     /// Fired on the MainActor when the mic lane stays completely silent for a
     /// whole SilenceDetector streak (typically a wrong/idle input device).
     var onMicrophoneSilenceDetected: (@MainActor () -> Void)?
+
+    /// Fired on the MainActor when the mic lane delivers continuous audible
+    /// RMS again after a silence warning fired (the input device recovered).
+    var onMicrophoneAudioResumed: (@MainActor () -> Void)?
     
     // MARK: - Private Properties
     private var stream: SCStream?
@@ -525,10 +529,20 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
             let level = 20 * log10(max(rms, 0.000001))
 
             // Watch the mic lane for a session-long silent streak (usually a
-            // wrong or idle input device); fires at most once per session.
-            if source == .microphone, micSilenceDetector.process(rms: rms, at: Date()) {
-                Task { @MainActor [weak self] in
-                    self?.onMicrophoneSilenceDetected?()
+            // wrong or idle input device); fires at most once per session, and
+            // reports once when the lane recovers afterwards.
+            if source == .microphone {
+                switch micSilenceDetector.process(rms: rms, at: Date()) {
+                case .none:
+                    break
+                case .silenceDetected:
+                    Task { @MainActor [weak self] in
+                        self?.onMicrophoneSilenceDetected?()
+                    }
+                case .audioResumed:
+                    Task { @MainActor [weak self] in
+                        self?.onMicrophoneAudioResumed?()
+                    }
                 }
             }
 

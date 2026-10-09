@@ -1,6 +1,17 @@
 import SwiftUI
 import Combine
 
+/// Coarse capture lifecycle. Drives the HUD status and the start/stop button,
+/// and guards `start()`/`stop()` against re-entry while a transition is in
+/// flight (cold model loads take seconds, during which every start request
+/// must be ignored).
+enum CaptureState: String, Equatable {
+    case idle
+    case starting
+    case capturing
+    case stopping
+}
+
 /// Main transcription and translation view model
 @MainActor
 class TranscriptionViewModel: ObservableObject {
@@ -18,8 +29,11 @@ class TranscriptionViewModel: ObservableObject {
     /// Translation history for context
     @Published var translationHistory: [TranslationEntry] = []
 
-    /// Is currently capturing audio
-    @Published var isCapturing: Bool = false
+    /// Capture lifecycle state; the single source of truth for start/stop UI.
+    @Published var captureState: CaptureState = .idle
+
+    /// Is currently capturing audio (derived from `captureState`).
+    var isCapturing: Bool { captureState == .capturing }
 
     /// Is currently translating
     @Published var isTranslating: Bool = false
@@ -84,6 +98,13 @@ class TranscriptionViewModel: ObservableObject {
     /// Per-lane live draft text and draft translation, combined for display.
     private var liveDrafts: [AudioSource: String] = [:]
     private var liveTranslations: [AudioSource: String] = [:]
+    /// Watchdog for lanes that hear audio but recognize nothing (typically a
+    /// wrong recognition language); fed by `stallTimer` while capturing.
+    private var stallDetector = RecognitionStallDetector()
+    private var stallTimer: AnyCancellable?
+    /// Identifies the mic-silence warning currently on screen so the recovery
+    /// callback retracts exactly that notice and nothing else.
+    private var micSilenceNoticeId: UUID?
 
     // MARK: - Initialization
 
@@ -148,11 +169,6 @@ class TranscriptionViewModel: ObservableObject {
         audioCaptureService.$microphoneDeviceIsVirtual
             .receive(on: DispatchQueue.main)
             .assign(to: &$microphoneDeviceIsVirtual)
-
-        // Bind capture state
-        audioCaptureService.$isCapturing
-            .receive(on: DispatchQueue.main)
-            .assign(to: &$isCapturing)
 
         // Bind translation queue state
         translationQueue.$isProcessing
@@ -222,6 +238,9 @@ class TranscriptionViewModel: ObservableObject {
             // Stop speech recognition and translation queue since audio is gone
             self.speechAnalyzerService.stop()
             self.translationQueue.cancelAll()
+            self.captureState = .idle
+            self.captureStartedAt = nil
+            self.stopStallMonitoring()
             self.notice = .error("Audio capture interrupted: \(error.localizedDescription)", actions: [.retryCapture])
         }
 
@@ -231,13 +250,32 @@ class TranscriptionViewModel: ObservableObject {
             self?.handleMicrophoneSilence()
         }
 
+        // Mic lane recovered after a silence warning — retract the warning.
+        audioCaptureService.onMicrophoneAudioResumed = { [weak self] in
+            self?.handleMicrophoneAudioResumed()
+        }
+
     }
 
     // MARK: - Actions
 
-    /// Start capturing and translating
+    /// Start capturing and translating. Ignored (with a log line) unless the
+    /// capture state is idle, so concurrent start requests — button, menu,
+    /// status bar, hotkey, notice actions — can never overlap.
     func start() async {
         appLog("[TranscriptionVM] ▶️ start() called")
+        guard captureState == .idle else {
+            appLog("[TranscriptionVM] ⏭ start() ignored — capture is \(captureState.rawValue)")
+            return
+        }
+        captureState = .starting
+        // Every early return and catch branch below must land back on .idle;
+        // only the success path flips to .capturing first.
+        defer {
+            if captureState == .starting {
+                captureState = .idle
+            }
+        }
 
         var micOnlyFallback = false
         var micDeniedInDual = false
@@ -361,11 +399,22 @@ class TranscriptionViewModel: ObservableObject {
                 return
             }
 
-            notice = .info("Loading translation model — the first run may take 5–30 seconds…")
+            // Cold-loading the model can take far longer than an auto-dismiss
+            // interval — keep this notice up until the load finishes.
+            let loadingNotice = AppNotice(
+                severity: .info,
+                message: "Loading translation model \"\(settings.ollamaModel)\"… the first run can take up to 30 seconds.",
+                autoDismiss: false
+            )
+            notice = loadingNotice
             do {
                 let latencyMs = try await ollamaService.prewarmModel()
                 appLog("[TranscriptionVM] ✅ Ollama model prewarmed in \(latencyMs)ms")
-                notice = nil
+                // Clear only the loading notice; an error that arrived
+                // meanwhile (e.g. from a service binding) must survive.
+                if notice?.id == loadingNotice.id {
+                    notice = nil
+                }
             } catch let error as OllamaError {
                 notice = .error("Cannot load model '\(settings.ollamaModel)': \(error.localizedDescription)", actions: [.retryCapture])
                 return
@@ -406,7 +455,9 @@ class TranscriptionViewModel: ObservableObject {
             }
 
             appLog("[TranscriptionVM] ✅ start() completed successfully")
+            captureState = .capturing
             captureStartedAt = Date()
+            startStallMonitoring()
 
             // Surface lane-degraded notices now that capture is running (earlier
             // notices were overwritten by the model-loading progress message).
@@ -494,9 +545,64 @@ class TranscriptionViewModel: ObservableObject {
         guard notice?.severity != .error else { return }
         let deviceName = audioCaptureService.activeMicrophoneDevice?.name ?? "unknown"
         appLog("[TranscriptionVM] ⚠️ Microphone lane silent for 6s (device: \(deviceName))")
-        notice = AppNotice(
+        let silenceNotice = AppNotice(
             severity: .warning,
             message: "Microphone \"\(deviceName)\" is sending no audio. If it's a virtual device (e.g. BlackHole), pick your real microphone in Settings.",
+            actions: [.openAppSettings]
+        )
+        micSilenceNoticeId = silenceNotice.id
+        notice = silenceNotice
+    }
+
+    /// The mic lane delivered continuous audible RMS after a silence streak —
+    /// retract the silence warning, but only if it's still on screen (never
+    /// clobber a newer notice).
+    private func handleMicrophoneAudioResumed() {
+        appLog("[TranscriptionVM] ✅ Microphone lane is sending audio again")
+        if let id = micSilenceNoticeId, notice?.id == id {
+            notice = nil
+        }
+        micSilenceNoticeId = nil
+    }
+
+    // MARK: - Recognition Stall Detection
+
+    /// Feed the stall watchdog with meter levels twice a second while capturing.
+    private func startStallMonitoring() {
+        stallDetector.reset()
+        stallTimer?.cancel()
+        stallTimer = Timer.publish(every: 0.5, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                self?.checkRecognitionStall()
+            }
+    }
+
+    private func stopStallMonitoring() {
+        stallTimer?.cancel()
+        stallTimer = nil
+        stallDetector.reset()
+    }
+
+    private func checkRecognitionStall() {
+        let now = Date()
+        for source in captureSources {
+            let level = source == .microphone ? micLevel : systemLevel
+            if stallDetector.process(level: level, for: source, at: now) {
+                handleRecognitionStall(source: source)
+            }
+        }
+    }
+
+    /// A lane heard real audio for 8+ accumulated seconds without a single
+    /// recognition result — the recognition language is the prime suspect.
+    private func handleRecognitionStall(source: AudioSource) {
+        // A live error (permission lost, stream interrupted) outranks this warning.
+        guard notice?.severity != .error else { return }
+        appLog("[TranscriptionVM] ⚠️ [\(source.rawValue)] lane audible for 8s+ but no recognition results")
+        notice = AppNotice(
+            severity: .warning,
+            message: "Hearing audio on \(source.label) but recognizing nothing. Is the recognition language (\(settings.sourceLanguage.displayName)) right?",
             actions: [.openAppSettings]
         )
     }
@@ -534,9 +640,31 @@ class TranscriptionViewModel: ObservableObject {
         }
     }
 
-    /// Stop capturing
+    /// Single entry point for start/stop requests from the main button, the
+    /// menu, the status bar, and the global hotkey. Requests arriving while a
+    /// transition is in flight are ignored so `start()` never overlaps itself.
+    func toggleCapture() async {
+        switch captureState {
+        case .idle:
+            await start()
+        case .capturing:
+            await stop()
+        case .starting, .stopping:
+            appLog("[TranscriptionVM] ⏭ toggleCapture() ignored — capture is \(captureState.rawValue)")
+        }
+    }
+
+    /// Stop capturing. Ignored (with a log line) unless capturing — a stop
+    /// request during startup must not tear down a half-started session.
     func stop() async {
+        guard captureState == .capturing else {
+            appLog("[TranscriptionVM] ⏭ stop() ignored — capture is \(captureState.rawValue)")
+            return
+        }
+        captureState = .stopping
         captureStartedAt = nil
+        stopStallMonitoring()
+        micSilenceNoticeId = nil
         await audioCaptureService.stopCapture()
         translationQueue.cancelAll()
         speechAnalyzerService.stop()
@@ -551,6 +679,8 @@ class TranscriptionViewModel: ObservableObject {
 
         // Unload model to free memory
         try? await ollamaService.unloadModel()
+
+        captureState = .idle
     }
 
     /// Toggle pause state
@@ -708,6 +838,9 @@ class TranscriptionViewModel: ObservableObject {
     /// Handle a new transcription result from speech recognizer (any lane)
     private func handleTranscriptionResult(_ result: TranscriptionResult) {
         let lane = result.source
+
+        // Recognition is alive on this lane — reset its stall accumulation.
+        stallDetector.registerResult(for: lane)
 
         if activeTranscriptionTaskIds[lane] != result.id {
             activeTranscriptionTaskIds[lane] = result.id
