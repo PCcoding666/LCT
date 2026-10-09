@@ -111,11 +111,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationWillTerminate(_ notification: Notification) {
         print("LCT for macOS terminating...")
-        
+
         // Cleanup
         cleanup()
     }
-    
+
+    /// Unload the translation model before quitting (local Ollama only, and
+    /// only when the user kept the default "unload on quit" setting). The
+    /// unload is capped at 2 seconds so quitting never hangs on a slow or
+    /// unreachable server.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Self-test runs are headless diagnostics; they never loaded a model
+        // through the app and must not send lifecycle requests.
+        let arguments = ProcessInfo.processInfo.arguments
+        if SpeechSelfTestOptions.parse(arguments: arguments) != nil
+            || SpeechDualSelfTestOptions.parse(arguments: arguments) != nil {
+            return .terminateNow
+        }
+
+        let settings = AppSettings.load()
+        guard settings.unloadModelOnQuit,
+              settings.isLocalOllama,
+              settings.validatedOllamaEndpoint != nil else {
+            return .terminateNow
+        }
+
+        appLog("[AppDelegate] Quit requested — unloading translation model (max 2s)")
+        Task {
+            let service = OllamaService(settings: settings)
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    try? await service.unloadModel(settings.ollamaModel)
+                }
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                }
+                await group.next()
+                group.cancelAll()
+            }
+            appLog("[AppDelegate] Model unload finished or timed out — terminating")
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         // Keep app running in background with status bar
         return false

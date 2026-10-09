@@ -255,6 +255,8 @@ final class ModelsTests: XCTestCase {
         XCTAssertEqual(settings.maxContextEntries, 5)
         XCTAssertEqual(settings.historyRetentionDays, 30)
         XCTAssertEqual(settings.historyMaxEntries, 5000)
+        XCTAssertEqual(settings.modelKeepAlive, .minutes30)
+        XCTAssertTrue(settings.unloadModelOnQuit)
     }
 
     func testAppSettings_OllamaURL() {
