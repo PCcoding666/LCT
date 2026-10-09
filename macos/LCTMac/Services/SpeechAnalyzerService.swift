@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Speech
 import AVFoundation
 import os
@@ -72,6 +73,11 @@ struct RecognitionRestartPolicy: Equatable {
 /// safe to write to the log — see DiagnosticsPrivacyTests.
 struct LaneStats: Equatable {
     var resultCount = 0
+    /// Results the recognizer marked as final (SpeechAnalyzer engine).
+    var finalCount = 0
+    /// Results-stream or runtime errors (SpeechAnalyzer engine; the legacy
+    /// engine tracks its 1110s and other errors via the fields below).
+    var errorCount = 0
     var error1110Count = 0
     var restartCount = 0
     var staleCallbackCount = 0
@@ -543,6 +549,16 @@ class SpeechAnalyzerService: ObservableObject {
                 self.handleRecognitionResult(result: result, error: error, lane: lane, generation: generation)
             }
         }
+    }
+}
+
+// MARK: - SpeechRecognitionEngine conformance
+
+extension SpeechAnalyzerService: SpeechRecognitionEngine {
+    var kind: SpeechEngineKind { .sfSpeechRecognizer }
+
+    var lastErrorPublisher: AnyPublisher<String?, Never> {
+        $lastError.eraseToAnyPublisher()
     }
 }
 

@@ -19,6 +19,9 @@ class CaptionSegmenter {
     /// in order. Parallel to the segments the caller created for this task.
     private var committedSegmentEnds: [Int] = []
     private var lastText: String = ""
+    /// The live draft returned by the most recent process() call — the part of
+    /// the ASR text not yet committed to a segment.
+    private var lastLiveDraft: String = ""
     private var lastUpdateTime: Date = Date()
 
     init(
@@ -34,15 +37,30 @@ class CaptionSegmenter {
     }
 
     /// Process incoming ASR text. Returns newly finalized segments, the current
-    /// live draft, and how many trailing previously-emitted segments were
-    /// invalidated by an ASR revision (0 when no rollback happened).
-    func process(result: TranscriptionResult) -> (finalized: [String], liveDraft: String, invalidatedTailCount: Int) {
+    /// live draft, how many trailing previously-emitted segments were
+    /// invalidated by an ASR revision (0 when no rollback happened), and —
+    /// when the recognizer started a new task — the previous task's last
+    /// uncommitted draft, flushed as a completed caption instead of dropped.
+    ///
+    /// The flushed text belongs to the FINISHED task: the caller must emit it
+    /// as a normal segment but keep it out of the new task's rollback
+    /// bookkeeping (segments of a finished task can no longer be revised).
+    func process(result: TranscriptionResult) -> (finalized: [String], liveDraft: String, invalidatedTailCount: Int, flushedFromPreviousTask: String?) {
+        var flushedFromPreviousTask: String? = nil
         if currentTaskId != result.id {
+            // The previous recognition task ended without committing its last
+            // draft (no final result) — keep that draft as a caption rather
+            // than losing whatever the speaker just said.
+            let leftover = lastLiveDraft.trimmingCharacters(in: .whitespaces)
+            if !leftover.isEmpty {
+                flushedFromPreviousTask = leftover
+            }
             currentTaskId = result.id
             committedLength = 0
             committedText = ""
             committedSegmentEnds = []
             lastText = ""
+            lastLiveDraft = ""
             lastUpdateTime = Date()
         }
 
@@ -51,7 +69,9 @@ class CaptionSegmenter {
         if !committedText.isEmpty && !text.hasPrefix(committedText) {
             // SFSpeech revised already-committed text. Roll back only the
             // segments past the surviving common prefix instead of everything.
-            return handleRollback(newText: text)
+            let rollback = handleRollback(newText: text)
+            lastLiveDraft = rollback.liveDraft
+            return (rollback.finalized, rollback.liveDraft, rollback.invalidatedTailCount, flushedFromPreviousTask)
         }
 
         let startIndex = text.index(text.startIndex, offsetBy: committedLength)
@@ -94,7 +114,8 @@ class CaptionSegmenter {
             }
         }
 
-        return (newlyFinalized, liveDraft, 0)
+        lastLiveDraft = liveDraft
+        return (newlyFinalized, liveDraft, 0, flushedFromPreviousTask)
     }
 
     func reset() {
@@ -103,6 +124,7 @@ class CaptionSegmenter {
         committedText = ""
         committedSegmentEnds = []
         lastText = ""
+        lastLiveDraft = ""
     }
 
     // MARK: - Cut decision

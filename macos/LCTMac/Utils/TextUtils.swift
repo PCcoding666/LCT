@@ -65,8 +65,15 @@ enum TextUtils {
         return Double(cjkCount) / Double(totalChars) > 0.5
     }
     
+    /// Whether the text contains anything worth captioning or translating —
+    /// at least one letter or digit. A lone "." or "。" (SpeechTranscriber
+    /// sometimes finalizes trailing punctuation as its own result) does not.
+    static func hasSpeechContent(_ text: String) -> Bool {
+        text.contains { $0.isLetter || $0.isNumber }
+    }
+
     // MARK: - Punctuation Processing
-    
+
     /// Check if a string ends with sentence-ending punctuation
     static func hasEndPunctuation(_ text: String) -> Bool {
         guard let lastChar = text.last else { return false }

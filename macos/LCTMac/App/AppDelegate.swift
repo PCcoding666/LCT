@@ -69,9 +69,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // and terminates. Skips the normal startup flow entirely — no status
         // item, no hotkeys, no permission preflight, no capture.
         if let options = SpeechSelfTestOptions.parse(arguments: ProcessInfo.processInfo.arguments) {
-            appLog("[SpeechSelfTest] Self-test mode: locale=\(options.localeIdentifier)")
+            appLog("[SpeechSelfTest] Self-test mode: locale=\(options.localeIdentifier) engine=\(options.engine)")
             Task {
                 await SpeechSelfTestRunner().run(options: options)
+            }
+            return
+        }
+
+        // Dual-channel variant: lanes A (.system) and B (.microphone) fed
+        // concurrently from two audio files through the real engine.
+        if let options = SpeechDualSelfTestOptions.parse(arguments: ProcessInfo.processInfo.arguments) {
+            appLog("[SpeechSelfTest] Dual self-test mode: engine=\(options.engine) localeA=\(options.localeIdentifierA) localeB=\(options.localeIdentifierB)")
+            Task {
+                await SpeechDualSelfTestRunner().run(options: options)
             }
             return
         }
