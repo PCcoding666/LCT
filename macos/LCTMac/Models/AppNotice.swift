@@ -13,6 +13,7 @@ enum NoticeAction: Equatable, Identifiable {
     case openScreenRecordingSettings
     case openMicrophoneSettings
     case openSpeechRecognitionSettings
+    case openSystemAudioSettings
     case startOllama
     case openAppSettings
     case retryCapture
@@ -23,6 +24,7 @@ enum NoticeAction: Equatable, Identifiable {
         case .openScreenRecordingSettings: return "openScreenRecordingSettings"
         case .openMicrophoneSettings: return "openMicrophoneSettings"
         case .openSpeechRecognitionSettings: return "openSpeechRecognitionSettings"
+        case .openSystemAudioSettings: return "openSystemAudioSettings"
         case .startOllama: return "startOllama"
         case .openAppSettings: return "openAppSettings"
         case .retryCapture: return "retryCapture"
@@ -36,6 +38,7 @@ enum NoticeAction: Equatable, Identifiable {
              .openMicrophoneSettings,
              .openSpeechRecognitionSettings:
             return "Open System Settings"
+        case .openSystemAudioSettings: return "Open Settings"
         case .startOllama: return "Start Ollama"
         case .openAppSettings: return "Settings"
         case .retryCapture: return "Retry"

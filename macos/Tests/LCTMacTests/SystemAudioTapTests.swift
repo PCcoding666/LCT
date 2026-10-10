@@ -65,8 +65,15 @@ final class SystemAudioTapTests: XCTestCase {
         /// closure gives the fake a valid-looking, never-called proc ID.
         private let fakeIOProcID: AudioDeviceIOProcID = { _, _, _, _, _, _, _ in noErr }
 
+        /// The block handed to `createIOProc`, so tests can play Core Audio
+        /// and invoke the tap's IO callback themselves.
+        private(set) var capturedIOBlock: AudioDeviceIOBlock?
+
         func createIOProc(deviceID: AudioObjectID, queue: DispatchQueue, block: @escaping AudioDeviceIOBlock) -> (status: OSStatus, procID: AudioDeviceIOProcID?) {
             let status = record("createIOProc")
+            lock.lock()
+            capturedIOBlock = block
+            lock.unlock()
             return (status, status == noErr ? fakeIOProcID : nil)
         }
 
@@ -190,6 +197,49 @@ final class SystemAudioTapTests: XCTestCase {
             "destroyAggregateDevice",
             "destroyProcessTap",
         ])
+    }
+
+    // MARK: - First callback
+
+    /// A lock-guarded counter for the @Sendable tap callbacks.
+    private final class CallbackCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _value = 0
+        var value: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return _value
+        }
+        func increment() {
+            lock.lock()
+            _value += 1
+            lock.unlock()
+        }
+    }
+
+    /// The first-callback signal — the watchdog's "authorized" proof — must
+    /// fire exactly once, on the first IO callback, while every buffer still
+    /// reaches the audio handler.
+    func testSystemAudioTap_IOCallback_FiresFirstCallbackOnceAndDeliversEveryBuffer() throws {
+        let hardware = FakeSystemAudioTapHardware()
+        let tap = SystemAudioTap(hardware: hardware)
+        let firstCallbacks = CallbackCounter()
+        let buffers = CallbackCounter()
+        tap.onFirstCallback = { firstCallbacks.increment() }
+        tap.onAudioBuffer = { _ in buffers.increment() }
+        try tap.start()
+
+        let block = try XCTUnwrap(hardware.capturedIOBlock, "test setup: the IO block must be captured")
+        let (bufferList, cleanup) = makeSineBufferList(frameCount: 480, interleaved: true)
+        defer { cleanup() }
+        var timestamp = AudioTimeStamp()
+        let outputList = UnsafeMutablePointer(mutating: bufferList)
+        block(&timestamp, bufferList, &timestamp, outputList, &timestamp)
+        block(&timestamp, bufferList, &timestamp, outputList, &timestamp)
+
+        XCTAssertEqual(firstCallbacks.value, 1, "onFirstCallback is one-shot, no matter how many IO callbacks follow")
+        XCTAssertEqual(buffers.value, 2, "every IO callback still delivers its buffer")
+        tap.stop()
     }
 
     // MARK: - Format conversion

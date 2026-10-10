@@ -21,6 +21,14 @@ protocol SystemAudioTapping: AnyObject, Sendable {
     /// the IO callback captures.
     var onAudioBuffer: (@Sendable (AVAudioPCMBuffer) -> Void)? { get set }
 
+    /// One-shot fired by the FIRST IO callback after `start()`, on the tap's
+    /// IO queue. macOS answers a denied system-audio tap with silence — every
+    /// setup step succeeds but no callback ever arrives — while an authorized
+    /// tap calls back continuously, even when the system is silent. So the
+    /// first callback is the only reliable "authorized" signal. Like
+    /// `onAudioBuffer`, the value current at `start()` is the one captured.
+    var onFirstCallback: (@Sendable () -> Void)? { get set }
+
     /// Create the tap and start the audio device. Idempotent: a second call
     /// while running is a no-op. Throws `SystemAudioTapError` when a Core
     /// Audio step fails.
@@ -187,8 +195,12 @@ final class SystemAudioTap: SystemAudioTapping, @unchecked Sendable {
     private var tapID: AudioObjectID?
     private var aggregateDeviceID: AudioObjectID?
     private var ioProcID: AudioDeviceIOProcID?
+    /// Set under `lock` once the IO callback has delivered a buffer since the
+    /// last `start()` — the one-shot guard for `onFirstCallback`.
+    private var didFireFirstCallback = false
 
     nonisolated(unsafe) var onAudioBuffer: (@Sendable (AVAudioPCMBuffer) -> Void)?
+    nonisolated(unsafe) var onFirstCallback: (@Sendable () -> Void)?
 
     init(hardware: any SystemAudioTapHardware = CoreAudioTapHardware(),
          targetSampleRate: Double = 16000,
@@ -201,6 +213,9 @@ final class SystemAudioTap: SystemAudioTapping, @unchecked Sendable {
     func start() throws {
         lock.lock()
         let alreadyRunning = tapID != nil || aggregateDeviceID != nil || ioProcID != nil
+        if !alreadyRunning {
+            didFireFirstCallback = false
+        }
         lock.unlock()
         guard !alreadyRunning else { return }
 
@@ -242,7 +257,9 @@ final class SystemAudioTap: SystemAudioTapping, @unchecked Sendable {
 
             // 5. IO proc on a dedicated serial queue.
             let handler = onAudioBuffer
-            let block = Self.makeIOBlock(converter: converter) { buffer in
+            let firstCallback = onFirstCallback
+            let block = Self.makeIOBlock(converter: converter) { [weak self] buffer in
+                self?.fireFirstCallbackOnce(firstCallback)
                 handler?(buffer)
             }
             let proc = hardware.createIOProc(deviceID: aggregate.deviceID, queue: ioQueue, block: block)
@@ -276,6 +293,17 @@ final class SystemAudioTap: SystemAudioTapping, @unchecked Sendable {
 
         guard deviceID != nil || tap != nil else { return }
         Self.teardown(hardware: hardware, deviceID: deviceID, procID: procID, tapID: tap)
+    }
+
+    /// Fires `handler` on the first IO callback after `start()` only. The IO
+    /// queue is serial, but `lock` keeps the flag correct against a racing
+    /// stop/start on another thread.
+    private func fireFirstCallbackOnce(_ handler: (@Sendable () -> Void)?) {
+        lock.lock()
+        let isFirst = !didFireFirstCallback
+        didFireFirstCallback = true
+        lock.unlock()
+        if isFirst { handler?() }
     }
 
     /// Stop → destroy IO proc → destroy aggregate device → destroy tap.

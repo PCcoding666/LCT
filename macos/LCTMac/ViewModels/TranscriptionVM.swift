@@ -335,6 +335,12 @@ class TranscriptionViewModel: ObservableObject {
             self?.handleMicrophoneAudioResumed()
         }
 
+        // The system-audio tap never delivered a callback — macOS withheld it
+        // because LCT is not allowed to record system audio.
+        audioCaptureService.onSystemAudioAuthorizationDenied = { [weak self] captureContinues in
+            self?.handleSystemAudioAuthorizationDenied(captureContinues: captureContinues)
+        }
+
         // While the app is foreground and idle, re-check whether the model is
         // still in memory — Ollama unloads it when keep_alive expires, and the
         // HUD indicator must keep up. During capture the translation requests
@@ -760,6 +766,29 @@ class TranscriptionViewModel: ObservableObject {
         micSilenceNoticeId = nil
     }
 
+    /// The system-audio tap delivered no IO callback at all — macOS silently
+    /// starves an unauthorized tap, so LCT is not allowed to record system
+    /// audio. The service has already stopped the tap (no ScreenCaptureKit
+    /// fallback); when the system lane was the whole session, wind capture
+    /// down to idle, otherwise the microphone lane just keeps going.
+    private func handleSystemAudioAuthorizationDenied(captureContinues: Bool) {
+        appLog("[TranscriptionVM] ⚠️ System audio recording not authorized — lane stopped (capture continues: \(captureContinues))")
+        if !captureContinues {
+            Task { await self.speechEngine.stop() }
+            translationQueue.cancelAll()
+            stopStallMonitoring()
+            stopOllamaPatrol()
+            captureState = .idle
+            captureStartedAt = nil
+        }
+        // A live error (permission lost, stream interrupted) outranks this one.
+        guard notice?.severity != .error else { return }
+        notice = .error(
+            "LCT isn't allowed to record system audio. In System Settings → Privacy & Security → Screen & System Audio Recording, turn on LCT under \"System Audio Recording Only\", then start again.",
+            actions: [.openSystemAudioSettings]
+        )
+    }
+
     // MARK: - Recognition Stall Detection
 
     /// Feed the stall watchdog with meter levels twice a second while capturing.
@@ -978,6 +1007,8 @@ class TranscriptionViewModel: ObservableObject {
             AudioCaptureService.openMicrophoneSettings()
         case .openSpeechRecognitionSettings:
             AudioCaptureService.openSpeechRecognitionSettings()
+        case .openSystemAudioSettings:
+            AudioCaptureService.openSystemAudioSettings()
         case .startOllama:
             notice = .info("Starting Ollama…")
             Task {

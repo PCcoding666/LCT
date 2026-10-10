@@ -12,6 +12,7 @@ final class SystemAudioBackendTests: XCTestCase {
 
     private final class FakeSystemAudioTap: SystemAudioTapping, @unchecked Sendable {
         var onAudioBuffer: (@Sendable (AVAudioPCMBuffer) -> Void)?
+        var onFirstCallback: (@Sendable () -> Void)?
         var errorToThrow: Error?
 
         private let lock = NSLock()

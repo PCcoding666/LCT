@@ -73,6 +73,10 @@ struct WelcomeView: View {
     @State private var hasMicrophonePermission = false
     @State private var hasSpeechRecognitionPermission = false
     @State private var isCheckingPermissions = false
+    /// The system-audio row starts untouched on purpose: probing starts a real
+    /// tap, which pops the TCC prompt — that must only happen when the user
+    /// clicks Allow, never on appear.
+    @State private var systemAudioPermission: SystemAudioPermissionRow.State = .unknown
 
     /// This Mac's chip/memory and the model picked for it.
     private let hardware = HardwareProfile.current()
@@ -237,7 +241,7 @@ struct WelcomeView: View {
                 .font(.title)
                 .fontWeight(.bold)
             
-            Text("Grant microphone and speech recognition to get started. Speech is processed on-device and never leaves your Mac. Capturing audio from videos and meetings needs no extra permission. A language without on-device support requires downloading its on-device speech model in System Settings.")
+            Text("Grant microphone and speech recognition to get started. Speech is processed on-device and never leaves your Mac. Allow system audio to caption videos and meetings (recommended). A language without on-device support requires downloading its on-device speech model in System Settings.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -261,6 +265,13 @@ struct WelcomeView: View {
                     isGranted: hasSpeechRecognitionPermission,
                     isChecking: isCheckingPermissions,
                     onGrant: requestSpeechRecognitionPermission
+                )
+
+                // System Audio (optional, recommended)
+                SystemAudioPermissionRow(
+                    state: systemAudioPermission,
+                    onAllow: requestSystemAudioPermission,
+                    onOpenSettings: { AudioCaptureService.openSystemAudioSettings() }
                 )
             }
             .padding()
@@ -990,6 +1001,21 @@ struct WelcomeView: View {
             }
         }
     }
+
+    /// Start a one-shot system-audio tap so macOS raises its "record system
+    /// audio" prompt now, at a moment the user expects it, instead of
+    /// mid-capture. The tap's `start()` blocks for as long as the prompt is
+    /// on screen, so the probe must run far away from the main thread.
+    private func requestSystemAudioPermission() {
+        guard systemAudioPermission != .probing else { return }
+        systemAudioPermission = .probing
+        Task.detached {
+            let result = await SystemAudioPermissionProbe.run()
+            await MainActor.run {
+                systemAudioPermission = result == .granted ? .granted : .denied
+            }
+        }
+    }
 }
 
 // MARK: - Supporting Views
@@ -1056,6 +1082,73 @@ struct PermissionRow: View {
                     onGrant()
                 }
                 .buttonStyle(.bordered)
+            }
+        }
+    }
+}
+
+/// The optional system-audio row. macOS has no preflight for the tap's TCC
+/// consent — it answers only by delivering or withholding IO callbacks — so
+/// Allow runs a real probe (see `SystemAudioPermissionProbe`), and the only
+/// remediation for a denial is the Settings pane.
+@MainActor
+struct SystemAudioPermissionRow: View {
+    enum State: Equatable {
+        case unknown
+        case probing
+        case granted
+        case denied
+    }
+
+    let state: State
+    let onAllow: () -> Void
+    let onOpenSettings: () -> Void
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Image(systemName: "speaker.wave.2.fill")
+                .font(.title2)
+                .foregroundStyle(state == .granted ? .green : .orange)
+                .frame(width: 40)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("System Audio")
+                        .font(.headline)
+                    Text("Recommended")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Caption audio from videos and meetings")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            switch state {
+            case .unknown:
+                Button("Allow") {
+                    onAllow()
+                }
+                .buttonStyle(.bordered)
+            case .probing:
+                ProgressView()
+                    .scaleEffect(0.8)
+            case .granted:
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.title2)
+            case .denied:
+                HStack(spacing: 8) {
+                    Text("Denied")
+                        .font(.subheadline)
+                        .foregroundStyle(.orange)
+                    Button("Open Settings") {
+                        onOpenSettings()
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
     }

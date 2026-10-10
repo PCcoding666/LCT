@@ -1,14 +1,16 @@
 import XCTest
 import Combine
-import AVFoundation
 @testable import LCTMac
+import AVFoundation
 
-/// View-model tests for the system-audio permission flow: starting a capture
-/// with only the system lane must never ask for the screen-recording
-/// permission, and the ScreenCaptureKit fallback must surface the right
-/// notice. Everything is stubbed — no real tap, no TCC, no network.
+/// View-model tests for the system-audio authorization denial flow: the
+/// capture service reports (on the MainActor) that the running tap delivered
+/// no IO callback — macOS's silent answer to a denied consent. The VM must
+/// surface the actionable error, keep a running microphone lane alive, and
+/// wind the session down when the system lane was the only one. Everything is
+/// stubbed — no real tap, no TCC, no network.
 @MainActor
-final class SystemAudioNoticeTests: XCTestCase {
+final class SystemAudioDeniedNoticeTests: XCTestCase {
 
     // MARK: - Fakes
 
@@ -44,13 +46,11 @@ final class SystemAudioNoticeTests: XCTestCase {
     private final class FakeSystemAudioTap: SystemAudioTapping, @unchecked Sendable {
         var onAudioBuffer: (@Sendable (AVAudioPCMBuffer) -> Void)?
         var onFirstCallback: (@Sendable () -> Void)?
-        var errorToThrow: Error?
         private(set) var startCallCount = 0
         private(set) var stopCallCount = 0
 
         func start() throws {
             startCallCount += 1
-            if let errorToThrow { throw errorToThrow }
         }
 
         func stop() {
@@ -89,11 +89,12 @@ final class SystemAudioNoticeTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeViewModel(
-        tap: FakeSystemAudioTap,
-        screenPermissionChecker: (() async -> Bool)? = nil,
-        screenCaptureStreamStarter: (() async throws -> Void)? = nil
-    ) -> (TranscriptionViewModel, FakeSpeechEngine) {
+    private static let deniedMessage = "LCT isn't allowed to record system audio. In System Settings → Privacy & Security → Screen & System Audio Recording, turn on LCT under \"System Audio Recording Only\", then start again."
+
+    /// Builds a capturing view model whose system lane runs on a fake tap.
+    /// The watchdog window is set far in the future so these tests drive the
+    /// denial callback directly instead of waiting it out.
+    private func makeCapturingViewModel() async -> (TranscriptionViewModel, FakeSpeechEngine, AudioCaptureService) {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [PullMockURLProtocol.self]
         var settings = AppSettings()
@@ -114,10 +115,10 @@ final class SystemAudioNoticeTests: XCTestCase {
             startupMaxAttempts: 5,
             stopGracePeriod: 0.1
         )
+        let tap = FakeSystemAudioTap()
         let captureService = AudioCaptureService(
             makeSystemAudioTap: { tap },
-            screenPermissionChecker: screenPermissionChecker,
-            screenCaptureStreamStarter: screenCaptureStreamStarter
+            systemAudioAuthorizationTimeout: 60
         )
         let engine = FakeSpeechEngine()
         let viewModel = TranscriptionViewModel(
@@ -127,81 +128,59 @@ final class SystemAudioNoticeTests: XCTestCase {
             audioCaptureService: captureService,
             speechEngine: engine
         )
-        return (viewModel, engine)
+        await viewModel.start()
+        return (viewModel, engine, captureService)
     }
 
     // MARK: - Tests
 
-    /// The whole point of the Core Audio tap: system-audio-only capture runs
-    /// without the screen-recording permission ever being consulted.
-    func testStart_SystemAudioOnlyWithoutScreenPermission_KeepsSystemLane() async {
-        let tap = FakeSystemAudioTap()
-        let (viewModel, engine) = makeViewModel(
-            tap: tap,
-            screenPermissionChecker: {
-                XCTFail("screen permission must not be checked while the tap works")
-                return false
-            },
-            screenCaptureStreamStarter: {
-                XCTFail("ScreenCaptureKit must not start while the tap works")
-            }
-        )
+    /// Denial with no other lane running: capture winds down to idle, speech
+    /// recognition stops, and the error carries the settings action.
+    func testSystemAudioDenied_SystemOnlyLane_ReturnsToIdleWithSettingsAction() async {
+        let (viewModel, engine, captureService) = await makeCapturingViewModel()
+        XCTAssertEqual(viewModel.captureState, .capturing, "test setup: capture must be running")
 
-        await viewModel.start()
-
-        XCTAssertEqual(viewModel.captureState, .capturing)
-        XCTAssertEqual(engine.startedSources, [.system])
-        XCTAssertEqual(tap.startCallCount, 1)
-        XCTAssertNil(viewModel.notice)
-
-        await viewModel.stop()
-        XCTAssertEqual(tap.stopCallCount, 1)
-    }
-
-    /// The tap fails but the ScreenCaptureKit fallback has permission: capture
-    /// runs, and a sticky warning tells the user which mode they are in.
-    func testStart_CoreAudioTapFails_ShowsStickyFallbackWarning() async {
-        let tap = FakeSystemAudioTap()
-        tap.errorToThrow = SystemAudioTapError(step: "AudioHardwareCreateProcessTap", status: -50)
-        let (viewModel, _) = makeViewModel(
-            tap: tap,
-            screenPermissionChecker: { true },
-            screenCaptureStreamStarter: {}
-        )
-
-        await viewModel.start()
-
-        XCTAssertEqual(viewModel.captureState, .capturing)
-        let notice = try? XCTUnwrap(viewModel.notice)
-        XCTAssertEqual(notice?.severity, .warning)
-        XCTAssertEqual(
-            notice?.message,
-            "System audio capture fell back to screen recording mode (Core Audio tap failed: AudioHardwareCreateProcessTap (OSStatus -50))."
-        )
-        XCTAssertEqual(notice?.autoDismiss, false, "the fallback warning stays on screen until capture stops")
-
-        await viewModel.stop()
-    }
-
-    /// The tap fails and the fallback has no screen permission either: start
-    /// aborts with the screen-recording error and its settings action.
-    func testStart_CoreAudioTapFailsWithoutScreenPermission_ShowsScreenRecordingError() async {
-        let tap = FakeSystemAudioTap()
-        tap.errorToThrow = SystemAudioTapError(step: "AudioHardwareCreateProcessTap", status: -50)
-        let (viewModel, _) = makeViewModel(
-            tap: tap,
-            screenPermissionChecker: { false },
-            screenCaptureStreamStarter: {
-                XCTFail("ScreenCaptureKit must not start without the screen permission")
-            }
-        )
-
-        await viewModel.start()
+        captureService.onSystemAudioAuthorizationDenied?(false)
 
         XCTAssertEqual(viewModel.captureState, .idle)
+        XCTAssertNil(viewModel.captureStartedAt)
+        let engineStopped = await waitForCondition { engine.stopCallCount == 1 }
+        XCTAssertTrue(engineStopped, "ending the session must stop speech recognition")
         let notice = try? XCTUnwrap(viewModel.notice)
         XCTAssertEqual(notice?.severity, .error)
-        XCTAssertEqual(notice?.message, "Screen recording permission is required to capture system audio.")
-        XCTAssertEqual(notice?.actions, [.openScreenRecordingSettings])
+        XCTAssertEqual(notice?.message, Self.deniedMessage)
+        XCTAssertEqual(notice?.actions, [.openSystemAudioSettings])
+    }
+
+    /// Denial while the microphone lane is still running: capture continues;
+    /// only the notice tells the user the system lane is gone.
+    func testSystemAudioDenied_MicrophoneContinues_KeepsCapturingWithNotice() async {
+        let (viewModel, engine, captureService) = await makeCapturingViewModel()
+        XCTAssertEqual(viewModel.captureState, .capturing, "test setup: capture must be running")
+
+        captureService.onSystemAudioAuthorizationDenied?(true)
+
+        XCTAssertEqual(viewModel.captureState, .capturing, "the microphone lane keeps the session alive")
+        XCTAssertEqual(engine.stopCallCount, 0, "speech recognition must not stop while capture continues")
+        let notice = try? XCTUnwrap(viewModel.notice)
+        XCTAssertEqual(notice?.severity, .error)
+        XCTAssertEqual(notice?.message, Self.deniedMessage)
+        XCTAssertEqual(notice?.actions, [.openSystemAudioSettings])
+
+        await viewModel.stop()
+    }
+
+    /// A live error on screen outranks the denial error — but the session
+    /// teardown still happens.
+    func testSystemAudioDenied_ExistingError_IsNotOverridden() async {
+        let (viewModel, _, captureService) = await makeCapturingViewModel()
+        XCTAssertEqual(viewModel.captureState, .capturing, "test setup: capture must be running")
+        let sentinel = AppNotice.error("sentinel", actions: [.retryCapture])
+        viewModel.notice = sentinel
+
+        captureService.onSystemAudioAuthorizationDenied?(false)
+
+        XCTAssertEqual(viewModel.notice, sentinel, "an existing error must not be replaced")
+        XCTAssertEqual(viewModel.captureState, .idle, "the session still winds down")
     }
 }

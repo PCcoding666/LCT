@@ -547,6 +547,7 @@ struct SettingsView: View {
             microphoneStatus: describe(micStatus),
             speechStatus: describe(speechStatus),
             screenRecordingGranted: screenStatus,
+            systemAudioAuthorization: SystemAudioAuthorizationStore.lastResult()?.rawValue ?? "unknown",
             ollamaURL: localSettings.ollamaURL,
             ollamaIsLocal: localSettings.isLocalOllama,
             modelName: localSettings.ollamaModel,
