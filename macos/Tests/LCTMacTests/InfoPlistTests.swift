@@ -49,6 +49,15 @@ final class InfoPlistTests: XCTestCase {
         )
     }
 
+    func testAudioCaptureUsageDescription() throws {
+        let plist = try XCTUnwrap(loadPlist())
+        XCTAssertEqual(
+            plist["NSAudioCaptureUsageDescription"] as? String,
+            "LCT captures audio playing on your Mac (videos, meetings) to transcribe and translate it.",
+            "the Core Audio process tap declares its purpose with NSAudioCaptureUsageDescription"
+        )
+    }
+
     func testBundleIdentifier() throws {
         let plist = try XCTUnwrap(loadPlist())
         XCTAssertEqual(plist["CFBundleIdentifier"] as? String, "com.lct.mac")

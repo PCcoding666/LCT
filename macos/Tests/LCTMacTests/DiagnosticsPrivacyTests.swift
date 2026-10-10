@@ -15,6 +15,7 @@ final class DiagnosticsPrivacyTests: XCTestCase {
             microphoneStatus: "granted",
             speechStatus: "granted",
             screenRecordingGranted: true,
+            systemAudioAuthorization: "granted",
             ollamaURL: "http://localhost:11434",
             ollamaIsLocal: true,
             modelName: "qwen3.5:4b-mlx",
@@ -35,6 +36,7 @@ final class DiagnosticsPrivacyTests: XCTestCase {
         let report = makeReport(historyEnabled: true, historyEntryCount: 12)
         XCTAssertTrue(report.contains("Version: 1.0.0 (7)"))
         XCTAssertTrue(report.contains("Microphone: granted"))
+        XCTAssertTrue(report.contains("System Audio Recording: granted (last observed)"), "the last observed system-audio verdict is status metadata and may appear")
         XCTAssertTrue(report.contains("History: enabled (12 entries)"), "history state is metadata and may appear in the report")
         XCTAssertFalse(report.contains("== Recent Log =="), "the report must not embed raw log lines")
         XCTAssertFalse(report.contains("LCTMac.log"), "the report must not reference the raw log file")

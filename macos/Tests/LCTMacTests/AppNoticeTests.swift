@@ -46,6 +46,10 @@ final class AppNoticeTests: XCTestCase {
         XCTAssertEqual(NoticeAction.openSpeechRecognitionSettings.label, "Open System Settings")
     }
 
+    func testSystemAudioSettingsActionLabel() {
+        XCTAssertEqual(NoticeAction.openSystemAudioSettings.label, "Open Settings")
+    }
+
     func testActionLabelsAreDistinctWhereExpected() {
         XCTAssertEqual(NoticeAction.startOllama.label, "Start Ollama")
         XCTAssertEqual(NoticeAction.retryCapture.label, "Retry")
@@ -55,7 +59,7 @@ final class AppNoticeTests: XCTestCase {
     func testActionIDsAreUnique() {
         let actions: [NoticeAction] = [
             .openScreenRecordingSettings, .openMicrophoneSettings,
-            .openSpeechRecognitionSettings, .startOllama,
+            .openSpeechRecognitionSettings, .openSystemAudioSettings, .startOllama,
             .openAppSettings, .retryCapture,
         ]
         XCTAssertEqual(Set(actions.map(\.id)).count, actions.count)
