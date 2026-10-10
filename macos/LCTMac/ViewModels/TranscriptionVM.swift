@@ -135,6 +135,22 @@ class TranscriptionViewModel: ObservableObject {
     /// The task pulling the translation model from the Download notice
     /// action; non-nil only while a download is in flight.
     private var modelDownloadTask: Task<Void, Never>?
+    /// Capture-time Ollama patrol: restarts a dead service, re-warms an
+    /// unloaded model. Runs only while capturing.
+    private var ollamaPatrolTask: Task<Void, Never>?
+    /// Identifies the patrol's "restarting…" warning so recovery retracts
+    /// exactly that notice and nothing else.
+    private var ollamaRecoveryNoticeId: UUID?
+    /// Identifies the patrol's "could not be restarted" error so a later
+    /// recovery retracts it.
+    private var ollamaGaveUpNoticeId: UUID?
+    /// Identifies the patrol's "reloading model…" info notice.
+    private var modelReloadNoticeId: UUID?
+    /// Identifies an error notice raised from `ollamaService.lastError`
+    /// (e.g. "Ollama server is not running" from a failed translation). It
+    /// describes the same outage the patrol handles, so the patrol may
+    /// replace it with its restarting/recovered/gave-up notices.
+    private var ollamaServiceErrorNoticeId: UUID?
 
     // MARK: - Initialization
 
@@ -236,7 +252,16 @@ class TranscriptionViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .compactMap { $0 }
             .sink { [weak self] error in
-                self?.notice = .error(error, actions: [.retryCapture])
+                guard let self else { return }
+                // While the patrol is restarting Ollama, its own notice already
+                // explains the outage; failed translations must not replace it.
+                if let id = self.ollamaRecoveryNoticeId, self.notice?.id == id {
+                    appLog("[TranscriptionVM] Ollama error during recovery — keeping the restart notice")
+                    return
+                }
+                let serviceErrorNotice = AppNotice.error(error, actions: [.retryCapture])
+                self.ollamaServiceErrorNoticeId = serviceErrorNotice.id
+                self.notice = serviceErrorNotice
             }
             .store(in: &cancellables)
 
@@ -475,9 +500,12 @@ class TranscriptionViewModel: ObservableObject {
 
             if settings.isLocalOllama {
                 // Ensure local Ollama is running (will start it if needed).
+                // ensureRunning() already proved the service answers, so no
+                // separate health probe is needed — just reflect it in the UI.
                 appLog("[TranscriptionVM] Ensuring local Ollama is running...")
                 do {
                     try await ollamaGuardian.ensureRunning()
+                    isOllamaConnected = true
                     appLog("[TranscriptionVM] ✅ Local Ollama is running")
                 } catch let error as OllamaGuardianError {
                     appLog("[TranscriptionVM] ❌ Local Ollama error: \(error)")
@@ -490,25 +518,18 @@ class TranscriptionViewModel: ObservableObject {
                 }
             } else {
                 appLog("[TranscriptionVM] Using remote Ollama at \(settings.ollamaURL); skipping local startup")
-            }
 
-            // Check Ollama connection
-            appLog("[TranscriptionVM] Checking Ollama connection...")
-            let isConnected = await ollamaService.checkHealth()
-            appLog("[TranscriptionVM] Ollama connected: \(isConnected)")
-            if !isConnected {
-                if settings.isLocalOllama {
-                    notice = .error(
-                        "Cannot connect to local Ollama at \(settings.ollamaURL).",
-                        actions: [.startOllama]
-                    )
-                } else {
+                // Remote Ollama gets no guardian, so probe it directly.
+                appLog("[TranscriptionVM] Checking Ollama connection...")
+                let isConnected = await ollamaService.checkHealth()
+                appLog("[TranscriptionVM] Ollama connected: \(isConnected)")
+                if !isConnected {
                     notice = .error(
                         "Cannot connect to remote Ollama at \(settings.ollamaURL). Check the address in Settings.",
                         actions: [.openAppSettings]
                     )
+                    return
                 }
-                return
             }
 
             do {
@@ -635,9 +656,10 @@ class TranscriptionViewModel: ObservableObject {
                 )
             }
 
-            // Start local health monitoring only for local Ollama.
+            // Patrol local Ollama while capturing: restart a dead service,
+            // re-warm a model Ollama dropped from memory.
             if settings.isLocalOllama {
-                ollamaGuardian.startHealthMonitoring(interval: 30)
+                startOllamaPatrol()
             }
 
         } catch let error as SpeechAnalyzerError {
@@ -778,6 +800,167 @@ class TranscriptionViewModel: ObservableObject {
         )
     }
 
+    // MARK: - Ollama Patrol (capture-time recovery)
+
+    /// While capturing, probe local Ollama every `interval` seconds: restart
+    /// a service that stopped answering (backoff 10s → 20s → 40s, at most 3
+    /// attempts) and re-warm the translation model when Ollama dropped it
+    /// from memory. The decision logic lives in OllamaRecoveryController;
+    /// this loop only probes and executes.
+    func startOllamaPatrol(interval: TimeInterval = 10, backoffBase: TimeInterval = 10) {
+        stopOllamaPatrol()
+        ollamaPatrolTask = Task { [weak self] in
+            var controller = OllamaRecoveryController(baseBackoff: backoffBase)
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                guard !Task.isCancelled, let self, self.captureState == .capturing else { break }
+                await self.runOllamaPatrolStep(controller: &controller)
+            }
+        }
+    }
+
+    func stopOllamaPatrol() {
+        ollamaPatrolTask?.cancel()
+        ollamaPatrolTask = nil
+        // Retract the patrol's in-progress notices so they don't linger after
+        // the session ends; a give-up error stays — it is still actionable.
+        retractOllamaRecoveryNotice()
+        if let id = modelReloadNoticeId, notice?.id == id {
+            notice = nil
+        }
+        modelReloadNoticeId = nil
+    }
+
+    private func runOllamaPatrolStep(controller: inout OllamaRecoveryController) async {
+        let outcome = await probeOllamaHealth()
+        guard !Task.isCancelled, captureState == .capturing else { return }
+
+        switch controller.step(for: outcome) {
+        case .probeAgain:
+            break
+        case .restartService(let delay, let attempt):
+            showOllamaRecoveryNotice()
+            appLog("[TranscriptionVM] ⚠️ Ollama not responding — restart attempt \(attempt) in \(Int(delay))s")
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, captureState == .capturing else { return }
+            do {
+                try await ollamaGuardian.ensureRunning()
+                appLog("[TranscriptionVM] ✅ Ollama restart attempt \(attempt) succeeded")
+            } catch {
+                appLog("[TranscriptionVM] ⚠️ Ollama restart attempt \(attempt) failed: \(error.localizedDescription)")
+            }
+        case .reloadModel:
+            await reloadTranslationModel()
+        case .announceRecovered:
+            appLog("[TranscriptionVM] ✅ Ollama is healthy again")
+            retractOllamaRecoveryNotice()
+            if let id = ollamaGaveUpNoticeId, notice?.id == id {
+                notice = nil
+            }
+            ollamaGaveUpNoticeId = nil
+            if notice?.severity != .error || isOllamaServiceErrorNotice {
+                ollamaServiceErrorNoticeId = nil
+                notice = .info("Ollama is back — translation resumed.")
+            }
+        case .giveUp:
+            appLog("[TranscriptionVM] ❌ Ollama could not be restarted after \(OllamaRecoveryController.maxRestartAttempts) attempts")
+            retractOllamaRecoveryNotice()
+            if notice?.severity != .error || isOllamaServiceErrorNotice {
+                ollamaServiceErrorNoticeId = nil
+                let giveUpNotice = AppNotice(
+                    severity: .error,
+                    message: "Ollama could not be restarted.",
+                    actions: [.startOllama]
+                )
+                ollamaGaveUpNoticeId = giveUpNotice.id
+                notice = giveUpNotice
+            }
+        }
+    }
+
+    private func probeOllamaHealth() async -> OllamaRecoveryController.ProbeOutcome {
+        guard await ollamaGuardian.checkServiceStatus() else {
+            return .serviceUnreachable
+        }
+        do {
+            let names = try await ollamaService.loadedModels()
+            return isModelInstalled(settings.ollamaModel, in: names) ? .healthy : .modelNotLoaded
+        } catch {
+            // /api/ps failed while /api/tags answered — a flaky read says
+            // nothing reliable about the model; don't act on it.
+            appLog("[TranscriptionVM] Ollama patrol: loadedModels probe failed: \(error.localizedDescription)")
+            return .healthy
+        }
+    }
+
+    /// Ollama dropped the translation model from memory (crash restart,
+    /// memory pressure) — prewarm it again so translations resume.
+    private func reloadTranslationModel() async {
+        guard !Task.isCancelled, captureState == .capturing else { return }
+        var reloadNotice: AppNotice?
+        if notice?.severity != .error {
+            let n = AppNotice(severity: .info, message: "Reloading translation model…", autoDismiss: false)
+            modelReloadNoticeId = n.id
+            reloadNotice = n
+            notice = n
+        }
+        modelState = .loading
+        do {
+            _ = try await ollamaService.prewarmModel()
+            modelState = .loaded
+            appLog("[TranscriptionVM] ✅ Translation model reloaded")
+        } catch {
+            modelState = .notLoaded
+            appLog("[TranscriptionVM] ⚠️ Translation model reload failed: \(error.localizedDescription)")
+        }
+        if let reloadNotice, modelReloadNoticeId == reloadNotice.id, notice?.id == reloadNotice.id {
+            notice = nil
+        }
+        modelReloadNoticeId = nil
+    }
+
+    /// The patrol's non-auto-dismissing warning while a restart is in flight.
+    /// Never clobbers a live error notice.
+    /// Whether the notice on screen is an Ollama service error (from
+    /// `ollamaService.lastError`), which the patrol is allowed to replace.
+    private var isOllamaServiceErrorNotice: Bool {
+        guard let id = ollamaServiceErrorNoticeId else { return false }
+        return notice?.id == id
+    }
+
+    private func showOllamaRecoveryNotice() {
+        if let id = ollamaRecoveryNoticeId, notice?.id == id { return }
+        guard notice?.severity != .error || isOllamaServiceErrorNotice else { return }
+        ollamaServiceErrorNoticeId = nil
+        let n = AppNotice(
+            severity: .warning,
+            message: "Ollama stopped responding — restarting…",
+            autoDismiss: false
+        )
+        ollamaRecoveryNoticeId = n.id
+        notice = n
+    }
+
+    private func retractOllamaRecoveryNotice() {
+        if let id = ollamaRecoveryNoticeId, notice?.id == id {
+            notice = nil
+        }
+        ollamaRecoveryNoticeId = nil
+    }
+
+    /// Status-light click: bring Ollama up, surfacing failures as an
+    /// actionable error notice instead of swallowing them.
+    func startOllamaFromIndicator() {
+        Task {
+            do {
+                try await ollamaGuardian.ensureRunning()
+            } catch {
+                appLog("[TranscriptionVM] ⚠️ startOllamaFromIndicator failed: \(error.localizedDescription)")
+                notice = .error("Could not start Ollama: \(error.localizedDescription)", actions: [.startOllama])
+            }
+        }
+    }
+
     /// Dismiss the current notice.
     func dismissNotice() {
         notice = nil
@@ -896,6 +1079,7 @@ class TranscriptionViewModel: ObservableObject {
         captureState = .stopping
         captureStartedAt = nil
         stopStallMonitoring()
+        stopOllamaPatrol()
         micSilenceNoticeId = nil
         modelDownloadNoticeId = nil
         await audioCaptureService.stopCapture()
@@ -906,9 +1090,6 @@ class TranscriptionViewModel: ObservableObject {
         liveSourceText = ""
         liveTranslation = ""
         clearTransientSegmentBookkeeping()
-
-        // Stop health monitoring
-        ollamaGuardian.stopHealthMonitoring()
 
         captureState = .idle
 

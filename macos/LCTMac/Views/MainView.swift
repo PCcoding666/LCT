@@ -127,7 +127,9 @@ struct MainView: View {
                     .font(HUD.mono(.caption))
                     .foregroundStyle(.secondary)
 
-                OllamaStatusIndicator(isConnected: viewModel.isOllamaConnected)
+                OllamaStatusIndicator(isConnected: viewModel.isOllamaConnected) {
+                    viewModel.startOllamaFromIndicator()
+                }
 
                 HStack(spacing: 4) {
                     Text(viewModel.settings.ollamaModel)
@@ -739,15 +741,16 @@ struct LaneMeterView: View {
 @MainActor
 struct OllamaStatusIndicator: View {
     let isConnected: Bool
+    /// Tap handler for the disconnected state; the view model owns the
+    /// start attempt and any error notice it produces.
+    let onStartRequested: () -> Void
     @State private var isHovering = false
     @StateObject private var guardian = OllamaGuardian.shared
 
     var body: some View {
         Button(action: {
             if !isConnected {
-                Task {
-                    try? await guardian.ensureRunning()
-                }
+                onStartRequested()
             }
         }) {
             HStack(spacing: 6) {

@@ -236,8 +236,12 @@ class OllamaService: ObservableObject {
             }
             return false
         } catch {
+            // A health check is a probe, not a failure report: every caller
+            // handles `false` itself (status indicator, launch prewarm,
+            // start()'s own notice). Setting `lastError` here surfaced a
+            // "Cannot connect to Ollama" error notice at launch while LCT was
+            // already starting Ollama.
             isConnected = false
-            lastError = "Cannot connect to Ollama: \(error.localizedDescription)"
             return false
         }
     }

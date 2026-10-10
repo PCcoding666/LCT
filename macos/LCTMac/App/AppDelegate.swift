@@ -116,10 +116,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         cleanup()
     }
 
-    /// Unload the translation model before quitting (local Ollama only, and
-    /// only when the user kept the default "unload on quit" setting). The
-    /// unload is capped at 2 seconds so quitting never hangs on a slow or
-    /// unreachable server.
+    /// Before quitting: unload the translation model (local Ollama only, and
+    /// only when the user kept the default "unload on quit" setting) and stop
+    /// the `ollama serve` process if LCT itself started it. Both are capped
+    /// at 2.5 seconds total so quitting never hangs on a slow or unreachable
+    /// server. A service the user started is never touched.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Self-test runs are headless diagnostics; they never loaded a model
         // through the app and must not send lifecycle requests.
@@ -130,26 +131,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let settings = AppSettings.load()
-        guard settings.unloadModelOnQuit,
-              settings.isLocalOllama,
-              settings.validatedOllamaEndpoint != nil else {
+        let shouldUnloadModel = settings.unloadModelOnQuit
+            && settings.isLocalOllama
+            && settings.validatedOllamaEndpoint != nil
+        let guardian = OllamaGuardian.shared
+        let shouldStopService = guardian.launchedByLCT == .cli
+
+        guard shouldUnloadModel || shouldStopService else {
             return .terminateNow
         }
 
-        appLog("[AppDelegate] Quit requested — unloading translation model (max 2s)")
+        appLog("[AppDelegate] Quit requested — unloadModel=\(shouldUnloadModel) stopOllama=\(shouldStopService) (max 2.5s)")
         Task {
             let service = OllamaService(settings: settings)
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
-                    try? await service.unloadModel(settings.ollamaModel)
+                    // Model unload and serve shutdown run concurrently; this
+                    // child completes only when both are done.
+                    async let stop: Void = guardian.stopService()
+                    if shouldUnloadModel {
+                        try? await service.unloadModel(settings.ollamaModel)
+                    }
+                    await stop
                 }
                 group.addTask {
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    try? await Task.sleep(nanoseconds: 2_500_000_000)
                 }
+                // Whichever finishes first — the cleanup or the 2.5s budget —
+                // ends the wait; quitting must not hang.
                 await group.next()
                 group.cancelAll()
             }
-            appLog("[AppDelegate] Model unload finished or timed out — terminating")
+            appLog("[AppDelegate] Shutdown cleanup finished or timed out — terminating")
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
