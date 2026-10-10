@@ -79,6 +79,12 @@ class TranscriptionViewModel: ObservableObject {
     /// When the current capture session started (nil when stopped)
     @Published var captureStartedAt: Date?
 
+    /// Untrimmed record of the current session, the source for session
+    /// exports. Independent of the trimmed on-screen cards and of the opt-in
+    /// persistent history; survives stop() so a finished session stays
+    /// exportable until the next start() or clear().
+    @Published private(set) var sessionTranscript = SessionTranscript()
+
     // MARK: - Services
 
     private let audioCaptureService: AudioCaptureService
@@ -622,7 +628,9 @@ class TranscriptionViewModel: ObservableObject {
 
             appLog("[TranscriptionVM] ✅ start() completed successfully")
             captureState = .capturing
-            captureStartedAt = Date()
+            let sessionStartedAt = Date()
+            captureStartedAt = sessionStartedAt
+            sessionTranscript.begin(at: sessionStartedAt)
             startStallMonitoring()
 
             // Surface lane-degraded notices now that capture is running (earlier
@@ -1177,6 +1185,7 @@ class TranscriptionViewModel: ObservableObject {
         translationHistory.removeAll()
         speakerManager.clear()
         caption.clear()
+        sessionTranscript.clear()
         clearTransientSegmentBookkeeping()
     }
 
@@ -1377,6 +1386,7 @@ class TranscriptionViewModel: ObservableObject {
         guard TextUtils.hasSpeechContent(text) else { return }
         segments.append(newSegment)
         trimSegmentsIfNeeded()
+        sessionTranscript.append(id: newSegment.id, source: lane, sourceText: text, finalizedAt: newSegment.timestamp)
 
         caption.updateOriginal(text)
 
@@ -1478,6 +1488,9 @@ class TranscriptionViewModel: ObservableObject {
                 segments[idx].translatedText = cleanedText
                 segments[idx].state = .translated
             }
+            // The session record is not trimmed with the display cards, so a
+            // translation may land here after its segment left the screen.
+            sessionTranscript.updateTranslation(id: result.segmentId, text: cleanedText)
 
             // Log history
             let entry = TranslationEntry(
@@ -1539,6 +1552,7 @@ class TranscriptionViewModel: ObservableObject {
         appLog("[TranscriptionVM] ASR rollback on [\(source.rawValue)] lane; revoking \(staleSegmentIds.count) stale tail segment(s)")
         translationQueue.cancel(segmentIds: staleSegmentIds)
         segments.removeAll { staleSegmentIds.contains($0.id) }
+        sessionTranscript.remove(ids: staleSegmentIds)
 
         let staleHistoryIds = Set(staleSegmentIds.compactMap { historyEntryIdsBySegmentId[$0] })
         if !staleHistoryIds.isEmpty {
@@ -1581,5 +1595,41 @@ class TranscriptionViewModel: ObservableObject {
         let text = "\(last.sourceText)\n\(last.translatedText)"
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    // MARK: - Session Export
+
+    /// Export the full (untrimmed) session transcript through the system save
+    /// panel. The user picks the location, so the file may contain caption
+    /// content; the log records only the line count and format, never text.
+    func exportSession(_ format: SessionExporter.Format) {
+        let transcript = sessionTranscript
+        guard !transcript.entries.isEmpty else { return }
+
+        let content = SessionExporter.export(
+            transcript,
+            format: format,
+            sourceLanguages: settings.sourceLanguage.isoCode.uppercased(),
+            targetLanguage: settings.targetLanguage.isoCode.uppercased()
+        )
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [format.contentType]
+        panel.nameFieldStringValue = SessionExporter.suggestedFileName(
+            for: format,
+            sessionStart: transcript.startedAt ?? Date()
+        )
+        panel.title = "Export Session"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try content.write(to: url, atomically: true, encoding: .utf8)
+            appLog("[TranscriptionVM] Exported session: \(transcript.entries.count) line(s), format \(format.rawValue)")
+            notice = .info("Exported \(transcript.entries.count) lines to \(url.lastPathComponent)")
+        } catch {
+            appLog("[TranscriptionVM] ❌ Session export failed: \(error.localizedDescription)")
+            notice = .error("Export failed: \(error.localizedDescription)")
+        }
     }
 }

@@ -83,6 +83,12 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .showHistory)) { _ in
             showHistory = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: .exportSession)) { notification in
+            // File menu export commands carry the format raw value.
+            guard let raw = notification.object as? String,
+                  let format = SessionExporter.Format(rawValue: raw) else { return }
+            viewModel.exportSession(format)
+        }
     }
 
     // MARK: - HUD Bar (always visible)
@@ -166,6 +172,20 @@ struct MainView: View {
                         .foregroundStyle(.secondary)
                 }
                 .help("History (⇧⌘H)")
+
+                Menu {
+                    Button("Export as Markdown…") { viewModel.exportSession(.markdown) }
+                    Button("Export as Text…") { viewModel.exportSession(.plainText) }
+                    Button("Export as Subtitles (SRT)…") { viewModel.exportSession(.srt) }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .disabled(viewModel.sessionTranscript.entries.isEmpty)
+                .help("Export this session")
 
                 Button(action: { showSettings = true }) {
                     Image(systemName: "gear")
