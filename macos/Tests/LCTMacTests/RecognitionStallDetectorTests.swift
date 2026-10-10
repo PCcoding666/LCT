@@ -112,4 +112,28 @@ final class RecognitionStallDetectorTests: XCTestCase {
         XCTAssertFalse(detector.process(level: 0.5, for: .system, at: t0.addingTimeInterval(9.0)))
         XCTAssertTrue(detector.process(level: 0.5, for: .system, at: t0.addingTimeInterval(17.0)))
     }
+
+    func testRecognitionStall_ResetLane_AllowsOnlyThatLaneToFireAgain() {
+        var detector = RecognitionStallDetector()
+        _ = detector.process(level: 0.5, for: .system, at: t0)
+        _ = detector.process(level: 0.5, for: .microphone, at: t0)
+        XCTAssertTrue(detector.process(level: 0.5, for: .system, at: t0.addingTimeInterval(8.0)))
+        XCTAssertTrue(detector.process(level: 0.5, for: .microphone, at: t0.addingTimeInterval(8.0)))
+
+        // A language switch on the mic lane resets only that lane's budget.
+        detector.resetLane(.microphone)
+
+        XCTAssertFalse(
+            detector.process(level: 0.5, for: .system, at: t0.addingTimeInterval(16.0)),
+            "the untouched lane already fired this session and stays fired"
+        )
+        XCTAssertFalse(
+            detector.process(level: 0.5, for: .microphone, at: t0.addingTimeInterval(9.0)),
+            "the reset lane accumulates from scratch"
+        )
+        XCTAssertTrue(
+            detector.process(level: 0.5, for: .microphone, at: t0.addingTimeInterval(17.0)),
+            "the reset lane may fire once more"
+        )
+    }
 }

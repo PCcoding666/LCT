@@ -32,6 +32,12 @@ struct RecognitionStallDetector {
         lanes.removeAll()
     }
 
+    /// Give one lane a fresh stall budget (e.g. after its recognition language
+    /// changed): its accumulation clears and it may fire once more.
+    mutating func resetLane(_ source: AudioSource) {
+        lanes[source] = nil
+    }
+
     /// Feed one meter-level sample for a lane at its sampling time. Returns
     /// true exactly once per lane per session: on the first sample that pushes
     /// the lane's accumulated audible time to `requiredAudibleDuration`.

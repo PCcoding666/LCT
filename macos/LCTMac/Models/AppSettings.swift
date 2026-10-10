@@ -191,7 +191,23 @@ struct AppSettings: Codable, Equatable {
     var microphoneDeviceUID: String? = nil
 
     // MARK: - Speech Recognition Settings
+    /// Recognition language of the system-audio lane (and the default for the
+    /// microphone lane).
     var sourceLanguage: SourceLanguage = .english
+    /// Recognition language of the microphone lane. nil follows the
+    /// system-audio lane (`sourceLanguage`); a missing key (older installs)
+    /// decodes as nil.
+    var microphoneSourceLanguage: SourceLanguage? = nil
+
+    /// The effective recognition language of a capture lane.
+    func language(for source: AudioSource) -> SourceLanguage {
+        switch source {
+        case .system:
+            return sourceLanguage
+        case .microphone:
+            return microphoneSourceLanguage ?? sourceLanguage
+        }
+    }
 
     // MARK: - Ollama Settings
     var ollamaHost: String = "localhost"
@@ -358,6 +374,7 @@ extension AppSettings {
         captureMicrophone = try container.decodeIfPresent(Bool.self, forKey: .captureMicrophone) ?? true
         microphoneDeviceUID = try container.decodeIfPresent(String.self, forKey: .microphoneDeviceUID)
         sourceLanguage = try container.decodeIfPresent(SourceLanguage.self, forKey: .sourceLanguage) ?? .english
+        microphoneSourceLanguage = try container.decodeIfPresent(SourceLanguage.self, forKey: .microphoneSourceLanguage)
         ollamaHost = try container.decodeIfPresent(String.self, forKey: .ollamaHost) ?? "localhost"
         ollamaPort = try container.decodeIfPresent(Int.self, forKey: .ollamaPort) ?? 11434
         remoteOllamaOptIn = try container.decodeIfPresent(Bool.self, forKey: .remoteOllamaOptIn) ?? false

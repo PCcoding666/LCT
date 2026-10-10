@@ -44,6 +44,22 @@ struct LCTMacApp: App {
                 }
                 .keyboardShortcut("C", modifiers: [.command, .shift])
             }
+
+            // File menu: export the current session
+            CommandGroup(after: .importExport) {
+                Button("Export as Markdown…") {
+                    NotificationCenter.default.post(name: .exportSession, object: SessionExporter.Format.markdown.rawValue)
+                }
+                .keyboardShortcut("E", modifiers: [.command])
+
+                Button("Export as Text…") {
+                    NotificationCenter.default.post(name: .exportSession, object: SessionExporter.Format.plainText.rawValue)
+                }
+
+                Button("Export as Subtitles (SRT)…") {
+                    NotificationCenter.default.post(name: .exportSession, object: SessionExporter.Format.srt.rawValue)
+                }
+            }
             
             // View commands
             CommandGroup(after: .toolbar) {
@@ -108,4 +124,5 @@ extension Notification.Name {
     static let toggleCapture = Notification.Name("LCT.toggleCapture")
     static let togglePause = Notification.Name("LCT.togglePause")
     static let settingsDidChange = Notification.Name("LCT.settingsDidChange")
+    static let exportSession = Notification.Name("LCT.exportSession")
 }

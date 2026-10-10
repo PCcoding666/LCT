@@ -36,6 +36,10 @@ final class SystemAudioNoticeTests: XCTestCase {
             stopCallCount += 1
         }
 
+        func restartLane(_ source: AudioSource, language: SourceLanguage) async throws {}
+
+        func languageAvailability() async -> [SourceLanguage: LanguageAvailability] { [:] }
+
         nonisolated func appendAudioBuffer(_ buffer: AVAudioPCMBuffer, source: AudioSource) {}
 
         func statsSnapshot() -> [AudioSource: LaneStats] { [:] }
