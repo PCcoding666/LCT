@@ -581,7 +581,6 @@ enum OllamaGuardianError: Error, LocalizedError {
     case notInstalled
     case startupFailed(String)
     case startupTimeout
-    case serviceError(String)
 
     var errorDescription: String? {
         switch self {
@@ -591,8 +590,6 @@ enum OllamaGuardianError: Error, LocalizedError {
             return "Failed to start Ollama: \(message)"
         case .startupTimeout:
             return "Ollama startup timed out"
-        case .serviceError(let message):
-            return "Ollama service error: \(message)"
         }
     }
 }
