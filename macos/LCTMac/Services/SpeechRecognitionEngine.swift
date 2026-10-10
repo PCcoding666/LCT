@@ -13,6 +13,27 @@ enum SpeechEngineKind: String, Equatable {
     case speechTranscriber = "analyzer"
 }
 
+/// Whether on-device recognition can use a language right now, only after a
+/// model download, or not at all.
+enum LanguageAvailability: Equatable {
+    case installed
+    case downloadable
+    case unsupported
+
+    /// Pure mapping from the Speech framework's answers: `isSupported` means
+    /// the engine has a usable locale for the language (a download may still
+    /// be required), `isInstalled` means the on-device assets are present.
+    init(isSupported: Bool, isInstalled: Bool) {
+        if isInstalled {
+            self = .installed
+        } else if isSupported {
+            self = .downloadable
+        } else {
+            self = .unsupported
+        }
+    }
+}
+
 /// Contract every speech recognition engine fulfills. The view model talks to
 /// the selected engine exclusively through this protocol. Sendable so the
 /// capture service's @Sendable audio callbacks can hold the engine (the
@@ -47,6 +68,15 @@ protocol SpeechRecognitionEngine: AnyObject, Sendable {
     /// (flushing final results) completes asynchronously; the legacy engine's
     /// synchronous teardown still satisfies this requirement.
     func stop() async
+
+    /// Restart one lane with a new recognition language, leaving every other
+    /// lane running. On failure the lane stays stopped, `lastError` describes
+    /// what happened, and the error is rethrown.
+    func restartLane(_ source: AudioSource, language: SourceLanguage) async throws
+
+    /// On-device availability of every source language on this device (which
+    /// languages the language menu lists, and which need a model download).
+    func languageAvailability() async -> [SourceLanguage: LanguageAvailability]
 
     /// Append one audio buffer to a lane. Called from realtime audio threads
     /// (two different threads in dual capture) — implementations must be
