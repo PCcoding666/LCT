@@ -318,13 +318,15 @@ class TranslationQueue: ObservableObject {
                 text: task.text,
                 context: task.context
             ) { [weak self] token in
+                // Appended synchronously: the callback already runs on the
+                // MainActor. Hopping through `Task { @MainActor in }` deferred
+                // the append, so the final result below could be built before
+                // the last tokens landed — an empty or truncated translation.
                 guard let self = self else { return }
-                Task { @MainActor in
-                    // Check generation: if a newer task has started, discard this stale token
-                    guard self.generation == taskGeneration else { return }
-                    self.streamingText += token
-                    self.onStreamingUpdate?(task.segmentId, self.streamingText)
-                }
+                // A newer task has started: discard this stale token.
+                guard self.generation == taskGeneration else { return }
+                self.streamingText += token
+                self.onStreamingUpdate?(task.segmentId, self.streamingText)
             }
 
             guard !Task.isCancelled else { return }
