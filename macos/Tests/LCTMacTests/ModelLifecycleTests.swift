@@ -156,6 +156,22 @@ final class OllamaModelLifecycleRequestTests: XCTestCase {
         super.tearDown()
     }
 
+    func testCheckHealth_ServerUnreachable_ReturnsFalseWithoutLastError() async {
+        LifecycleMockURLProtocol.requestHandler = { _ in
+            throw URLError(.cannotConnectToHost)
+        }
+        let service = makeService()
+
+        let healthy = await service.checkHealth()
+
+        XCTAssertFalse(healthy)
+        XCTAssertFalse(service.isConnected)
+        // A probe must not publish an error: the view model turns lastError
+        // into an error notice, which appeared at launch while LCT was
+        // already starting Ollama.
+        XCTAssertNil(service.lastError)
+    }
+
     private func makeService(keepAlive: ModelKeepAlive = .minutes30, model: String = "test-model") -> OllamaService {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [LifecycleMockURLProtocol.self]
