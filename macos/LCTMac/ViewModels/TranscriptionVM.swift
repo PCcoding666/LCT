@@ -158,12 +158,14 @@ class TranscriptionViewModel: ObservableObject {
          ollamaService: OllamaService? = nil,
          ollamaGuardian: OllamaGuardian = .shared,
          hardwareProfile: HardwareProfile = .current(),
-         makeModelManager: @escaping (OllamaEndpoint) -> OllamaModelManager = { OllamaModelManager(endpoint: $0) }) {
+         makeModelManager: @escaping (OllamaEndpoint) -> OllamaModelManager = { OllamaModelManager(endpoint: $0) },
+         audioCaptureService: AudioCaptureService? = nil,
+         speechEngine: (any SpeechRecognitionEngine)? = nil) {
         let loadedSettings = settings
         self.settings = loadedSettings
         self.hardwareProfile = hardwareProfile
         self.makeModelManager = makeModelManager
-        self.audioCaptureService = AudioCaptureService(
+        self.audioCaptureService = audioCaptureService ?? AudioCaptureService(
             config: AudioCaptureConfig(
                 captureSystemAudio: loadedSettings.captureSystemAudio,
                 captureMicrophone: loadedSettings.captureMicrophone,
@@ -174,12 +176,17 @@ class TranscriptionViewModel: ObservableObject {
         self.ollamaGuardian = ollamaGuardian
         self.translationQueue = TranslationQueue(ollamaService: self.ollamaService)
         self.speakerManager = SpeakerManager()
-        let engineKind = SpeechEngineSelection.engineKind(
-            transcriberEngineAvailable: SpeechEngineAvailability.isTranscriberEngineAvailable
-        )
-        self.speechEngineKind = engineKind
-        self.speechEngine = SpeechEngineFactory.makeEngine(kind: engineKind, language: loadedSettings.sourceLanguage)
-        appLog("[TranscriptionVM] Speech engine: \(engineKind.rawValue)")
+        if let speechEngine {
+            self.speechEngineKind = speechEngine.kind
+            self.speechEngine = speechEngine
+        } else {
+            let engineKind = SpeechEngineSelection.engineKind(
+                transcriberEngineAvailable: SpeechEngineAvailability.isTranscriberEngineAvailable
+            )
+            self.speechEngineKind = engineKind
+            self.speechEngine = SpeechEngineFactory.makeEngine(kind: engineKind, language: loadedSettings.sourceLanguage)
+        }
+        appLog("[TranscriptionVM] Speech engine: \(speechEngineKind.rawValue)")
         self.caption = Caption.shared
 
         caption.maxContextEntries = loadedSettings.maxContextEntries
@@ -409,7 +416,6 @@ class TranscriptionViewModel: ObservableObject {
             }
         }
 
-        var micOnlyFallback = false
         var micDeniedInDual = false
 
         do {
@@ -435,37 +441,22 @@ class TranscriptionViewModel: ObservableObject {
                 return
             }
 
-            // Resolve which capture lanes to run: each enabled source needs its
-            // own permission. system → screen recording TCC, mic → microphone TCC.
+            // Resolve which capture lanes to run. System audio needs no
+            // permission (Core Audio process tap); only the microphone lane
+            // needs a TCC grant. The screen-recording check happens later and
+            // only if the tap fails and the lane falls back to ScreenCaptureKit.
             appLog("[TranscriptionVM] captureSystemAudio: \(settings.captureSystemAudio), captureMicrophone: \(settings.captureMicrophone)")
 
             var activeSources: [AudioSource] = []
 
             if settings.captureSystemAudio {
-                appLog("[TranscriptionVM] Checking screen capture permission...")
-                let hasPermission = await audioCaptureService.checkPermission()
-                appLog("[TranscriptionVM] Screen capture permission: \(hasPermission)")
-
-                if hasPermission {
-                    activeSources.append(.system)
-                } else if !settings.captureMicrophone {
-                    appLog("[TranscriptionVM] ❌ No screen permission and no microphone fallback")
-                    notice = .error(
-                        "Screen recording permission is required to capture system audio.",
-                        actions: [.openScreenRecordingSettings]
-                    )
-                    return
-                }
+                activeSources.append(.system)
             }
 
             if settings.captureMicrophone {
                 let micGranted = await AudioCaptureService.ensureMicrophonePermission()
                 if micGranted {
                     activeSources.append(.microphone)
-                    if settings.captureSystemAudio && !activeSources.contains(.system) {
-                        // Screen denied, mic OK → classic mic-only fallback
-                        micOnlyFallback = true
-                    }
                 } else if activeSources.isEmpty {
                     appLog("[TranscriptionVM] ❌ Microphone permission denied, no other source")
                     notice = .error(
@@ -630,9 +621,7 @@ class TranscriptionViewModel: ObservableObject {
 
             // Surface lane-degraded notices now that capture is running (earlier
             // notices were overwritten by the model-loading progress message).
-            if micOnlyFallback {
-                notice = .warning("No screen recording permission — capturing microphone only.")
-            } else if micDeniedInDual {
+            if micDeniedInDual {
                 notice = AppNotice(
                     severity: .warning,
                     message: "No microphone permission — capturing system audio only.",
@@ -640,6 +629,19 @@ class TranscriptionViewModel: ObservableObject {
                 )
             } else if droppedMicrophoneLane, notice?.severity != .error {
                 notice = .warning("Capturing system audio and the microphone at the same time needs macOS 26 or later — capturing system audio only.")
+            }
+
+            // The Core Audio tap failed and the system lane is running on
+            // ScreenCaptureKit, which needs the screen-recording permission.
+            // Sticky — this is the flaky path the user should know about.
+            if audioCaptureService.systemAudioBackend == .screenCaptureKit,
+               let tapFailure = audioCaptureService.systemAudioTapFailure,
+               notice?.severity != .error {
+                notice = AppNotice(
+                    severity: .warning,
+                    message: "System audio capture fell back to screen recording mode (Core Audio tap failed: \(tapFailure)).",
+                    autoDismiss: false
+                )
             }
 
             // A virtual sound card (BlackHole & co.) carries no microphone
