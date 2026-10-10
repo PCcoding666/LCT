@@ -244,6 +244,30 @@ final class QuickLanguageSwitchTests: XCTestCase {
         XCTAssertEqual(viewModel.liveSourceText, "", "the lane's live draft resets for the new task")
     }
 
+    // MARK: - Stall warning retraction
+
+    /// GUI regression: after the "recognizing nothing" warning, switching
+    /// the lane to the right language made it recognize again, but the
+    /// warning stayed on screen.
+    func testRecognitionStall_LaneRecognizesAgain_RetractsWarning() {
+        let (viewModel, engine) = makeCapturingViewModel()
+        viewModel.handleRecognitionStall(source: .microphone)
+        XCTAssertEqual(viewModel.notice?.severity, .warning, "test setup: the stall warning is shown")
+
+        engine.onTranscription?(TranscriptionResult(text: "hello", isVolatile: true, source: .microphone))
+
+        XCTAssertNil(viewModel.notice, "a result on the stalled lane retracts its warning")
+    }
+
+    func testRecognitionStall_OtherLaneRecognizes_KeepsWarning() {
+        let (viewModel, engine) = makeCapturingViewModel()
+        viewModel.handleRecognitionStall(source: .microphone)
+
+        engine.onTranscription?(TranscriptionResult(text: "你好", isVolatile: true, source: .system))
+
+        XCTAssertEqual(viewModel.notice?.severity, .warning, "only the stalled lane's own results retract it")
+    }
+
     // MARK: - updateSettings integration
 
     func testUpdateSettings_CapturingLanguageChange_AppliesLiveWithoutRestartWarning() async {

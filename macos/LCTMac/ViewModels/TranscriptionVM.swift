@@ -162,6 +162,9 @@ class TranscriptionViewModel: ObservableObject {
     /// Identifies the mic-silence warning currently on screen so the recovery
     /// callback retracts exactly that notice and nothing else.
     private var micSilenceNoticeId: UUID?
+    /// The "hearing audio but recognizing nothing" warning on screen and the
+    /// lane it is about, so a later result on that lane retracts exactly it.
+    private var recognitionStallNotice: (id: UUID, source: AudioSource)?
     /// Identifies the on-device speech model download notice currently on
     /// screen, so the download-finished callback retracts exactly that one.
     private var modelDownloadNoticeId: UUID?
@@ -858,15 +861,27 @@ class TranscriptionViewModel: ObservableObject {
 
     /// A lane heard real audio for 8+ accumulated seconds without a single
     /// recognition result — the recognition language is the prime suspect.
-    private func handleRecognitionStall(source: AudioSource) {
+    func handleRecognitionStall(source: AudioSource) {
         // A live error (permission lost, stream interrupted) outranks this warning.
         guard notice?.severity != .error else { return }
         appLog("[TranscriptionVM] ⚠️ [\(source.rawValue)] lane audible for 8s+ but no recognition results")
-        notice = AppNotice(
+        let stallNotice = AppNotice(
             severity: .warning,
             message: "Hearing audio on \(source.label) but recognizing nothing. Is the recognition language (\(settings.language(for: source).displayName)) right?",
             actions: [.openAppSettings]
         )
+        recognitionStallNotice = (stallNotice.id, source)
+        notice = stallNotice
+    }
+
+    /// The lane the stall warning was about recognized something again
+    /// (e.g. the user fixed its language) — retract that warning.
+    private func retractRecognitionStallNotice(for lane: AudioSource) {
+        guard let stall = recognitionStallNotice, stall.source == lane else { return }
+        if notice?.id == stall.id {
+            notice = nil
+        }
+        recognitionStallNotice = nil
     }
 
     // MARK: - Ollama Patrol (capture-time recovery)
@@ -1481,6 +1496,7 @@ class TranscriptionViewModel: ObservableObject {
 
         // Recognition is alive on this lane — reset its stall accumulation.
         stallDetector.registerResult(for: lane)
+        retractRecognitionStallNotice(for: lane)
 
         if activeTranscriptionTaskIds[lane] != result.id {
             activeTranscriptionTaskIds[lane] = result.id
