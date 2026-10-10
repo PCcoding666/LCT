@@ -146,6 +146,11 @@ class TranscriptionViewModel: ObservableObject {
     private var ollamaGaveUpNoticeId: UUID?
     /// Identifies the patrol's "reloading model…" info notice.
     private var modelReloadNoticeId: UUID?
+    /// Identifies an error notice raised from `ollamaService.lastError`
+    /// (e.g. "Ollama server is not running" from a failed translation). It
+    /// describes the same outage the patrol handles, so the patrol may
+    /// replace it with its restarting/recovered/gave-up notices.
+    private var ollamaServiceErrorNoticeId: UUID?
 
     // MARK: - Initialization
 
@@ -247,7 +252,16 @@ class TranscriptionViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .compactMap { $0 }
             .sink { [weak self] error in
-                self?.notice = .error(error, actions: [.retryCapture])
+                guard let self else { return }
+                // While the patrol is restarting Ollama, its own notice already
+                // explains the outage; failed translations must not replace it.
+                if let id = self.ollamaRecoveryNoticeId, self.notice?.id == id {
+                    appLog("[TranscriptionVM] Ollama error during recovery — keeping the restart notice")
+                    return
+                }
+                let serviceErrorNotice = AppNotice.error(error, actions: [.retryCapture])
+                self.ollamaServiceErrorNoticeId = serviceErrorNotice.id
+                self.notice = serviceErrorNotice
             }
             .store(in: &cancellables)
 
@@ -844,13 +858,15 @@ class TranscriptionViewModel: ObservableObject {
                 notice = nil
             }
             ollamaGaveUpNoticeId = nil
-            if notice?.severity != .error {
+            if notice?.severity != .error || isOllamaServiceErrorNotice {
+                ollamaServiceErrorNoticeId = nil
                 notice = .info("Ollama is back — translation resumed.")
             }
         case .giveUp:
             appLog("[TranscriptionVM] ❌ Ollama could not be restarted after \(OllamaRecoveryController.maxRestartAttempts) attempts")
             retractOllamaRecoveryNotice()
-            if notice?.severity != .error {
+            if notice?.severity != .error || isOllamaServiceErrorNotice {
+                ollamaServiceErrorNoticeId = nil
                 let giveUpNotice = AppNotice(
                     severity: .error,
                     message: "Ollama could not be restarted.",
@@ -905,9 +921,17 @@ class TranscriptionViewModel: ObservableObject {
 
     /// The patrol's non-auto-dismissing warning while a restart is in flight.
     /// Never clobbers a live error notice.
+    /// Whether the notice on screen is an Ollama service error (from
+    /// `ollamaService.lastError`), which the patrol is allowed to replace.
+    private var isOllamaServiceErrorNotice: Bool {
+        guard let id = ollamaServiceErrorNoticeId else { return false }
+        return notice?.id == id
+    }
+
     private func showOllamaRecoveryNotice() {
         if let id = ollamaRecoveryNoticeId, notice?.id == id { return }
-        guard notice?.severity != .error else { return }
+        guard notice?.severity != .error || isOllamaServiceErrorNotice else { return }
+        ollamaServiceErrorNoticeId = nil
         let n = AppNotice(
             severity: .warning,
             message: "Ollama stopped responding — restarting…",

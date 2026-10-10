@@ -178,6 +178,59 @@ final class OllamaRecoveryPatrolTests: XCTestCase {
         XCTAssertEqual(viewModel.modelState, .loaded)
     }
 
+    /// GUI regression: a failed translation surfaces an Ollama service error
+    /// ("server not running") before the patrol notices the outage. The
+    /// patrol must replace that error with its restarting warning and then
+    /// with the recovery notice, instead of leaving a stale error on screen.
+    func testPatrol_ServiceErrorShownFirst_ReplacedByRecoveryNotices() async {
+        state.serviceUp = true
+        state.loadedModels = ["model-a"]
+        launcher.onLaunchServe = { [state] in state.serviceUp = true }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [GuardianStubURLProtocol.self]
+        var settings = AppSettings()
+        settings.ollamaModel = "model-a"
+        settings.ollamaTimeout = 1
+        let service = OllamaService(settings: settings, session: URLSession(configuration: config))
+        let guardian = OllamaGuardian(
+            ollamaPath: "/fake/ollama",
+            ollamaURL: "http://localhost:11434",
+            session: URLSession(configuration: config),
+            launcher: launcher,
+            installationDetector: { .cli("/fake/ollama") },
+            serveLogFileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("LCTMacTests-ollama-\(UUID().uuidString).log"),
+            startupPollInterval: 0.01,
+            startupMaxAttempts: 5,
+            stopGracePeriod: 0.1
+        )
+        let viewModel = TranscriptionViewModel(settings: settings, ollamaService: service, ollamaGuardian: guardian)
+        let connected = await waitFor { viewModel.isOllamaConnected }
+        XCTAssertTrue(connected, "test setup: initial probe must succeed")
+        viewModel.captureState = .capturing
+
+        // Outage: a request fails before the patrol's first probe.
+        state.serviceUp = false
+        state.loadedModels = []
+        _ = try? await service.prewarmModel()
+        let errorShown = await waitFor { viewModel.notice?.severity == .error }
+        XCTAssertTrue(errorShown, "test setup: the failed request must surface an error notice")
+
+        viewModel.startOllamaPatrol(interval: 0.05, backoffBase: 0.01)
+        defer { viewModel.stopOllamaPatrol() }
+
+        let warned = await waitFor {
+            viewModel.notice?.message == "Ollama stopped responding — restarting…"
+        }
+        XCTAssertTrue(warned, "the restarting warning must replace the Ollama service error")
+
+        let recovered = await waitFor {
+            viewModel.notice?.message == "Ollama is back — translation resumed."
+        }
+        XCTAssertTrue(recovered, "the recovery notice must not be blocked by the stale service error")
+    }
+
     /// Ollama never comes back: three restart attempts, then an actionable
     /// error — and no further automatic restarts. When the service returns
     /// anyway, the patrol still announces the recovery.
