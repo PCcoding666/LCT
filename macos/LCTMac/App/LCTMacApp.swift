@@ -10,8 +10,11 @@ struct LCTMacApp: App {
     }()
     
     var body: some Scene {
-        // Main Window
-        WindowGroup {
+        // Main Window — a single Window, not a WindowGroup: the app has one
+        // view model (owned by AppCoordinator), and closing this window only
+        // hides it, so the coordinator can bring it back for menu, status bar
+        // and hotkey commands.
+        Window("LCT", id: MainWindow.id) {
             ZStack {
                 if showWelcome {
                     WelcomeView {
@@ -23,7 +26,7 @@ struct LCTMacApp: App {
                     }
                     .transition(.opacity)
                 } else {
-                    MainView()
+                    MainView(viewModel: appDelegate.coordinator.viewModel)
                         .transition(.opacity)
                         .onAppear {
                             print("[LCTMacApp] MainView appeared")
@@ -36,7 +39,8 @@ struct LCTMacApp: App {
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
         .commands {
-            
+            MainWindowCommands(coordinator: appDelegate.coordinator)
+
             // Edit commands
             CommandGroup(after: .pasteboard) {
                 Button("Copy Translation") {
@@ -92,8 +96,8 @@ struct SettingsWindowView: View {
         SettingsView(settings: $settings) { newSettings in
             newSettings.save()
             settings = newSettings
-            // Let the running MainView apply the change immediately; the
-            // view model never re-posts this notification, so no loop.
+            // Let the running view model apply the change immediately (via
+            // AppCoordinator); it never re-posts this notification, so no loop.
             NotificationCenter.default.post(name: .settingsDidChange, object: newSettings)
         }
     }

@@ -48,6 +48,10 @@ func appLog(_ message: String) {
 /// Application delegate for handling app lifecycle events
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Owns the view model and handles capture/pause/overlay commands for
+    /// the whole run, including while the main window is closed.
+    let coordinator = AppCoordinator()
+
     private var statusItem: NSStatusItem?
     private var overlayWindow: NSWindow?
     
@@ -95,13 +99,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Register system-wide hotkeys (⌃⌥⌘ S/P/O)
         GlobalHotKeyManager.shared.registerDefaults()
 
-        // Activate the app and bring window to front
+        // Activate the app and bring the main window to front
         DispatchQueue.main.async {
-            NSApp.activate(ignoringOtherApps: true)
-            // Ensure the main window is visible
-            if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
-                window.makeKeyAndOrderFront(nil)
-            }
+            self.coordinator.showMainWindow()
         }
     }
     
@@ -220,10 +220,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     @objc private func showMainWindow() {
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        if let window = NSApplication.shared.windows.first {
-            window.makeKeyAndOrderFront(nil)
-        }
+        coordinator.showMainWindow()
     }
     
     @objc private func toggleOverlay() {
