@@ -59,19 +59,26 @@ enum SystemAudioAuthorizationStore {
 /// `start()` blocks for as long as the system prompt is on screen — callers
 /// must keep this off the main thread.
 enum SystemAudioPermissionProbe {
-    /// Start a fresh tap, wait up to `timeout` (counted from `start()`
-    /// returning) for the first IO callback, then always stop the tap.
+    /// Start a fresh tap on LCT's own output, play a short silence through
+    /// it, and wait up to `timeout` (counted from `start()` returning) for the
+    /// first IO callback; always stop the tap and the silence afterwards.
     ///
-    /// Silence is retried with a brand-new tap (`attempts` in total): on a
-    /// real Mac, a tap whose IO proc was created while the consent prompt was
-    /// still on screen delivered no callbacks even after the user clicked
-    /// Allow, while the next tap worked. Without the retry, onboarding would
-    /// report "Denied" right after the user allowed it.
+    /// Why the silence: a Core Audio tap only calls back while a tapped
+    /// process is actually playing. A global tap probed while the Mac is
+    /// quiet stays silent even when recording is allowed (seen on a real
+    /// Mac), which would misreport "Denied". Tapping LCT itself and playing
+    /// zeros guarantees audio flows exactly when recording is allowed.
+    ///
+    /// Silence is retried with a brand-new tap (`attempts` in total): a tap
+    /// whose IO proc was created while the consent prompt was still on screen
+    /// delivered no callbacks after the user clicked Allow, while the next tap
+    /// worked.
     ///
     /// A tap that cannot even be created reports `.denied` — the user-facing
     /// remediation (the Settings pane) is the same either way.
     static func run(
-        makeTap: @Sendable () -> any SystemAudioTapping = { SystemAudioTap() },
+        makeTap: @Sendable () -> any SystemAudioTapping = { SystemAudioTap(target: .ownProcessOnly) },
+        makeSilencePlayer: @Sendable () -> any SilencePlaying = { SilencePlayer() },
         timeout: TimeInterval = 3.0,
         attempts: Int = 2,
         defaults: UserDefaults = .standard
@@ -89,7 +96,14 @@ enum SystemAudioPermissionProbe {
                 result = .denied
                 break
             }
+            let silence = makeSilencePlayer()
+            do {
+                try silence.start()
+            } catch {
+                appLog("[SystemAudioPermissionProbe] ⚠️ Could not play the probe silence (\(error.localizedDescription))")
+            }
             let fired = await latch.wait(timeout: timeout)
+            silence.stop()
             tap.stop()
             if fired {
                 result = .granted

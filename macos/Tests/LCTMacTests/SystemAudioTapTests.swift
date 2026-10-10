@@ -49,8 +49,14 @@ final class SystemAudioTapTests: XCTestCase {
             (record("translatePIDToProcessObject"), 100)
         }
 
+        /// The last tap description passed in (exclusive flag and process list).
+        private(set) var lastTapIsExclusive: Bool?
+        private(set) var lastTapProcessCount: Int?
+
         func createProcessTap(_ description: CATapDescription) -> (status: OSStatus, tapID: AudioObjectID) {
-            (record("createProcessTap"), 101)
+            lastTapIsExclusive = description.isExclusive
+            lastTapProcessCount = description.processes.count
+            return (record("createProcessTap"), 101)
         }
 
         func tapFormat(_ tapID: AudioObjectID) -> (status: OSStatus, asbd: AudioStreamBasicDescription) {
@@ -113,6 +119,24 @@ final class SystemAudioTapTests: XCTestCase {
             "startDevice",
         ])
         tap.stop()
+    }
+
+    /// The capture lane taps everything except LCT ("exclusive" list = LCT);
+    /// the permission probe taps only LCT itself (an inclusive list).
+    func testSystemAudioTap_Target_SelectsExclusiveOrInclusiveTap() throws {
+        let captureHardware = FakeSystemAudioTapHardware()
+        let captureTap = SystemAudioTap(hardware: captureHardware)
+        try captureTap.start()
+        captureTap.stop()
+        XCTAssertEqual(captureHardware.lastTapIsExclusive, true, "capture: global tap excluding LCT")
+        XCTAssertEqual(captureHardware.lastTapProcessCount, 1)
+
+        let probeHardware = FakeSystemAudioTapHardware()
+        let probeTap = SystemAudioTap(hardware: probeHardware, target: .ownProcessOnly)
+        try probeTap.start()
+        probeTap.stop()
+        XCTAssertEqual(probeHardware.lastTapIsExclusive, false, "probe: tap of LCT's own process only")
+        XCTAssertEqual(probeHardware.lastTapProcessCount, 1)
     }
 
     func testSystemAudioTap_StartTwice_SecondIsNoOp() {
