@@ -107,7 +107,7 @@ struct SettingsView: View {
         }
 
         Section("Language") {
-            Picker("Source Language", selection: $localSettings.sourceLanguage) {
+            Picker("System Audio Language", selection: $localSettings.sourceLanguage) {
                 ForEach(SourceLanguage.allCases) { language in
                     HStack {
                         Text(language.displayName)
@@ -120,7 +120,7 @@ struct SettingsView: View {
                     .tag(language)
                 }
             }
-            .help("The language being spoken that you want to recognize")
+            .help("The language being spoken on the system audio that you want to recognize")
 
             if !isLanguageAvailable(localSettings.sourceLanguage) {
                 HStack {
@@ -131,6 +131,14 @@ struct SettingsView: View {
                         .foregroundStyle(.orange)
                 }
             }
+
+            Picker("Microphone Language", selection: $localSettings.microphoneSourceLanguage) {
+                Text("Same as System Audio").tag(SourceLanguage?.none)
+                ForEach(SourceLanguage.allCases) { language in
+                    Text(language.displayName).tag(SourceLanguage?.some(language))
+                }
+            }
+            .help("The language to recognize on the microphone — by default it follows the system audio language")
 
             Picker("Target Language", selection: $localSettings.targetLanguage) {
                 ForEach(TargetLanguage.allCases) { language in

@@ -363,7 +363,10 @@ class OllamaService: ObservableObject {
     }
 
     /// Translate text using streaming for better UX (lower perceived latency)
-    func translateStreaming(text: String, context: [TranslationEntry] = [], onToken: @escaping (String) -> Void) async throws -> Int {
+    /// `onToken` runs synchronously on the MainActor, in stream order, before
+    /// this function returns — callers can rely on having seen every token
+    /// once the await completes.
+    func translateStreaming(text: String, context: [TranslationEntry] = [], onToken: @escaping @MainActor (String) -> Void) async throws -> Int {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return 0
         }

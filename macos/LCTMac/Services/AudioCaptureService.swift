@@ -87,6 +87,11 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     /// deciding the system-audio authorization is missing. Injected so tests
     /// can use a fraction of a second.
     private let systemAudioAuthorizationTimeout: TimeInterval
+    /// Tells whether any output device is playing. A tap only calls back
+    /// while a tapped process plays, so silence means "not authorized" only
+    /// while output is actually running.
+    private let outputActivity: any SystemOutputActivityProbing
+    private let watchdogPollInterval: TimeInterval
     /// The task watching for the tap's first IO callback; cancelled by
     /// teardown and superseded by every new tap start.
     private var systemAudioWatchdogTask: Task<Void, Never>?
@@ -160,12 +165,16 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
          makeSystemAudioTap: @escaping () -> any SystemAudioTapping = { SystemAudioTap() },
          screenPermissionChecker: (() async -> Bool)? = nil,
          screenCaptureStreamStarter: (() async throws -> Void)? = nil,
-         systemAudioAuthorizationTimeout: TimeInterval = 3.0) {
+         systemAudioAuthorizationTimeout: TimeInterval = 3.0,
+         outputActivity: any SystemOutputActivityProbing = CoreAudioOutputActivity(),
+         watchdogPollInterval: TimeInterval = 0.25) {
         self.config = config
         self.makeSystemAudioTap = makeSystemAudioTap
         self.screenPermissionChecker = screenPermissionChecker
         self.screenCaptureStreamStarter = screenCaptureStreamStarter
         self.systemAudioAuthorizationTimeout = systemAudioAuthorizationTimeout
+        self.outputActivity = outputActivity
+        self.watchdogPollInterval = watchdogPollInterval
         super.init()
     }
     
@@ -431,13 +440,28 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     private func startSystemAudioAuthorizationWatchdog(for tap: any SystemAudioTapping, latch: FirstCallbackLatch, attempt: Int) {
         systemAudioWatchdogTask?.cancel()
         let timeout = systemAudioAuthorizationTimeout
+        let pollInterval = watchdogPollInterval
+        let outputActivity = outputActivity
         systemAudioWatchdogTask = Task { [weak self, weak tap] in
-            let fired = await latch.wait(timeout: timeout)
+            // A tap only calls back while some tapped process is playing: with
+            // the Mac silent, an authorized tap is indistinguishable from a
+            // denied one (seen on a real Mac: a quiet start was misreported as
+            // "not authorized"). Only count time during which some output
+            // device is actually running, and wait indefinitely otherwise.
+            var audibleWithoutCallbacks: TimeInterval = 0
+            while !Task.isCancelled {
+                if latch.fired { break }
+                if outputActivity.isAnyOutputRunning() {
+                    audibleWithoutCallbacks += pollInterval
+                    if audibleWithoutCallbacks >= timeout { break }
+                }
+                try? await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
+            }
             guard !Task.isCancelled, let self, let tap else { return }
             // Only act while this tap is still the running system lane — a
             // stop/start cycle makes an old watchdog's verdict irrelevant.
             guard self.systemAudioTap === tap else { return }
-            if fired {
+            if latch.fired {
                 appLog("[AudioCaptureService] ✅ System audio tap is delivering callbacks — authorized")
                 SystemAudioAuthorizationStore.record(.granted)
             } else if attempt < Self.systemAudioTapAttempts {
@@ -470,7 +494,7 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     /// ViewModel on the MainActor.
     private func handleSystemAudioAuthorizationDenied(tap: any SystemAudioTapping) {
         guard let current = systemAudioTap, current === tap else { return }
-        appLog("[AudioCaptureService] ⚠️ System audio tap delivered no callbacks within \(systemAudioAuthorizationTimeout)s — recording not authorized")
+        appLog("[AudioCaptureService] ⚠️ System audio tap delivered no callbacks during \(systemAudioAuthorizationTimeout)s of playing output — recording not authorized")
         systemAudioTap = nil
         systemAudioBackend = .none
         systemAudioAuthorizationDenied = true

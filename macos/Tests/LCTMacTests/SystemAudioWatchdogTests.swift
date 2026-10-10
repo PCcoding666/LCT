@@ -45,17 +45,31 @@ final class SystemAudioWatchdogTests: XCTestCase {
         }
     }
 
+    /// Fake "is some other process playing?" signal for the watchdog.
+    private final class FakeOutputActivity: SystemOutputActivityProbing, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _running: Bool
+        init(running: Bool) { _running = running }
+        var running: Bool {
+            get { lock.lock(); defer { lock.unlock() }; return _running }
+            set { lock.lock(); _running = newValue; lock.unlock() }
+        }
+        func isAnyOutputRunning() -> Bool { running }
+    }
+
     private func makeService(
         tap: FakeSystemAudioTap,
         timeout: TimeInterval,
+        outputActivity: FakeOutputActivity = FakeOutputActivity(running: true),
         onDenied: (@MainActor (Bool) -> Void)? = nil
     ) -> AudioCaptureService {
-        makeService(makeTap: { tap }, timeout: timeout, onDenied: onDenied)
+        makeService(makeTap: { tap }, timeout: timeout, outputActivity: outputActivity, onDenied: onDenied)
     }
 
     private func makeService(
         makeTap: @escaping () -> any SystemAudioTapping,
         timeout: TimeInterval,
+        outputActivity: FakeOutputActivity = FakeOutputActivity(running: true),
         onDenied: (@MainActor (Bool) -> Void)? = nil
     ) -> AudioCaptureService {
         let service = AudioCaptureService(
@@ -67,7 +81,9 @@ final class SystemAudioWatchdogTests: XCTestCase {
             screenCaptureStreamStarter: {
                 XCTFail("a silent tap is a denial, not a setup failure — the ScreenCaptureKit fallback must stay untouched")
             },
-            systemAudioAuthorizationTimeout: timeout
+            systemAudioAuthorizationTimeout: timeout,
+            outputActivity: outputActivity,
+            watchdogPollInterval: 0.02
         )
         service.onSystemAudioAuthorizationDenied = onDenied
         return service
@@ -158,6 +174,46 @@ final class SystemAudioWatchdogTests: XCTestCase {
 
         await service.stopCapture()
         XCTAssertEqual(workingTap.stopCallCount, 1)
+    }
+
+    /// Real-Mac regression: with nothing playing on the Mac, an authorized
+    /// tap delivers no callbacks either. Silence must never be reported as a
+    /// denial — the watchdog waits until something actually plays.
+    func testSystemAudioWatchdog_NothingPlaying_NeverReportsDenial() async throws {
+        let tap = FakeSystemAudioTap()
+        var denialReports: [Bool] = []
+        let quiet = FakeOutputActivity(running: false)
+        let service = makeService(tap: tap, timeout: 0.1, outputActivity: quiet, onDenied: { denialReports.append($0) })
+
+        try await service.startCapture()
+        // Many windows' worth of silence.
+        try? await Task.sleep(nanoseconds: 600_000_000)
+
+        XCTAssertTrue(denialReports.isEmpty, "a quiet Mac must not be reported as a denial")
+        XCTAssertFalse(service.systemAudioAuthorizationDenied)
+        XCTAssertEqual(tap.startCallCount, 1, "no rebuild while nothing is playing")
+        XCTAssertEqual(tap.stopCallCount, 0)
+        XCTAssertEqual(service.systemAudioBackend, .coreAudioTap)
+
+        await service.stopCapture()
+    }
+
+    /// Only audible time counts: once something starts playing and the tap
+    /// still stays silent, the usual rebuild-then-deny path runs.
+    func testSystemAudioWatchdog_PlaybackStartsLater_CountsOnlyAudibleTime() async throws {
+        let tap = FakeSystemAudioTap()
+        var denialReports: [Bool] = []
+        let activity = FakeOutputActivity(running: false)
+        let service = makeService(tap: tap, timeout: 0.1, outputActivity: activity, onDenied: { denialReports.append($0) })
+
+        try await service.startCapture()
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertTrue(denialReports.isEmpty, "silence before playback starts must not count")
+
+        activity.running = true
+        let denialReported = await waitForCondition { denialReports.count == 1 }
+        XCTAssertTrue(denialReported, "playback without callbacks must end in a denial")
+        XCTAssertEqual(tap.startCallCount, 2, "the silent tap is rebuilt once first")
     }
 
     /// A stop that lands before the window expires cancels the watchdog:

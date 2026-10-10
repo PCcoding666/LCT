@@ -560,6 +560,26 @@ extension SpeechAnalyzerService: SpeechRecognitionEngine {
     var lastErrorPublisher: AnyPublisher<String?, Never> {
         $lastError.eraseToAnyPublisher()
     }
+
+    /// The legacy engine runs a single lane, so a lane restart is a stop +
+    /// start of that lane with the new language. The stop runs first so any
+    /// failure below leaves the lane stopped rather than half-configured.
+    func restartLane(_ source: AudioSource, language: SourceLanguage) async throws {
+        appLog("[SpeechAnalyzerService] [\(source.rawValue)] lane restart requested (language: \(language.rawValue))")
+        stop()
+        try await start(sources: [source], languages: [source: language])
+    }
+
+    /// The legacy engine never downloads models: a language with an on-device
+    /// recognizer is usable now, everything else is unsupported.
+    func languageAvailability() async -> [SourceLanguage: LanguageAvailability] {
+        var result: [SourceLanguage: LanguageAvailability] = [:]
+        for language in SourceLanguage.allCases {
+            let installed = isOnDeviceRecognitionAvailable(locale: language.locale)
+            result[language] = LanguageAvailability(isSupported: installed, isInstalled: installed)
+        }
+        return result
+    }
 }
 
 // MARK: - Error Types

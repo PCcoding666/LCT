@@ -42,7 +42,7 @@ cd macos
 ./Scripts/dev-run.sh
 ```
 
-`dev-run.sh` 会自动挑选签名身份：优先使用 `LCT_SIGN_IDENTITY`；未设置时取钥匙串里第一个 Apple Development 证书的 SHA-1 哈希，并打印出来。想固定身份，把它写进 `~/.zshrc`：`export LCT_SIGN_IDENTITY=<哈希>`（同名证书有多张时必须用哈希）。
+`dev-run.sh` 会自动挑选签名身份：优先使用 `LCT_SIGN_IDENTITY`；未设置时取钥匙串里第一个可用的 Apple Development 证书的 SHA-1 哈希，并打印出来。已被吊销的证书会被跳过并打印原因：用吊销证书签名的 app 能通过 `codesign --verify`，但 macOS 会拒绝启动。想固定身份，把它写进 `~/.zshrc`：`export LCT_SIGN_IDENTITY=<哈希>`（同名证书有多张时必须用哈希）。
 
 **不要**用 `swift run` 启动或直接运行 `.build/.../LCTMac` 来测试权限相关功能：macOS 按签名身份记录隐私授权，裸可执行文件会把权限记到终端名下，和打包后的 app 对不上，表现为"授权过却失效"。
 

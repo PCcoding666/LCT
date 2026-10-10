@@ -202,10 +202,24 @@ final class SystemAudioTap: SystemAudioTapping, @unchecked Sendable {
     nonisolated(unsafe) var onAudioBuffer: (@Sendable (AVAudioPCMBuffer) -> Void)?
     nonisolated(unsafe) var onFirstCallback: (@Sendable () -> Void)?
 
+    /// Which processes the tap records.
+    enum Target: Equatable {
+        /// Everything the Mac plays except LCT itself — the capture lane.
+        case systemExcludingSelf
+        /// Only LCT's own output — the permission probe, which plays a short
+        /// silence itself so the tap has audio to deliver even when nothing
+        /// else on the Mac is playing.
+        case ownProcessOnly
+    }
+
+    private let target: Target
+
     init(hardware: any SystemAudioTapHardware = CoreAudioTapHardware(),
+         target: Target = .systemExcludingSelf,
          targetSampleRate: Double = 16000,
          targetChannels: Int = 1) {
         self.hardware = hardware
+        self.target = target
         self.targetSampleRate = targetSampleRate
         self.targetChannels = targetChannels
     }
@@ -228,9 +242,16 @@ final class SystemAudioTap: SystemAudioTapping, @unchecked Sendable {
             let own = hardware.translatePIDToProcessObject(ProcessInfo.processInfo.processIdentifier)
             try Self.check(own.status, "translatePIDToProcessObject")
 
-            // 2. Private global stereo tap excluding ourselves.
+            // 2. Private stereo tap: everything except ourselves, or (probe)
+            // only ourselves.
             let tapUUID = UUID()
-            let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [own.objectID])
+            let description: CATapDescription
+            switch target {
+            case .systemExcludingSelf:
+                description = CATapDescription(stereoGlobalTapButExcludeProcesses: [own.objectID])
+            case .ownProcessOnly:
+                description = CATapDescription(stereoMixdownOfProcesses: [own.objectID])
+            }
             description.uuid = tapUUID
             description.name = "LCT system audio tap"
             description.isPrivate = true

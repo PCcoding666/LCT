@@ -49,6 +49,19 @@ final class SystemAudioPermissionProbeTests: XCTestCase {
         }
     }
 
+    /// Records start/stop; never touches real audio hardware.
+    private final class FakeSilencePlayer: SilencePlaying, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _starts = 0
+        private var _stops = 0
+        var starts: Int { lock.lock(); defer { lock.unlock() }; return _starts }
+        var stops: Int { lock.lock(); defer { lock.unlock() }; return _stops }
+        func start() throws { lock.lock(); _starts += 1; lock.unlock() }
+        func stop() { lock.lock(); _stops += 1; lock.unlock() }
+    }
+
+    private let silence = FakeSilencePlayer()
+
     private func freshDefaults() -> UserDefaults {
         UserDefaults(suiteName: "SystemAudioPermissionProbeTests-\(UUID().uuidString)")!
     }
@@ -60,11 +73,13 @@ final class SystemAudioPermissionProbeTests: XCTestCase {
         tap.deliversCallbacks = true
         let defaults = freshDefaults()
 
-        let result = await SystemAudioPermissionProbe.run(makeTap: { tap }, timeout: 5, defaults: defaults)
+        let result = await SystemAudioPermissionProbe.run(makeTap: { tap }, makeSilencePlayer: { [silence] in silence }, timeout: 5, defaults: defaults)
 
         XCTAssertEqual(result, .granted)
         XCTAssertEqual(tap.startCallCount, 1)
         XCTAssertEqual(tap.stopCallCount, 1, "the probe must always stop the tap it started")
+        XCTAssertEqual(silence.starts, 1, "the probe plays silence so the own-process tap has audio")
+        XCTAssertEqual(silence.stops, 1, "the probe silence is always stopped")
         XCTAssertEqual(SystemAudioAuthorizationStore.lastResult(defaults: defaults), .granted)
     }
 
@@ -72,7 +87,7 @@ final class SystemAudioPermissionProbeTests: XCTestCase {
         let tap = FakeSystemAudioTap()
         let defaults = freshDefaults()
 
-        let result = await SystemAudioPermissionProbe.run(makeTap: { tap }, timeout: 0.1, defaults: defaults)
+        let result = await SystemAudioPermissionProbe.run(makeTap: { tap }, makeSilencePlayer: { [silence] in silence }, timeout: 0.1, defaults: defaults)
 
         XCTAssertEqual(result, .denied)
         XCTAssertEqual(tap.startCallCount, 2, "a silent tap is rebuilt once before the probe reports denied")
@@ -90,7 +105,7 @@ final class SystemAudioPermissionProbeTests: XCTestCase {
         let taps = TapSequence([silentTap, workingTap])
         let defaults = freshDefaults()
 
-        let result = await SystemAudioPermissionProbe.run(makeTap: { taps.next() }, timeout: 0.1, defaults: defaults)
+        let result = await SystemAudioPermissionProbe.run(makeTap: { taps.next() }, makeSilencePlayer: { [silence] in silence }, timeout: 0.1, defaults: defaults)
 
         XCTAssertEqual(result, .granted)
         XCTAssertEqual(silentTap.stopCallCount, 1, "the silent tap is stopped before the retry")
@@ -116,7 +131,7 @@ final class SystemAudioPermissionProbeTests: XCTestCase {
         tap.errorToThrow = SystemAudioTapError(step: "AudioHardwareCreateProcessTap", status: -50)
         let defaults = freshDefaults()
 
-        let result = await SystemAudioPermissionProbe.run(makeTap: { tap }, timeout: 0.1, defaults: defaults)
+        let result = await SystemAudioPermissionProbe.run(makeTap: { tap }, makeSilencePlayer: { [silence] in silence }, timeout: 0.1, defaults: defaults)
 
         XCTAssertEqual(result, .denied, "a tap that cannot be created reports denied — the remediation is the same")
         XCTAssertEqual(tap.stopCallCount, 1)
