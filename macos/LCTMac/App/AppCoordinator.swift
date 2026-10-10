@@ -28,8 +28,8 @@ enum CaptureCommand: Equatable {
 
 /// App-lifetime owner of the transcription view model and the subtitle
 /// overlay, and the one observer of the app-level commands: start/stop,
-/// pause, overlay, and settings changes from the menu bar, the status bar
-/// item, the global hotkeys, and the Settings window.
+/// pause, overlay, session export, and settings changes from the menu bar,
+/// the status bar item, the global hotkeys, and the Settings window.
 ///
 /// It lives on the app delegate rather than in a view because the app keeps
 /// running in the menu bar after the main window is closed: those commands,
@@ -127,6 +127,17 @@ final class AppCoordinator {
         overlayController.toggle(with: viewModel)
     }
 
+    /// File ▸ Export. The session outlives the main window, so it can still
+    /// be exported after the window was closed; the window comes back first
+    /// so the export's result notice is visible.
+    func exportSession(_ format: SessionExporter.Format) {
+        guard isSetupComplete() else { return }
+        if !isMainWindowVisible() {
+            showMainWindow()
+        }
+        viewModel.exportSession(format)
+    }
+
     /// The ⌘, Settings window saved new settings — apply them to the running
     /// app. A view model created later loads them itself. updateSettings
     /// never re-posts this notification, so there is no loop.
@@ -152,6 +163,13 @@ final class AppCoordinator {
         notificationCenter.publisher(for: .toggleOverlay)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.toggleOverlay() }
+            .store(in: &cancellables)
+
+        notificationCenter.publisher(for: .exportSession)
+            // File menu export commands carry the format raw value.
+            .compactMap { ($0.object as? String).flatMap(SessionExporter.Format.init(rawValue:)) }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] format in self?.exportSession(format) }
             .store(in: &cancellables)
 
         notificationCenter.publisher(for: .settingsDidChange)

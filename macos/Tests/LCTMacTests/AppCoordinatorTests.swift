@@ -10,6 +10,7 @@ private final class RecordingViewModel: TranscriptionViewModel {
     override func start() async { onCall?("start") }
     override func stop() async { onCall?("stop") }
     override func toggleCapture() async { onCall?("toggleCapture") }
+    override func exportSession(_ format: SessionExporter.Format) { onCall?("export:\(format.rawValue)") }
 }
 
 /// Stands in for the main window and onboarding state, and logs window and
@@ -153,6 +154,45 @@ final class AppCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.events, ["showMainWindow", "start", "showMainWindow", "stop"])
         XCTAssertEqual(harness.createdViewModels.count, 1)
         XCTAssertTrue(coordinator.viewModel === firstViewModel, "the session must not be replaced when the window reopens")
+    }
+
+    // MARK: - Export
+
+    /// The session outlives the window, so File ▸ Export must still work
+    /// after the window was closed.
+    func testExportSessionNotification_MainWindowClosed_ShowsWindowThenExports() async {
+        let harness = CoordinatorHarness()
+        let coordinator = harness.makeCoordinator()
+        let format = SessionExporter.Format.srt
+
+        harness.notificationCenter.post(name: .exportSession, object: format.rawValue)
+
+        let delivered = await waitFor { harness.events == ["showMainWindow", "export:\(format.rawValue)"] }
+        XCTAssertTrue(delivered, "events: \(harness.events)")
+        withExtendedLifetime(coordinator) {}
+    }
+
+    func testExportSessionNotification_UnknownFormat_IsIgnored() async {
+        let harness = CoordinatorHarness()
+        harness.windowVisible = true
+        let coordinator = harness.makeCoordinator()
+
+        harness.notificationCenter.post(name: .exportSession, object: "not-a-format")
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertTrue(harness.events.isEmpty, "events: \(harness.events)")
+        withExtendedLifetime(coordinator) {}
+    }
+
+    func testExportSession_SetupNotCompleted_DoesNothing() {
+        let harness = CoordinatorHarness()
+        harness.setupComplete = false
+        let coordinator = harness.makeCoordinator()
+
+        coordinator.exportSession(.markdown)
+
+        XCTAssertTrue(harness.events.isEmpty, "events: \(harness.events)")
+        XCTAssertTrue(harness.createdViewModels.isEmpty, "onboarding has no session to export")
     }
 
     // MARK: - Pause and settings

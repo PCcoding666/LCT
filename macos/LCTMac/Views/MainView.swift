@@ -88,20 +88,14 @@ struct MainView: View {
             // runs once in AppCoordinator, not on every window appearance.
             await viewModel.refreshLanguageAvailability()
         }
-        // Start/stop, pause, overlay and settings-change notifications are
-        // handled by AppCoordinator, which outlives this window; only
-        // window-scoped commands are handled here.
+        // Start/stop, pause, overlay, settings-change and File-menu export
+        // notifications are handled by AppCoordinator, which outlives this
+        // window; only window-scoped commands are handled here.
         .onReceive(NotificationCenter.default.publisher(for: .copyTranslation)) { _ in
             viewModel.copyToClipboard()
         }
         .onReceive(NotificationCenter.default.publisher(for: .showHistory)) { _ in
             showHistory = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .exportSession)) { notification in
-            // File menu export commands carry the format raw value.
-            guard let raw = notification.object as? String,
-                  let format = SessionExporter.Format(rawValue: raw) else { return }
-            viewModel.exportSession(format)
         }
     }
 
