@@ -61,27 +61,43 @@ enum SystemAudioAuthorizationStore {
 enum SystemAudioPermissionProbe {
     /// Start a fresh tap, wait up to `timeout` (counted from `start()`
     /// returning) for the first IO callback, then always stop the tap.
+    ///
+    /// Silence is retried with a brand-new tap (`attempts` in total): on a
+    /// real Mac, a tap whose IO proc was created while the consent prompt was
+    /// still on screen delivered no callbacks even after the user clicked
+    /// Allow, while the next tap worked. Without the retry, onboarding would
+    /// report "Denied" right after the user allowed it.
+    ///
     /// A tap that cannot even be created reports `.denied` — the user-facing
     /// remediation (the Settings pane) is the same either way.
     static func run(
         makeTap: @Sendable () -> any SystemAudioTapping = { SystemAudioTap() },
         timeout: TimeInterval = 3.0,
+        attempts: Int = 2,
         defaults: UserDefaults = .standard
     ) async -> SystemAudioAuthorization {
-        let tap = makeTap()
-        let latch = FirstCallbackLatch()
-        tap.onFirstCallback = { latch.fire() }
-        do {
-            try tap.start()
-        } catch {
-            appLog("[SystemAudioPermissionProbe] ⚠️ Tap could not start (\(error)); reporting denied")
+        var result: SystemAudioAuthorization = .denied
+        for attempt in 1...max(attempts, 1) {
+            let tap = makeTap()
+            let latch = FirstCallbackLatch()
+            tap.onFirstCallback = { latch.fire() }
+            do {
+                try tap.start()
+            } catch {
+                appLog("[SystemAudioPermissionProbe] ⚠️ Tap could not start (\(error)); reporting denied")
+                tap.stop()
+                result = .denied
+                break
+            }
+            let fired = await latch.wait(timeout: timeout)
             tap.stop()
-            SystemAudioAuthorizationStore.record(.denied, defaults: defaults)
-            return .denied
+            if fired {
+                result = .granted
+                break
+            }
+            appLog("[SystemAudioPermissionProbe] No callbacks on attempt \(attempt) of \(attempts)")
+            if Task.isCancelled { break }
         }
-        let fired = await latch.wait(timeout: timeout)
-        tap.stop()
-        let result: SystemAudioAuthorization = fired ? .granted : .denied
         appLog("[SystemAudioPermissionProbe] Probe result: \(result.rawValue)")
         SystemAudioAuthorizationStore.record(result, defaults: defaults)
         return result

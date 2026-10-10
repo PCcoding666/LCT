@@ -50,8 +50,16 @@ final class SystemAudioWatchdogTests: XCTestCase {
         timeout: TimeInterval,
         onDenied: (@MainActor (Bool) -> Void)? = nil
     ) -> AudioCaptureService {
+        makeService(makeTap: { tap }, timeout: timeout, onDenied: onDenied)
+    }
+
+    private func makeService(
+        makeTap: @escaping () -> any SystemAudioTapping,
+        timeout: TimeInterval,
+        onDenied: (@MainActor (Bool) -> Void)? = nil
+    ) -> AudioCaptureService {
         let service = AudioCaptureService(
-            makeSystemAudioTap: { tap },
+            makeSystemAudioTap: makeTap,
             screenPermissionChecker: {
                 XCTFail("a silent tap is a denial, not a setup failure — the ScreenCaptureKit fallback must stay untouched")
                 return false
@@ -102,10 +110,10 @@ final class SystemAudioWatchdogTests: XCTestCase {
         try await service.startCapture()
         XCTAssertEqual(service.systemAudioBackend, .coreAudioTap)
 
-        let tapStopped = await waitForCondition { tap.stopCallCount == 1 }
-        XCTAssertTrue(tapStopped, "a silent tap must be stopped once the window expires")
         let denialReported = await waitForCondition { denialReports.count == 1 }
         XCTAssertTrue(denialReported, "the denial must reach the ViewModel callback")
+        XCTAssertEqual(tap.startCallCount, 2, "a silent tap is rebuilt once before it counts as denied")
+        XCTAssertEqual(tap.stopCallCount, 2, "both silent taps must be stopped")
 
         // The MainActor denial block ran (it fired the callback), so its
         // state updates are already visible.
@@ -114,6 +122,42 @@ final class SystemAudioWatchdogTests: XCTestCase {
         XCTAssertEqual(service.systemAudioBackend, .none)
         XCTAssertEqual(service.activeSources, [])
         XCTAssertFalse(service.isCapturing)
+    }
+
+    /// Real-Mac regression: a tap created while the consent prompt was on
+    /// screen stayed silent after the user clicked Allow; a fresh tap worked.
+    /// The watchdog must rebuild the tap instead of reporting a denial.
+    func testSystemAudioWatchdog_FirstTapSilentRebuiltTapDelivers_NoDenial() async throws {
+        let silentTap = FakeSystemAudioTap()
+        let workingTap = FakeSystemAudioTap()
+        var handedOut = 0
+        var denialReports: [Bool] = []
+        let service = makeService(
+            makeTap: {
+                handedOut += 1
+                return handedOut == 1 ? silentTap : workingTap
+            },
+            timeout: 0.1,
+            onDenied: { denialReports.append($0) }
+        )
+
+        try await service.startCapture()
+
+        let rebuilt = await waitForCondition { workingTap.startCallCount == 1 }
+        XCTAssertTrue(rebuilt, "the silent tap must be replaced by a fresh one")
+        XCTAssertEqual(silentTap.stopCallCount, 1, "the silent tap is stopped before the rebuild")
+        workingTap.onFirstCallback?()
+
+        // Let the second window expire.
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        XCTAssertTrue(denialReports.isEmpty, "a rebuilt tap that calls back must not be reported as denied")
+        XCTAssertFalse(service.systemAudioAuthorizationDenied)
+        XCTAssertEqual(service.systemAudioBackend, .coreAudioTap)
+        XCTAssertEqual(workingTap.stopCallCount, 0, "the working tap keeps running")
+
+        await service.stopCapture()
+        XCTAssertEqual(workingTap.stopCallCount, 1)
     }
 
     /// A stop that lands before the window expires cancels the watchdog:

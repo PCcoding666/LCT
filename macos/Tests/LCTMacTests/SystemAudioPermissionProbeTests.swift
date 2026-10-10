@@ -75,9 +75,40 @@ final class SystemAudioPermissionProbeTests: XCTestCase {
         let result = await SystemAudioPermissionProbe.run(makeTap: { tap }, timeout: 0.1, defaults: defaults)
 
         XCTAssertEqual(result, .denied)
-        XCTAssertEqual(tap.startCallCount, 1)
-        XCTAssertEqual(tap.stopCallCount, 1, "the probe must stop the tap even when nothing came back")
+        XCTAssertEqual(tap.startCallCount, 2, "a silent tap is rebuilt once before the probe reports denied")
+        XCTAssertEqual(tap.stopCallCount, 2, "the probe must stop every tap it started, even when nothing came back")
         XCTAssertEqual(SystemAudioAuthorizationStore.lastResult(defaults: defaults), .denied)
+    }
+
+    /// Real-Mac regression: the tap created while the consent prompt was on
+    /// screen stayed silent after the user clicked Allow; a fresh tap worked.
+    /// The probe must report granted, not denied.
+    func testSystemAudioPermissionProbe_FirstTapSilentSecondDelivers_ReturnsGranted() async {
+        let silentTap = FakeSystemAudioTap()
+        let workingTap = FakeSystemAudioTap()
+        workingTap.deliversCallbacks = true
+        let taps = TapSequence([silentTap, workingTap])
+        let defaults = freshDefaults()
+
+        let result = await SystemAudioPermissionProbe.run(makeTap: { taps.next() }, timeout: 0.1, defaults: defaults)
+
+        XCTAssertEqual(result, .granted)
+        XCTAssertEqual(silentTap.stopCallCount, 1, "the silent tap is stopped before the retry")
+        XCTAssertEqual(workingTap.startCallCount, 1)
+        XCTAssertEqual(workingTap.stopCallCount, 1)
+        XCTAssertEqual(SystemAudioAuthorizationStore.lastResult(defaults: defaults), .granted)
+    }
+
+    /// Hands out fake taps in order (thread-safe; the probe's factory is @Sendable).
+    private final class TapSequence: @unchecked Sendable {
+        private let lock = NSLock()
+        private var taps: [FakeSystemAudioTap]
+        init(_ taps: [FakeSystemAudioTap]) { self.taps = taps }
+        func next() -> FakeSystemAudioTap {
+            lock.lock()
+            defer { lock.unlock() }
+            return taps.count > 1 ? taps.removeFirst() : taps[0]
+        }
     }
 
     func testSystemAudioPermissionProbe_StartThrows_ReturnsDeniedAndStopsTap() async {

@@ -363,18 +363,32 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     /// which needs no screen-recording permission. Only when the tap cannot
     /// be created does this fall back to the ScreenCaptureKit stream — and
     /// only that fallback checks the screen-recording permission.
-    private func startSystemAudioStream() async throws {
+    /// Create a tap wired to the `.system` lane and start it. The latch fires
+    /// on the first IO callback — macOS gives no error when the system-audio
+    /// authorization is missing (the tap just never calls back), so that
+    /// callback is the consent signal.
+    private func makeAndStartSystemAudioTap() throws -> (tap: any SystemAudioTapping, latch: FirstCallbackLatch) {
         let tap = makeSystemAudioTap()
         tap.onAudioBuffer = { [weak self] buffer in
             self?.processAudioBufferBackground(buffer, source: .system)
         }
-        // Assigned before start() so the tap captures it: macOS gives no
-        // error when the system-audio authorization is missing — the tap just
-        // never calls back — so the first IO callback is the consent signal.
+        // Assigned before start() so the tap captures it.
         let firstCallbackLatch = FirstCallbackLatch()
         tap.onFirstCallback = { firstCallbackLatch.fire() }
         do {
             try tap.start()
+        } catch {
+            tap.stop()
+            throw error
+        }
+        return (tap, firstCallbackLatch)
+    }
+
+    private func startSystemAudioStream() async throws {
+        let tap: any SystemAudioTapping
+        let firstCallbackLatch: FirstCallbackLatch
+        do {
+            (tap, firstCallbackLatch) = try makeAndStartSystemAudioTap()
         } catch {
             appLog("[AudioCaptureService] ⚠️ Core Audio tap failed (\(error)); falling back to ScreenCaptureKit")
             let hasScreenPermission: Bool
@@ -400,7 +414,7 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
         systemAudioBackend = .coreAudioTap
         systemAudioTapFailure = nil
         systemAudioAuthorizationDenied = false
-        startSystemAudioAuthorizationWatchdog(for: tap, latch: firstCallbackLatch)
+        startSystemAudioAuthorizationWatchdog(for: tap, latch: firstCallbackLatch, attempt: 1)
         appLog("[AudioCaptureService] System audio running on Core Audio tap")
     }
 
@@ -408,7 +422,13 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     /// tap calls back continuously (even in silence); a denied one never
     /// calls back at all, so silence for the whole window means "not
     /// authorized" — never a broken tap (those throw out of `start()`).
-    private func startSystemAudioAuthorizationWatchdog(for tap: any SystemAudioTapping, latch: FirstCallbackLatch) {
+    /// Taps started per capture before silence counts as "not authorized".
+    /// A tap whose IO proc was created while the consent prompt was still on
+    /// screen delivered no callbacks on a real Mac even after the user clicked
+    /// Allow; the next tap worked. One rebuild covers that case.
+    private static let systemAudioTapAttempts = 2
+
+    private func startSystemAudioAuthorizationWatchdog(for tap: any SystemAudioTapping, latch: FirstCallbackLatch, attempt: Int) {
         systemAudioWatchdogTask?.cancel()
         let timeout = systemAudioAuthorizationTimeout
         systemAudioWatchdogTask = Task { [weak self, weak tap] in
@@ -420,9 +440,27 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
             if fired {
                 appLog("[AudioCaptureService] ✅ System audio tap is delivering callbacks — authorized")
                 SystemAudioAuthorizationStore.record(.granted)
+            } else if attempt < Self.systemAudioTapAttempts {
+                self.retrySilentSystemAudioTap(tap, attempt: attempt)
             } else {
                 self.handleSystemAudioAuthorizationDenied(tap: tap)
             }
+        }
+    }
+
+    /// The tap stayed silent: replace it with a brand-new tap and watch that
+    /// one. A tap that cannot be created on the retry counts as denied.
+    private func retrySilentSystemAudioTap(_ silentTap: any SystemAudioTapping, attempt: Int) {
+        guard let current = systemAudioTap, current === silentTap else { return }
+        appLog("[AudioCaptureService] ⚠️ System audio tap silent on attempt \(attempt) — rebuilding the tap")
+        silentTap.stop()
+        do {
+            let (freshTap, latch) = try makeAndStartSystemAudioTap()
+            systemAudioTap = freshTap
+            startSystemAudioAuthorizationWatchdog(for: freshTap, latch: latch, attempt: attempt + 1)
+        } catch {
+            appLog("[AudioCaptureService] ⚠️ Rebuilding the system audio tap failed (\(error))")
+            handleSystemAudioAuthorizationDenied(tap: silentTap)
         }
     }
 
