@@ -115,6 +115,12 @@ private final class LockedLaneBoxes: @unchecked Sendable {
         _boxes[source] = box
     }
 
+    func remove(for source: AudioSource) {
+        os_unfair_lock_lock(&_lock)
+        defer { os_unfair_lock_unlock(&_lock) }
+        _boxes[source] = nil
+    }
+
     func removeAll() {
         os_unfair_lock_lock(&_lock)
         defer { os_unfair_lock_unlock(&_lock) }
@@ -158,6 +164,10 @@ final class SpeechTranscriberEngine: SpeechRecognitionEngine {
     /// async teardown would otherwise be lost).
     private var lastSessionStats: [AudioSource: LaneStats] = [:]
     private var isRunning = false
+    /// Monotonic per-lane restart counter. restartLane bumps it up front and
+    /// re-checks it after every suspension point, so two overlapping restarts
+    /// of the same lane can never both rebuild it — the stale one bows out.
+    private var laneRestartGenerations: [AudioSource: Int] = [:]
     /// Lane-scoped error descriptions for diagnostics (messages only, never
     /// transcript content). Capped so a flapping lane can't grow memory.
     private var laneErrors: [AudioSource: [String]] = [:]
@@ -307,6 +317,11 @@ final class SpeechTranscriberEngine: SpeechRecognitionEngine {
         // results for lanes that are no longer registered.
         laneBoxes.removeAll()
         isRunning = false
+        // Invalidate in-flight lane restarts: a restart resuming after stop()
+        // must not rebuild a lane behind the caller's back.
+        for source in Array(laneRestartGenerations.keys) {
+            laneRestartGenerations[source]! += 1
+        }
 
         for lane in activeLanes.values {
             lane.box.finishInput()
@@ -339,6 +354,72 @@ final class SpeechTranscriberEngine: SpeechRecognitionEngine {
                 .joined(separator: " | ")
             appLog("[SpeechTranscriberEngine] stop() summary: \(summary)")
         }
+    }
+
+    /// Restart a single lane with a new recognition language; every other lane
+    /// keeps running untouched. The lane goes through the same teardown as
+    /// stop() (finish input, finalize ≤2s, drain results) and is then rebuilt
+    /// with the new language, downloading its on-device model first when
+    /// needed. A failure leaves the lane stopped and sets `lastError`.
+    func restartLane(_ source: AudioSource, language: SourceLanguage) async throws {
+        let generation = (laneRestartGenerations[source] ?? 0) + 1
+        laneRestartGenerations[source] = generation
+        appLog("[SpeechTranscriberEngine] [\(source.rawValue)] lane restart requested (language: \(language.rawValue))")
+
+        // Single-lane scoped teardown, mirroring stop().
+        if let lane = lanes[source] {
+            laneBoxes.remove(for: source)
+            lane.box.finishInput()
+            await finalize(lane.analyzer, source: source)
+            await drain(lane.resultsTask, source: source)
+            // Remove only the lane this call finalized: a start() that ran
+            // while we were awaiting may have registered a fresh lane.
+            if let current = lanes[source], current.box === lane.box {
+                lanes[source] = nil
+            }
+        }
+
+        func superseded() -> Bool {
+            !isRunning || laneRestartGenerations[source] != generation
+        }
+
+        // A stop() or a newer restart of this lane ran while we were awaiting.
+        guard !superseded() else {
+            appLog("[SpeechTranscriberEngine] ⏭ [\(source.rawValue)] lane restart superseded before rebuild")
+            return
+        }
+
+        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: language.locale) else {
+            lastError = "On-device speech recognition is not available for \(language.displayName)."
+            appLog("[SpeechTranscriberEngine] ❌ No supported locale for \(language.displayName)")
+            throw SpeechAnalyzerError.onDeviceRecognitionUnavailable
+        }
+        let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
+        // Downloads the on-device model when missing (can take minutes — the
+        // VM shows the download notice via onModelDownloadStatus).
+        try await ensureAssetsInstalled(for: [transcriber], language: language)
+
+        guard !superseded() else {
+            appLog("[SpeechTranscriberEngine] ⏭ [\(source.rawValue)] lane restart superseded after asset install")
+            return
+        }
+
+        try await startLane(source: source, transcriber: transcriber)
+        lastError = nil
+        appLog("[SpeechTranscriberEngine] ✅ [\(source.rawValue)] lane restarted (language: \(language.rawValue))")
+    }
+
+    /// Per-language on-device availability for the language menu: supported by
+    /// SpeechTranscriber (possibly after a model download) or already installed.
+    func languageAvailability() async -> [SourceLanguage: LanguageAvailability] {
+        let installedLocales = await SpeechTranscriber.installedLocales
+        var result: [SourceLanguage: LanguageAvailability] = [:]
+        for language in SourceLanguage.allCases {
+            let supported = await SpeechTranscriber.supportedLocale(equivalentTo: language.locale)
+            let isInstalled = supported.map { installedLocales.contains($0) } ?? false
+            result[language] = LanguageAvailability(isSupported: supported != nil, isInstalled: isInstalled)
+        }
+        return result
     }
 
     /// Flush remaining results, giving the analyzer at most 2 seconds before
@@ -427,8 +508,9 @@ final class SpeechTranscriberEngine: SpeechRecognitionEngine {
     }
 
     private func handleTranscriberError(_ error: Error, source: AudioSource) {
-        // Errors arriving after stop() (cancelled results stream) are expected
-        // teardown noise, not failures.
+        // Errors arriving after stop()/restartLane() (cancelled results stream)
+        // are expected teardown noise, not failures.
+        guard !(error is CancellationError) else { return }
         guard isRunning, var lane = lanes[source] else { return }
         lane.stats.errorCount += 1
         lanes[source] = lane

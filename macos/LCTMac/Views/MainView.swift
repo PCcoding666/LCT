@@ -13,6 +13,42 @@ enum HUD {
     }
 }
 
+/// Pure formatting for the HUD language label and the empty-state listening
+/// line. Kept view-free so it is unit-testable.
+enum LanguageLabel {
+    /// Top-bar label: `ZH → EN` when both lanes share a recognition language;
+    /// `SYS ZH · MIC EN → EN` when the microphone lane is active and differs.
+    static func format(
+        system: SourceLanguage,
+        microphone: SourceLanguage?,
+        target: TargetLanguage,
+        microphoneActive: Bool
+    ) -> String {
+        let sys = system.isoCode.uppercased()
+        let mic = (microphone ?? system).isoCode.uppercased()
+        let tgt = target.isoCode.uppercased()
+        guard microphoneActive, mic != sys else {
+            return "\(sys) → \(tgt)"
+        }
+        return "SYS \(sys) · MIC \(mic) → \(tgt)"
+    }
+
+    /// Empty-state line while capturing: `// listening (ZH)…`, or
+    /// `// listening (SYS ZH · MIC EN)…` when the lanes differ.
+    static func listening(
+        system: SourceLanguage,
+        microphone: SourceLanguage?,
+        microphoneActive: Bool
+    ) -> String {
+        let sys = system.isoCode.uppercased()
+        let mic = (microphone ?? system).isoCode.uppercased()
+        guard microphoneActive, mic != sys else {
+            return "// listening (\(sys))…"
+        }
+        return "// listening (SYS \(sys) · MIC \(mic))…"
+    }
+}
+
 /// Main application view with transcription and translation display
 @MainActor
 struct MainView: View {
@@ -50,6 +86,9 @@ struct MainView: View {
             // Warm the translation model in the background right after the
             // main window appears, so the first start() finds it in memory.
             await viewModel.prepareModelOnLaunch()
+            // Populate the language menu's availability markers (which
+            // languages need an on-device model download).
+            await viewModel.refreshLanguageAvailability()
         }
         .onReceive(NotificationCenter.default.publisher(for: .settingsDidChange)) { notification in
             // The ⌘, settings window saved new settings — apply them to the
@@ -82,6 +121,12 @@ struct MainView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .showHistory)) { _ in
             showHistory = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .exportSession)) { notification in
+            // File menu export commands carry the format raw value.
+            guard let raw = notification.object as? String,
+                  let format = SessionExporter.Format(rawValue: raw) else { return }
+            viewModel.exportSession(format)
         }
     }
 
@@ -123,9 +168,7 @@ struct MainView: View {
 
             // Language direction + model identity + latency
             HStack(spacing: 8) {
-                Text("\(viewModel.settings.sourceLanguage.isoCode.uppercased()) → \(viewModel.settings.targetLanguage.isoCode.uppercased())")
-                    .font(HUD.mono(.caption))
-                    .foregroundStyle(.secondary)
+                languageMenu
 
                 OllamaStatusIndicator(isConnected: viewModel.isOllamaConnected) {
                     viewModel.startOllamaFromIndicator()
@@ -167,6 +210,20 @@ struct MainView: View {
                 }
                 .help("History (⇧⌘H)")
 
+                Menu {
+                    Button("Export as Markdown…") { viewModel.exportSession(.markdown) }
+                    Button("Export as Text…") { viewModel.exportSession(.plainText) }
+                    Button("Export as Subtitles (SRT)…") { viewModel.exportSession(.srt) }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .disabled(viewModel.sessionTranscript.entries.isEmpty)
+                .help("Export this session")
+
                 Button(action: { showSettings = true }) {
                     Image(systemName: "gear")
                         .foregroundStyle(.secondary)
@@ -178,6 +235,88 @@ struct MainView: View {
         .padding(.leading, 78) // Clear the traffic-light buttons (hidden title bar)
         .padding(.trailing, 16)
         .padding(.vertical, 10)
+    }
+
+    // MARK: - Language Menu (HUD bar)
+
+    /// Clickable language label: switch each lane's recognition language and
+    /// the translation target without opening Settings — live while capturing.
+    private var languageMenu: some View {
+        Menu {
+            Section("System Audio") {
+                sourceLanguageItems(for: .system)
+            }
+            if viewModel.supportsPerLaneLanguages {
+                Section("Microphone") {
+                    Button {
+                        Task { await viewModel.setSourceLanguage(nil, for: .microphone) }
+                    } label: {
+                        menuItemLabel("Same as System Audio", selected: viewModel.settings.microphoneSourceLanguage == nil)
+                    }
+                    sourceLanguageItems(for: .microphone)
+                }
+            }
+            Section("Translate To") {
+                ForEach(TargetLanguage.allCases) { language in
+                    Button {
+                        viewModel.setTargetLanguage(language)
+                    } label: {
+                        menuItemLabel("\(language.displayName) (\(language.nativeName))",
+                                      selected: viewModel.settings.targetLanguage == language)
+                    }
+                }
+            }
+        } label: {
+            Text(LanguageLabel.format(
+                system: viewModel.settings.sourceLanguage,
+                microphone: viewModel.settings.microphoneSourceLanguage,
+                target: viewModel.settings.targetLanguage,
+                microphoneActive: viewModel.settings.captureMicrophone
+            ))
+            .font(HUD.mono(.caption))
+            .foregroundStyle(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Recognition and translation languages — applies live while capturing")
+    }
+
+    /// One menu item per source language the engine can use on-device.
+    /// Unsupported languages are hidden; downloadable ones are annotated.
+    @ViewBuilder
+    private func sourceLanguageItems(for source: AudioSource) -> some View {
+        ForEach(SourceLanguage.allCases) { language in
+            if viewModel.languageAvailability[language] != .unsupported {
+                Button {
+                    Task { await viewModel.setSourceLanguage(language, for: source) }
+                } label: {
+                    let title = viewModel.languageAvailability[language] == .downloadable
+                        ? "\(language.displayName) (download)"
+                        : language.displayName
+                    menuItemLabel(title, selected: isSourceLanguageSelected(language, for: source))
+                }
+            }
+        }
+    }
+
+    private func isSourceLanguageSelected(_ language: SourceLanguage, for source: AudioSource) -> Bool {
+        switch source {
+        case .system:
+            return viewModel.settings.sourceLanguage == language
+        case .microphone:
+            return viewModel.settings.microphoneSourceLanguage == language
+        }
+    }
+
+    private func menuItemLabel(_ title: String, selected: Bool) -> some View {
+        Group {
+            if selected {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
+            }
+        }
     }
 
     // MARK: - Transcript Feed
@@ -249,7 +388,11 @@ struct MainView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 6) {
             if viewModel.isCapturing {
-                Text("// listening (\(viewModel.settings.sourceLanguage.isoCode.uppercased()))…")
+                Text(LanguageLabel.listening(
+                    system: viewModel.settings.sourceLanguage,
+                    microphone: viewModel.settings.microphoneSourceLanguage,
+                    microphoneActive: viewModel.captureSources.contains(.microphone)
+                ))
                     .font(HUD.mono(.body))
                     .foregroundStyle(.secondary)
                 Text("// speak or play audio — captions appear here")

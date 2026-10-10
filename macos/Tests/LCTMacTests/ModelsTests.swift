@@ -244,6 +244,7 @@ final class ModelsTests: XCTestCase {
         XCTAssertTrue(settings.captureMicrophone)
         XCTAssertNil(settings.microphoneDeviceUID)
         XCTAssertEqual(settings.sourceLanguage, .english)
+        XCTAssertNil(settings.microphoneSourceLanguage)
         XCTAssertEqual(settings.ollamaHost, "localhost")
         XCTAssertEqual(settings.ollamaPort, 11434)
         XCTAssertEqual(settings.ollamaModel, "qwen3.5:4b-mlx")
@@ -368,5 +369,47 @@ final class ModelsTests: XCTestCase {
 
         XCTAssertEqual(decoded.microphoneDeviceUID, "AppleUSBAudioEngine:Test:Mic:1")
         XCTAssertEqual(settings, decoded)
+    }
+
+    func testMicrophoneSourceLanguage_LegacyJSONMissingKey_DecodesAsNil() throws {
+        // Settings JSON saved by a version predating per-lane languages must
+        // still decode, with the microphone lane following the system one.
+        let data = try JSONEncoder().encode(AppSettings())
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object.removeValue(forKey: "microphoneSourceLanguage")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: legacyData)
+
+        XCTAssertNil(decoded.microphoneSourceLanguage)
+        XCTAssertEqual(decoded.language(for: .microphone), decoded.sourceLanguage)
+    }
+
+    func testMicrophoneSourceLanguage_RoundTrip_Persists() throws {
+        var settings = AppSettings()
+        settings.microphoneSourceLanguage = .japanese
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        XCTAssertEqual(decoded.microphoneSourceLanguage, .japanese)
+        XCTAssertEqual(settings, decoded)
+    }
+
+    func testLanguageForSource_MicrophoneUnset_FollowsSystem() {
+        var settings = AppSettings()
+        settings.sourceLanguage = .chinese
+
+        XCTAssertEqual(settings.language(for: .system), .chinese)
+        XCTAssertEqual(settings.language(for: .microphone), .chinese)
+    }
+
+    func testLanguageForSource_MicrophoneOverride_UsesOverride() {
+        var settings = AppSettings()
+        settings.sourceLanguage = .chinese
+        settings.microphoneSourceLanguage = .english
+
+        XCTAssertEqual(settings.language(for: .system), .chinese)
+        XCTAssertEqual(settings.language(for: .microphone), .english)
     }
 }
