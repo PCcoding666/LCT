@@ -42,8 +42,19 @@ struct AudioCaptureConfig {
     var microphoneDeviceUID: String? = nil
 }
 
-/// Service for capturing system audio and microphone input using ScreenCaptureKit
-/// Service for capturing system audio and microphone input using ScreenCaptureKit
+/// Which backend the system-audio lane is running on.
+enum SystemAudioBackend: String, Equatable {
+    /// No system-audio lane is running.
+    case none
+    /// Core Audio process tap — the default, needs no TCC permission.
+    case coreAudioTap
+    /// ScreenCaptureKit — fallback when the tap cannot be created; needs the
+    /// screen-recording permission.
+    case screenCaptureKit
+}
+
+/// Service for capturing system audio (Core Audio process tap, with a
+/// ScreenCaptureKit fallback) and microphone input (AVAudioEngine).
 class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     // MARK: - Published Properties
     @MainActor @Published private(set) var isCapturing: Bool = false
@@ -58,6 +69,13 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     /// Microphone input device actually in use for the current session (nil when the mic lane is off)
     @MainActor @Published private(set) var microphoneDeviceName: String?
     @MainActor @Published private(set) var microphoneDeviceIsVirtual: Bool = false
+    /// Which backend the system-audio lane is running on, recorded
+    /// synchronously when the lane starts so callers can inspect it right
+    /// after `await start…Capture()` returns.
+    private(set) var systemAudioBackend: SystemAudioBackend = .none
+    /// Why the Core Audio tap was abandoned (nil while the tap path is in
+    /// use). Recorded synchronously alongside `systemAudioBackend`.
+    private(set) var systemAudioTapFailure: String?
 
     // MARK: - Configuration
     var config: AudioCaptureConfig
@@ -87,6 +105,19 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     private var videoOutput: VideoStreamOutput?
     private let streamOutputQueue = DispatchQueue(label: "com.lct.audioCapture.streamOutput", qos: .userInitiated)
     private var audioEngine: AVAudioEngine?
+    /// The running Core Audio tap (nil while the system lane is off or on the
+    /// ScreenCaptureKit fallback).
+    private var systemAudioTap: (any SystemAudioTapping)?
+    /// Factory for the system-audio tap; tests substitute a fake so they never
+    /// create a real tap (which would record the machine's actual output).
+    private let makeSystemAudioTap: () -> any SystemAudioTapping
+    /// Screen-recording TCC check, consulted only on the ScreenCaptureKit
+    /// fallback path; tests substitute a stub so they never touch TCC. Nil
+    /// runs the real `checkPermission()`.
+    private let screenPermissionChecker: (() async -> Bool)?
+    /// Starts the ScreenCaptureKit system-audio stream; tests substitute a
+    /// fake. Nil runs the real SCStream setup.
+    private let screenCaptureStreamStarter: (() async throws -> Void)?
     /// Mic input device in use for the current session, recorded synchronously
     /// when the engine starts so callers can inspect it right after `await
     /// start…Capture()` returns (the @Published mirror above hops to MainActor).
@@ -102,9 +133,15 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     private var lastMicMeterUpdate: TimeInterval = 0
 
     // MARK: - Initialization
-    
-    init(config: AudioCaptureConfig = AudioCaptureConfig()) {
+
+    init(config: AudioCaptureConfig = AudioCaptureConfig(),
+         makeSystemAudioTap: @escaping () -> any SystemAudioTapping = { SystemAudioTap() },
+         screenPermissionChecker: (() async -> Bool)? = nil,
+         screenCaptureStreamStarter: (() async throws -> Void)? = nil) {
         self.config = config
+        self.makeSystemAudioTap = makeSystemAudioTap
+        self.screenPermissionChecker = screenPermissionChecker
+        self.screenCaptureStreamStarter = screenCaptureStreamStarter
         super.init()
     }
     
@@ -152,7 +189,8 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
         }
     }
     
-    /// Check and request screen capture permission
+    /// Check and request screen capture permission. Only the ScreenCaptureKit
+    /// fallback path needs this — the Core Audio tap path works without it.
     func checkPermission() async -> Bool {
         appLog("[AudioCaptureService] --------- Permission Check Start ---------")
         
@@ -208,18 +246,13 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     
     // MARK: - Capture Control
 
-    /// Start capturing system audio only (ScreenCaptureKit)
+    /// Start capturing system audio only (Core Audio tap, ScreenCaptureKit fallback)
     func startCapture() async throws {
         let isCapturingCurrently = await MainActor.run { isCapturing }
         guard !isCapturingCurrently else { return }
         guard !isStarting else { return }
         isStarting = true
         defer { isStarting = false }
-
-        // Check permission first
-        guard await checkPermission() else {
-            throw AudioCaptureError.noPermission
-        }
 
         try await startSystemAudioStream()
 
@@ -233,20 +266,17 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
         appLog("Audio capture started successfully (system audio)")
     }
 
-    /// Start BOTH lanes concurrently: system audio (ScreenCaptureKit) + microphone
-    /// (AVAudioEngine). Buffers are tagged with their AudioSource so downstream
-    /// recognition runs as two independent lanes — never mixed into one stream
-    /// (mixing/interleaving two streams into a single recognizer corrupts both).
+    /// Start BOTH lanes concurrently: system audio (Core Audio tap, with a
+    /// ScreenCaptureKit fallback) + microphone (AVAudioEngine). Buffers are
+    /// tagged with their AudioSource so downstream recognition runs as two
+    /// independent lanes — never mixed into one stream (mixing/interleaving
+    /// two streams into a single recognizer corrupts both).
     func startDualCapture() async throws {
         let isCapturingCurrently = await MainActor.run { isCapturing }
         guard !isCapturingCurrently else { return }
         guard !isStarting else { return }
         isStarting = true
         defer { isStarting = false }
-
-        guard await checkPermission() else {
-            throw AudioCaptureError.noPermission
-        }
 
         guard await Self.ensureMicrophonePermission() else {
             throw AudioCaptureError.noMicrophonePermission
@@ -299,8 +329,46 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
 
     // MARK: - Lane Setup Helpers
 
-    /// Open the ScreenCaptureKit system-audio stream and wire it to the `.system` lane.
+    /// Start the system-audio lane. Preferred path: a Core Audio process tap,
+    /// which needs no TCC permission. Only when the tap cannot be created does
+    /// this fall back to the ScreenCaptureKit stream — and only that fallback
+    /// checks the screen-recording permission.
     private func startSystemAudioStream() async throws {
+        let tap = makeSystemAudioTap()
+        tap.onAudioBuffer = { [weak self] buffer in
+            self?.processAudioBufferBackground(buffer, source: .system)
+        }
+        do {
+            try tap.start()
+        } catch {
+            appLog("[AudioCaptureService] ⚠️ Core Audio tap failed (\(error)); falling back to ScreenCaptureKit")
+            let hasScreenPermission: Bool
+            if let checker = screenPermissionChecker {
+                hasScreenPermission = await checker()
+            } else {
+                hasScreenPermission = await checkPermission()
+            }
+            guard hasScreenPermission else {
+                throw AudioCaptureError.noPermission
+            }
+            if let starter = screenCaptureStreamStarter {
+                try await starter()
+            } else {
+                try await startScreenCaptureKitStream()
+            }
+            systemAudioBackend = .screenCaptureKit
+            systemAudioTapFailure = "\(error)"
+            appLog("[AudioCaptureService] System audio running on ScreenCaptureKit fallback")
+            return
+        }
+        systemAudioTap = tap
+        systemAudioBackend = .coreAudioTap
+        systemAudioTapFailure = nil
+        appLog("[AudioCaptureService] System audio running on Core Audio tap")
+    }
+
+    /// Open the ScreenCaptureKit system-audio stream and wire it to the `.system` lane.
+    private func startScreenCaptureKitStream() async throws {
         // Get shareable content
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 
@@ -449,10 +517,15 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
         return devices.first(where: { $0.isSystemDefault })
     }
 
-    /// Stop and clear the ScreenCaptureKit stream and the microphone engine,
-    /// regardless of capture state. Idempotent — every exit path (user stop,
-    /// SCStream error, failed start) funnels through here.
+    /// Stop and clear the system-audio backend (tap or ScreenCaptureKit
+    /// stream) and the microphone engine, regardless of capture state.
+    /// Idempotent — every exit path (user stop, SCStream error, failed start)
+    /// funnels through here.
     private func teardownCapture() async {
+        if let tap = systemAudioTap {
+            systemAudioTap = nil
+            tap.stop()
+        }
         if let stream = stream {
             do {
                 try await stream.stopCapture()
@@ -463,6 +536,8 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
             self.streamOutput = nil
             self.videoOutput = nil
         }
+        systemAudioBackend = .none
+        systemAudioTapFailure = nil
         teardownMicrophoneEngine()
     }
 
