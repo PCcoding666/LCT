@@ -28,6 +28,8 @@
     <string>LCT needs microphone access to capture and transcribe your speech in real-time.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>LCT uses speech recognition to convert your speech into text for translation.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>LCT captures audio playing on your Mac (videos, meetings) to transcribe and translate it.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>LCT may need to interact with other apps for automation features.</string>
 </dict>
