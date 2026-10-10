@@ -765,7 +765,7 @@ struct WelcomeView: View {
         case .installed, .stopped:
             // Try to start Ollama
             do {
-                try await guardian.startService()
+                try await guardian.ensureRunning()
                 await modelManager.fetchInstalledModels()
 
                 if let installed = preferredInstalledModel() {
