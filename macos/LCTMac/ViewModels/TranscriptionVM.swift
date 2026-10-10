@@ -345,9 +345,9 @@ class TranscriptionViewModel: ObservableObject {
     /// Warm the translation model right after launch so the first start()
     /// doesn't pay the cold-load cost. Local Ollama only, and only after
     /// onboarding completed. Failures are logged, never shown — start() has
-    /// its own checks with actionable notices. Called from MainView's `.task`,
-    /// not from init, so tests constructing view models never hit a real
-    /// Ollama.
+    /// its own checks with actionable notices. Called once by AppCoordinator
+    /// when it creates the app's view model, not from init, so tests
+    /// constructing view models never hit a real Ollama.
     func prepareModelOnLaunch() async {
         guard AppSettings.hasCompletedSetup else { return }
         guard settings.isLocalOllama, settings.validatedOllamaEndpoint != nil else { return }
