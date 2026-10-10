@@ -16,6 +16,7 @@ enum NoticeAction: Equatable, Identifiable {
     case startOllama
     case openAppSettings
     case retryCapture
+    case downloadModel
 
     var id: String {
         switch self {
@@ -25,6 +26,7 @@ enum NoticeAction: Equatable, Identifiable {
         case .startOllama: return "startOllama"
         case .openAppSettings: return "openAppSettings"
         case .retryCapture: return "retryCapture"
+        case .downloadModel: return "downloadModel"
         }
     }
 
@@ -37,6 +39,7 @@ enum NoticeAction: Equatable, Identifiable {
         case .startOllama: return "Start Ollama"
         case .openAppSettings: return "Settings"
         case .retryCapture: return "Retry"
+        case .downloadModel: return "Download"
         }
     }
 }

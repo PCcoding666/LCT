@@ -14,8 +14,15 @@ struct SettingsView: View {
     @State private var installedModels: [String] = []
     @State private var modelListError: String?
     @State private var isLoadingModels = false
+    @State private var modelDownloadError: String?
     @State private var diagnosticsMessage: String?
     @State private var inputDevices: [AudioInputDevice] = []
+    @StateObject private var modelManager = OllamaModelManager()
+
+    private let hardware = HardwareProfile.current()
+    private var recommendation: ModelRecommendation {
+        ModelRecommender.recommend(for: hardware)
+    }
 
     init(settings: Binding<AppSettings>, onSave: @escaping (AppSettings) -> Void) {
         self._settings = settings
@@ -134,25 +141,47 @@ struct SettingsView: View {
         }
 
         Section("Translation Model") {
+            Text("Recommended for this Mac (\(hardware.chipName), \(hardware.memoryGB) GB): \(recommendation.recommended.displayName)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             if installedModels.isEmpty {
                 HStack {
                     Text("Model")
                     TextField("Model Name", text: $localSettings.ollamaModel)
                         .textFieldStyle(.roundedBorder)
                 }
-                .help("e.g., qwen3.5:4b-mlx, qwen2.5:3b, gemma2:2b")
+                .help("e.g., qwen3.5:4b-mlx, qwen3.5:0.8b, translategemma:4b-it-q4_K_M")
             } else {
                 Picker("Model", selection: $localSettings.ollamaModel) {
                     ForEach(installedModels, id: \.self) { model in
-                        Text(model).tag(model)
+                        Text(model == recommendation.recommended.name ? "\(model) (recommended)" : model)
+                            .tag(model)
                     }
-                    if !installedModels.contains(localSettings.ollamaModel) {
+                    if !installedModels.contains(recommendation.recommended.name) {
+                        Text("\(recommendation.recommended.name) (recommended, not installed)")
+                            .tag(recommendation.recommended.name)
+                    }
+                    if !installedModels.contains(localSettings.ollamaModel),
+                       localSettings.ollamaModel != recommendation.recommended.name {
                         Text("\(localSettings.ollamaModel) (not installed)")
                             .tag(localSettings.ollamaModel)
                     }
                 }
-                .help("Models currently installed in Ollama")
+                .help("Models currently installed in Ollama, plus this Mac's recommendation")
             }
+
+            if ModelCatalog.isMLXModel(localSettings.ollamaModel), !hardware.isAppleSilicon {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                    Text("MLX models need Apple Silicon — this Mac cannot run '\(localSettings.ollamaModel)'.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            modelDownloadRow
 
             HStack {
                 if isLoadingModels {
@@ -366,6 +395,80 @@ struct SettingsView: View {
 
     // MARK: - Installed Models
 
+    /// Inline download control for a selected-but-missing model. Hidden while
+    /// the selection is installed, incompatible with this Mac, or the Ollama
+    /// endpoint is invalid.
+    @ViewBuilder
+    private var modelDownloadRow: some View {
+        if modelManager.isPulling {
+            VStack(alignment: .leading, spacing: 6) {
+                ProgressView(value: modelManager.pullProgress)
+                HStack {
+                    Text(modelManager.pullTotalBytes > 0
+                         ? "\(Int(modelManager.pullProgress * 100))% · \(ByteFormatting.string(modelManager.pullCompletedBytes)) / \(ByteFormatting.string(modelManager.pullTotalBytes))"
+                         : "Downloading…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    Spacer()
+                    Button("Cancel") {
+                        modelManager.cancelPull()
+                    }
+                    .controlSize(.small)
+                }
+            }
+        } else if !isSelectedModelInstalled,
+                  !localSettings.ollamaModel.isEmpty,
+                  ModelCatalog.isCompatible(modelName: localSettings.ollamaModel, with: hardware),
+                  localSettings.validatedOllamaEndpoint != nil {
+            HStack {
+                Text("'\(localSettings.ollamaModel)' is not installed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button("Download") {
+                    startModelDownload()
+                }
+                .controlSize(.small)
+            }
+
+            if let error = modelDownloadError {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var isSelectedModelInstalled: Bool {
+        installedModels.contains {
+            $0 == localSettings.ollamaModel || $0.hasPrefix("\(localSettings.ollamaModel):")
+        }
+    }
+
+    private func startModelDownload() {
+        guard let endpoint = localSettings.validatedOllamaEndpoint else { return }
+        modelManager.endpoint = endpoint
+        modelDownloadError = nil
+        let modelName = localSettings.ollamaModel
+        Task {
+            do {
+                try await modelManager.pullModel(modelName)
+                await refreshInstalledModels()
+            } catch is CancellationError {
+                // The manager already reset its state; nothing to surface.
+            } catch {
+                modelDownloadError = error.localizedDescription
+            }
+        }
+    }
+
     private var systemDefaultInputName: String {
         inputDevices.first(where: { $0.isSystemDefault })?.name ?? "unavailable"
     }
@@ -397,7 +500,7 @@ struct SettingsView: View {
             let response = try JSONDecoder().decode(TagsResponse.self, from: data)
             installedModels = response.models.map(\.name).sorted()
             if installedModels.isEmpty {
-                modelListError = "No models installed — run: ollama pull \(RecommendedModel.defaultModel.name)"
+                modelListError = "No models installed — run: ollama pull \(recommendation.recommended.name)"
             }
         } catch {
             installedModels = []
