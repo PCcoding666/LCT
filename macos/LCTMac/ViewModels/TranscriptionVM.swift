@@ -63,6 +63,17 @@ class TranscriptionViewModel: ObservableObject {
     @Published var micLevel: Float = 0
     @Published var captureSources: [AudioSource] = []
 
+    /// Lanes the speech engine is actually recognizing on (after legacy-engine
+    /// degradation), recorded when recognition starts. Unlike `captureSources`
+    /// (an audio-capture publisher), this is deterministic — language restarts
+    /// key off it.
+    var recognitionLanes: [AudioSource] = []
+
+    /// Regenerated at every successful start(). A lane language restart that
+    /// outlives its session (stopped, or stopped and restarted, while a model
+    /// download was in flight) must not touch the new session's lane state.
+    private var captureSessionId = UUID()
+
     /// Microphone input device actually in use (nil when the mic lane is off)
     @Published var microphoneDeviceName: String?
     @Published var microphoneDeviceIsVirtual: Bool = false
@@ -78,6 +89,22 @@ class TranscriptionViewModel: ObservableObject {
 
     /// When the current capture session started (nil when stopped)
     @Published var captureStartedAt: Date?
+
+    /// Latest per-language on-device availability (drives the language menu's
+    /// filtering and "(download)" markers). Empty while the first probe is in
+    /// flight — the menu then lists every language unannotated.
+    @Published private(set) var languageAvailability: [SourceLanguage: LanguageAvailability] = [:]
+
+    /// Whether the selected engine runs independent per-lane recognition, so
+    /// the microphone lane may use its own language (drives the Microphone
+    /// section of the language menu; the legacy engine runs a single lane).
+    var supportsPerLaneLanguages: Bool { speechEngineKind == .speechTranscriber }
+
+    /// Re-probe which source languages the engine can recognize on-device.
+    /// Locale checks only — no recognition, download, or permission prompt.
+    func refreshLanguageAvailability() async {
+        languageAvailability = await speechEngine.languageAvailability()
+    }
 
     // MARK: - Services
 
@@ -320,6 +347,7 @@ class TranscriptionViewModel: ObservableObject {
             self.translationQueue.cancelAll()
             self.captureState = .idle
             self.captureStartedAt = nil
+            self.recognitionLanes = []
             self.stopStallMonitoring()
             self.notice = .error("Audio capture interrupted: \(error.localizedDescription)", actions: [.retryCapture])
         }
@@ -590,12 +618,12 @@ class TranscriptionViewModel: ObservableObject {
             appLog("[TranscriptionVM] Setting speech language: \(settings.sourceLanguage.displayName)")
             speechEngine.setLanguage(settings.sourceLanguage)
 
-            // Start speech recognition — one independent lane per active source.
-            // Both lanes use the same recognition language for now (per-lane
-            // language selection is a separate feature).
+            // Start speech recognition — one independent lane per active
+            // source, each recognizing its own configured language.
             appLog("[TranscriptionVM] Starting speech recognition...")
-            let laneLanguages = Dictionary(uniqueKeysWithValues: activeSources.map { ($0, settings.sourceLanguage) })
+            let laneLanguages = Dictionary(uniqueKeysWithValues: activeSources.map { ($0, settings.language(for: $0)) })
             try await speechEngine.start(sources: activeSources, languages: laneLanguages)
+            recognitionLanes = activeSources
             appLog("[TranscriptionVM] ✅ Speech recognition started")
 
             // Connect audio capture to speech recognizer (buffers stay tagged per lane)
@@ -623,6 +651,7 @@ class TranscriptionViewModel: ObservableObject {
             appLog("[TranscriptionVM] ✅ start() completed successfully")
             captureState = .capturing
             captureStartedAt = Date()
+            captureSessionId = UUID()
             startStallMonitoring()
 
             // Surface lane-degraded notices now that capture is running (earlier
@@ -780,6 +809,7 @@ class TranscriptionViewModel: ObservableObject {
             stopOllamaPatrol()
             captureState = .idle
             captureStartedAt = nil
+            recognitionLanes = []
         }
         // A live error (permission lost, stream interrupted) outranks this one.
         guard notice?.severity != .error else { return }
@@ -826,7 +856,7 @@ class TranscriptionViewModel: ObservableObject {
         appLog("[TranscriptionVM] ⚠️ [\(source.rawValue)] lane audible for 8s+ but no recognition results")
         notice = AppNotice(
             severity: .warning,
-            message: "Hearing audio on \(source.label) but recognizing nothing. Is the recognition language (\(settings.sourceLanguage.displayName)) right?",
+            message: "Hearing audio on \(source.label) but recognizing nothing. Is the recognition language (\(settings.language(for: source).displayName)) right?",
             actions: [.openAppSettings]
         )
     }
@@ -1118,6 +1148,7 @@ class TranscriptionViewModel: ObservableObject {
         await audioCaptureService.stopCapture()
         translationQueue.cancelAll()
         await speechEngine.stop()
+        recognitionLanes = []
         liveDrafts.removeAll()
         liveTranslations.removeAll()
         liveSourceText = ""
@@ -1235,6 +1266,44 @@ class TranscriptionViewModel: ObservableObject {
 
     /// Update settings
     func updateSettings(_ newSettings: AppSettings) {
+        let lanesToRestart = applyUpdatedSettings(newSettings)
+        guard !lanesToRestart.isEmpty else { return }
+        Task { await restartLanesForLanguageChange(lanesToRestart) }
+    }
+
+    /// HUD language menu: change one lane's recognition language. `nil` for
+    /// the microphone lane means "same as system audio". While capturing, only
+    /// the affected lanes restart their recognition — the switch takes effect
+    /// without stopping the session.
+    func setSourceLanguage(_ language: SourceLanguage?, for source: AudioSource) async {
+        var newSettings = settings
+        switch source {
+        case .system:
+            guard let language, language != settings.sourceLanguage else { return }
+            newSettings.sourceLanguage = language
+        case .microphone:
+            guard language != settings.microphoneSourceLanguage else { return }
+            newSettings.microphoneSourceLanguage = language
+        }
+        let lanesToRestart = applyUpdatedSettings(newSettings)
+        await restartLanesForLanguageChange(lanesToRestart)
+    }
+
+    /// HUD language menu: change the translation target language. Applies to
+    /// translations produced from now on — nothing restarts.
+    func setTargetLanguage(_ language: TargetLanguage) {
+        guard language != settings.targetLanguage else { return }
+        var newSettings = settings
+        newSettings.targetLanguage = language
+        _ = applyUpdatedSettings(newSettings)
+    }
+
+    /// Shared settings-application path for `updateSettings` and the HUD
+    /// language menu: persists the settings, updates the services, and
+    /// returns the capture lanes whose effective recognition language changed
+    /// (empty unless capturing — idle changes just ride the next start()).
+    @discardableResult
+    private func applyUpdatedSettings(_ newSettings: AppSettings) -> [AudioSource] {
         let oldSettings = self.settings
         self.settings = newSettings
         let didSaveSettings = newSettings.save()
@@ -1250,17 +1319,29 @@ class TranscriptionViewModel: ObservableObject {
         caption.maxContextEntries = newSettings.maxContextEntries
         trimSegmentsIfNeeded()
 
-        // Update speech recognizer language if changed
-        if speechEngine.currentLanguage != newSettings.sourceLanguage {
+        // Language changes take effect live while capturing: each affected
+        // lane restarts its own recognition (restartLanesForLanguageChange)
+        // instead of forcing a stop/start cycle. Changing the system-audio
+        // language also restarts the microphone lane while the mic follows
+        // the system language — its effective language changed too.
+        var lanesToRestart: [AudioSource] = []
+        if isCapturing {
+            if oldSettings.language(for: .system) != newSettings.language(for: .system) {
+                lanesToRestart.append(.system)
+            }
+            if oldSettings.language(for: .microphone) != newSettings.language(for: .microphone) {
+                lanesToRestart.append(.microphone)
+            }
+        } else if speechEngine.currentLanguage != newSettings.sourceLanguage {
             speechEngine.setLanguage(newSettings.sourceLanguage)
         }
 
-        // Notify user if a restart is needed for certain settings
+        // Notify user if a restart is needed for certain settings. Language
+        // changes apply live and no longer need one.
         if isCapturing {
             let needsRestart = oldSettings.captureSystemAudio != newSettings.captureSystemAudio
                 || oldSettings.captureMicrophone != newSettings.captureMicrophone
                 || oldSettings.microphoneDeviceUID != newSettings.microphoneDeviceUID
-                || oldSettings.sourceLanguage != newSettings.sourceLanguage
                 || oldSettings.ollamaModel != newSettings.ollamaModel
             if needsRestart {
                 notice = .warning("Some settings need a restart — click Stop then Start to apply.")
@@ -1314,6 +1395,72 @@ class TranscriptionViewModel: ObservableObject {
             }
         } else {
             Task { await refreshModelState() }
+        }
+
+        return lanesToRestart
+    }
+
+    /// Restart the given lanes' recognition with their configured language,
+    /// one lane at a time. A lane that isn't running (dropped by the legacy
+    /// single-task engine, or never started) is skipped; a lane that fails to
+    /// restart surfaces an error without affecting its sibling.
+    private func restartLanesForLanguageChange(_ lanes: [AudioSource]) async {
+        let session = captureSessionId
+        for lane in lanes {
+            guard captureState == .capturing else {
+                appLog("[TranscriptionVM] ⏭ lane language restart aborted — capture is \(captureState.rawValue)")
+                return
+            }
+            guard recognitionLanes.contains(lane) else { continue }
+
+            let language = settings.language(for: lane)
+            appLog("[TranscriptionVM] 🔀 restarting [\(lane.rawValue)] recognition with language \(language.displayName)")
+            // A new language gets a fresh stall budget on this lane.
+            stallDetector.resetLane(lane)
+            do {
+                try await speechEngine.restartLane(lane, language: language)
+                appLog("[TranscriptionVM] ✅ [\(lane.rawValue)] lane now recognizes \(language.displayName)")
+            } catch {
+                appLog("[TranscriptionVM] ⚠️ [\(lane.rawValue)] lane language switch failed: \(error.localizedDescription)")
+                if captureState == .capturing, captureSessionId == session {
+                    notice = .error("Could not switch the \(lane == .system ? "system audio" : "microphone") language to \(language.displayName): \(error.localizedDescription)")
+                }
+            }
+            // A stop (or stop + start) while the restart was in flight — e.g.
+            // during an on-device model download — made this flow stale:
+            // leave the current session's lane state alone.
+            guard captureState == .capturing, captureSessionId == session else { return }
+            // The old recognition task is finished whether the restart
+            // succeeded or not: keep its uncommitted draft as a caption and
+            // reset the lane's segmentation state for the new task.
+            finalizeLaneDraft(lane)
+            // A speech-model download may have completed during the restart.
+            await refreshLanguageAvailability()
+        }
+    }
+
+    /// The lane's recognition task ended (lane language restart): keep its
+    /// uncommitted draft as a finalized caption — the same flush semantics as
+    /// a finished ASR task in handleTranscriptionResult — then reset the
+    /// lane's segmentation and live-draft state so the next task starts clean.
+    private func finalizeLaneDraft(_ lane: AudioSource) {
+        let draft = liveDrafts[lane]?.trimmingCharacters(in: .whitespaces) ?? ""
+
+        captionSegmenters[lane]?.reset()
+        captionSegmenters[lane] = nil
+        liveDrafts[lane] = nil
+        liveTranslations[lane] = nil
+        if let draftId = liveDraftSegmentIds.removeValue(forKey: lane) {
+            translationQueue.cancel(segmentIds: [draftId])
+        }
+        // Segments of the finished task can no longer be rolled back.
+        activeTranscriptionTaskIds[lane] = nil
+        activeTaskSegmentIds[lane] = []
+        refreshLiveSourceText()
+        refreshLiveTranslation()
+
+        if !draft.isEmpty {
+            appendFinalizedSegment(text: draft, lane: lane, trackForRollback: false)
         }
     }
 
