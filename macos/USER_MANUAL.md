@@ -154,7 +154,7 @@ A: 检查是否点击了 Start 按钮、音频权限是否授予、源语言是�
 A: 尝试使用更小的 AI 模型（如 gemma2:2b），或降低上下文条目数量。
 
 **Q: 如何授予权限？**  
-A: 系统设置 > 隐私与安全性 > 分别授予麦克风、屏幕录制、语音识别权限。
+A: 系统设置 > 隐私与安全性 > 分别授予麦克风、语音识别权限。捕获系统音频无需权限。
 
 **Q: Ollama 是什么？**  
 A: Ollama 是本地 AI 引擎，用于运行翻译模型。首次设置时会自动安装。
@@ -168,7 +168,7 @@ A: Check if you clicked the Start button, audio permissions are granted, and the
 A: Try using a smaller AI model (like gemma2:2b), or reduce the number of context entries.
 
 **Q: How do I grant permissions?**  
-A: System Settings > Privacy & Security > Grant microphone, screen recording, and speech recognition permissions separately.
+A: System Settings > Privacy & Security > Grant microphone and speech recognition permissions separately. Capturing system audio needs no permission.
 
 **Q: What is Ollama?**  
 A: Ollama is a local AI engine used to run translation models. It will be automatically installed during first-time setup.

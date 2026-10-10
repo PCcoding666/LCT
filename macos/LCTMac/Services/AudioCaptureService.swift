@@ -42,8 +42,21 @@ struct AudioCaptureConfig {
     var microphoneDeviceUID: String? = nil
 }
 
-/// Service for capturing system audio and microphone input using ScreenCaptureKit
-/// Service for capturing system audio and microphone input using ScreenCaptureKit
+/// Which backend the system-audio lane is running on.
+enum SystemAudioBackend: String, Equatable {
+    /// No system-audio lane is running.
+    case none
+    /// Core Audio process tap — the default, needs no screen-recording
+    /// permission (macOS gates it behind the separate "system audio
+    /// recording" consent instead, detected via the first-callback watchdog).
+    case coreAudioTap
+    /// ScreenCaptureKit — fallback when the tap cannot be created; needs the
+    /// screen-recording permission.
+    case screenCaptureKit
+}
+
+/// Service for capturing system audio (Core Audio process tap, with a
+/// ScreenCaptureKit fallback) and microphone input (AVAudioEngine).
 class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     // MARK: - Published Properties
     @MainActor @Published private(set) var isCapturing: Bool = false
@@ -58,6 +71,25 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     /// Microphone input device actually in use for the current session (nil when the mic lane is off)
     @MainActor @Published private(set) var microphoneDeviceName: String?
     @MainActor @Published private(set) var microphoneDeviceIsVirtual: Bool = false
+    /// Which backend the system-audio lane is running on, recorded
+    /// synchronously when the lane starts so callers can inspect it right
+    /// after `await start…Capture()` returns.
+    private(set) var systemAudioBackend: SystemAudioBackend = .none
+    /// Why the Core Audio tap was abandoned (nil while the tap path is in
+    /// use). Recorded synchronously alongside `systemAudioBackend`.
+    private(set) var systemAudioTapFailure: String?
+    /// Set when the running tap proved unauthorized — no IO callback within
+    /// `systemAudioAuthorizationTimeout`. Reset on every tap start; the
+    /// verdict is also persisted via `SystemAudioAuthorizationStore` for the
+    /// diagnostics report.
+    private(set) var systemAudioAuthorizationDenied = false
+    /// How long the watchdog waits for the tap's first IO callback before
+    /// deciding the system-audio authorization is missing. Injected so tests
+    /// can use a fraction of a second.
+    private let systemAudioAuthorizationTimeout: TimeInterval
+    /// The task watching for the tap's first IO callback; cancelled by
+    /// teardown and superseded by every new tap start.
+    private var systemAudioWatchdogTask: Task<Void, Never>?
 
     // MARK: - Configuration
     var config: AudioCaptureConfig
@@ -80,13 +112,34 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     /// Fired on the MainActor when the mic lane delivers continuous audible
     /// RMS again after a silence warning fired (the input device recovered).
     var onMicrophoneAudioResumed: (@MainActor () -> Void)?
-    
+
+    /// Fired on the MainActor when the running Core Audio tap delivered no IO
+    /// callback within the authorization window — macOS answers a denied
+    /// system-audio tap with silence, so this means the user said no (or the
+    /// prompt never resolved to a yes). The tap has already been stopped and
+    /// dropped (never replaced by ScreenCaptureKit); the parameter tells
+    /// whether capture continues on the microphone lane.
+    var onSystemAudioAuthorizationDenied: (@MainActor (Bool) -> Void)?
+
     // MARK: - Private Properties
     private var stream: SCStream?
     private var streamOutput: AudioStreamOutput?
     private var videoOutput: VideoStreamOutput?
     private let streamOutputQueue = DispatchQueue(label: "com.lct.audioCapture.streamOutput", qos: .userInitiated)
     private var audioEngine: AVAudioEngine?
+    /// The running Core Audio tap (nil while the system lane is off or on the
+    /// ScreenCaptureKit fallback).
+    private var systemAudioTap: (any SystemAudioTapping)?
+    /// Factory for the system-audio tap; tests substitute a fake so they never
+    /// create a real tap (which would record the machine's actual output).
+    private let makeSystemAudioTap: () -> any SystemAudioTapping
+    /// Screen-recording TCC check, consulted only on the ScreenCaptureKit
+    /// fallback path; tests substitute a stub so they never touch TCC. Nil
+    /// runs the real `checkPermission()`.
+    private let screenPermissionChecker: (() async -> Bool)?
+    /// Starts the ScreenCaptureKit system-audio stream; tests substitute a
+    /// fake. Nil runs the real SCStream setup.
+    private let screenCaptureStreamStarter: (() async throws -> Void)?
     /// Mic input device in use for the current session, recorded synchronously
     /// when the engine starts so callers can inspect it right after `await
     /// start…Capture()` returns (the @Published mirror above hops to MainActor).
@@ -102,9 +155,17 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     private var lastMicMeterUpdate: TimeInterval = 0
 
     // MARK: - Initialization
-    
-    init(config: AudioCaptureConfig = AudioCaptureConfig()) {
+
+    init(config: AudioCaptureConfig = AudioCaptureConfig(),
+         makeSystemAudioTap: @escaping () -> any SystemAudioTapping = { SystemAudioTap() },
+         screenPermissionChecker: (() async -> Bool)? = nil,
+         screenCaptureStreamStarter: (() async throws -> Void)? = nil,
+         systemAudioAuthorizationTimeout: TimeInterval = 3.0) {
         self.config = config
+        self.makeSystemAudioTap = makeSystemAudioTap
+        self.screenPermissionChecker = screenPermissionChecker
+        self.screenCaptureStreamStarter = screenCaptureStreamStarter
+        self.systemAudioAuthorizationTimeout = systemAudioAuthorizationTimeout
         super.init()
     }
     
@@ -146,13 +207,20 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
         openPrivacySettings(pane: "Privacy_SpeechRecognition")
     }
 
+    /// Open System Settings to Screen & System Audio Recording — the pane
+    /// that lists apps under "System Audio Recording Only".
+    static func openSystemAudioSettings() {
+        openPrivacySettings(pane: "Privacy_ScreenCapture")
+    }
+
     private static func openPrivacySettings(pane: String) {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
             NSWorkspace.shared.open(url)
         }
     }
     
-    /// Check and request screen capture permission
+    /// Check and request screen capture permission. Only the ScreenCaptureKit
+    /// fallback path needs this — the Core Audio tap path works without it.
     func checkPermission() async -> Bool {
         appLog("[AudioCaptureService] --------- Permission Check Start ---------")
         
@@ -208,18 +276,13 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     
     // MARK: - Capture Control
 
-    /// Start capturing system audio only (ScreenCaptureKit)
+    /// Start capturing system audio only (Core Audio tap, ScreenCaptureKit fallback)
     func startCapture() async throws {
         let isCapturingCurrently = await MainActor.run { isCapturing }
         guard !isCapturingCurrently else { return }
         guard !isStarting else { return }
         isStarting = true
         defer { isStarting = false }
-
-        // Check permission first
-        guard await checkPermission() else {
-            throw AudioCaptureError.noPermission
-        }
 
         try await startSystemAudioStream()
 
@@ -233,20 +296,17 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
         appLog("Audio capture started successfully (system audio)")
     }
 
-    /// Start BOTH lanes concurrently: system audio (ScreenCaptureKit) + microphone
-    /// (AVAudioEngine). Buffers are tagged with their AudioSource so downstream
-    /// recognition runs as two independent lanes — never mixed into one stream
-    /// (mixing/interleaving two streams into a single recognizer corrupts both).
+    /// Start BOTH lanes concurrently: system audio (Core Audio tap, with a
+    /// ScreenCaptureKit fallback) + microphone (AVAudioEngine). Buffers are
+    /// tagged with their AudioSource so downstream recognition runs as two
+    /// independent lanes — never mixed into one stream (mixing/interleaving
+    /// two streams into a single recognizer corrupts both).
     func startDualCapture() async throws {
         let isCapturingCurrently = await MainActor.run { isCapturing }
         guard !isCapturingCurrently else { return }
         guard !isStarting else { return }
         isStarting = true
         defer { isStarting = false }
-
-        guard await checkPermission() else {
-            throw AudioCaptureError.noPermission
-        }
 
         guard await Self.ensureMicrophonePermission() else {
             throw AudioCaptureError.noMicrophonePermission
@@ -299,8 +359,137 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
 
     // MARK: - Lane Setup Helpers
 
-    /// Open the ScreenCaptureKit system-audio stream and wire it to the `.system` lane.
+    /// Start the system-audio lane. Preferred path: a Core Audio process tap,
+    /// which needs no screen-recording permission. Only when the tap cannot
+    /// be created does this fall back to the ScreenCaptureKit stream — and
+    /// only that fallback checks the screen-recording permission.
+    /// Create a tap wired to the `.system` lane and start it. The latch fires
+    /// on the first IO callback — macOS gives no error when the system-audio
+    /// authorization is missing (the tap just never calls back), so that
+    /// callback is the consent signal.
+    private func makeAndStartSystemAudioTap() throws -> (tap: any SystemAudioTapping, latch: FirstCallbackLatch) {
+        let tap = makeSystemAudioTap()
+        tap.onAudioBuffer = { [weak self] buffer in
+            self?.processAudioBufferBackground(buffer, source: .system)
+        }
+        // Assigned before start() so the tap captures it.
+        let firstCallbackLatch = FirstCallbackLatch()
+        tap.onFirstCallback = { firstCallbackLatch.fire() }
+        do {
+            try tap.start()
+        } catch {
+            tap.stop()
+            throw error
+        }
+        return (tap, firstCallbackLatch)
+    }
+
     private func startSystemAudioStream() async throws {
+        let tap: any SystemAudioTapping
+        let firstCallbackLatch: FirstCallbackLatch
+        do {
+            (tap, firstCallbackLatch) = try makeAndStartSystemAudioTap()
+        } catch {
+            appLog("[AudioCaptureService] ⚠️ Core Audio tap failed (\(error)); falling back to ScreenCaptureKit")
+            let hasScreenPermission: Bool
+            if let checker = screenPermissionChecker {
+                hasScreenPermission = await checker()
+            } else {
+                hasScreenPermission = await checkPermission()
+            }
+            guard hasScreenPermission else {
+                throw AudioCaptureError.noPermission
+            }
+            if let starter = screenCaptureStreamStarter {
+                try await starter()
+            } else {
+                try await startScreenCaptureKitStream()
+            }
+            systemAudioBackend = .screenCaptureKit
+            systemAudioTapFailure = "\(error)"
+            appLog("[AudioCaptureService] System audio running on ScreenCaptureKit fallback")
+            return
+        }
+        systemAudioTap = tap
+        systemAudioBackend = .coreAudioTap
+        systemAudioTapFailure = nil
+        systemAudioAuthorizationDenied = false
+        startSystemAudioAuthorizationWatchdog(for: tap, latch: firstCallbackLatch, attempt: 1)
+        appLog("[AudioCaptureService] System audio running on Core Audio tap")
+    }
+
+    /// Watch a freshly started tap for its first IO callback. An authorized
+    /// tap calls back continuously (even in silence); a denied one never
+    /// calls back at all, so silence for the whole window means "not
+    /// authorized" — never a broken tap (those throw out of `start()`).
+    /// Taps started per capture before silence counts as "not authorized".
+    /// A tap whose IO proc was created while the consent prompt was still on
+    /// screen delivered no callbacks on a real Mac even after the user clicked
+    /// Allow; the next tap worked. One rebuild covers that case.
+    private static let systemAudioTapAttempts = 2
+
+    private func startSystemAudioAuthorizationWatchdog(for tap: any SystemAudioTapping, latch: FirstCallbackLatch, attempt: Int) {
+        systemAudioWatchdogTask?.cancel()
+        let timeout = systemAudioAuthorizationTimeout
+        systemAudioWatchdogTask = Task { [weak self, weak tap] in
+            let fired = await latch.wait(timeout: timeout)
+            guard !Task.isCancelled, let self, let tap else { return }
+            // Only act while this tap is still the running system lane — a
+            // stop/start cycle makes an old watchdog's verdict irrelevant.
+            guard self.systemAudioTap === tap else { return }
+            if fired {
+                appLog("[AudioCaptureService] ✅ System audio tap is delivering callbacks — authorized")
+                SystemAudioAuthorizationStore.record(.granted)
+            } else if attempt < Self.systemAudioTapAttempts {
+                self.retrySilentSystemAudioTap(tap, attempt: attempt)
+            } else {
+                self.handleSystemAudioAuthorizationDenied(tap: tap)
+            }
+        }
+    }
+
+    /// The tap stayed silent: replace it with a brand-new tap and watch that
+    /// one. A tap that cannot be created on the retry counts as denied.
+    private func retrySilentSystemAudioTap(_ silentTap: any SystemAudioTapping, attempt: Int) {
+        guard let current = systemAudioTap, current === silentTap else { return }
+        appLog("[AudioCaptureService] ⚠️ System audio tap silent on attempt \(attempt) — rebuilding the tap")
+        silentTap.stop()
+        do {
+            let (freshTap, latch) = try makeAndStartSystemAudioTap()
+            systemAudioTap = freshTap
+            startSystemAudioAuthorizationWatchdog(for: freshTap, latch: latch, attempt: attempt + 1)
+        } catch {
+            appLog("[AudioCaptureService] ⚠️ Rebuilding the system audio tap failed (\(error))")
+            handleSystemAudioAuthorizationDenied(tap: silentTap)
+        }
+    }
+
+    /// The tap never called back within the authorization window: stop and
+    /// drop it (the user refused system-audio recording — do NOT fall back to
+    /// ScreenCaptureKit), keep the microphone lane running, and tell the
+    /// ViewModel on the MainActor.
+    private func handleSystemAudioAuthorizationDenied(tap: any SystemAudioTapping) {
+        guard let current = systemAudioTap, current === tap else { return }
+        appLog("[AudioCaptureService] ⚠️ System audio tap delivered no callbacks within \(systemAudioAuthorizationTimeout)s — recording not authorized")
+        systemAudioTap = nil
+        systemAudioBackend = .none
+        systemAudioAuthorizationDenied = true
+        tap.stop()
+        SystemAudioAuthorizationStore.record(.denied)
+        let captureContinues = audioEngine != nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.activeSources.removeAll { $0 == .system }
+            self.systemLevel = 0
+            if self.activeSources.isEmpty {
+                self.isCapturing = false
+            }
+            self.onSystemAudioAuthorizationDenied?(captureContinues)
+        }
+    }
+
+    /// Open the ScreenCaptureKit system-audio stream and wire it to the `.system` lane.
+    private func startScreenCaptureKitStream() async throws {
         // Get shareable content
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 
@@ -449,10 +638,17 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
         return devices.first(where: { $0.isSystemDefault })
     }
 
-    /// Stop and clear the ScreenCaptureKit stream and the microphone engine,
-    /// regardless of capture state. Idempotent — every exit path (user stop,
-    /// SCStream error, failed start) funnels through here.
+    /// Stop and clear the system-audio backend (tap or ScreenCaptureKit
+    /// stream) and the microphone engine, regardless of capture state.
+    /// Idempotent — every exit path (user stop, SCStream error, failed start)
+    /// funnels through here.
     private func teardownCapture() async {
+        systemAudioWatchdogTask?.cancel()
+        systemAudioWatchdogTask = nil
+        if let tap = systemAudioTap {
+            systemAudioTap = nil
+            tap.stop()
+        }
         if let stream = stream {
             do {
                 try await stream.stopCapture()
@@ -463,6 +659,8 @@ class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
             self.streamOutput = nil
             self.videoOutput = nil
         }
+        systemAudioBackend = .none
+        systemAudioTapFailure = nil
         teardownMicrophoneEngine()
     }
 
