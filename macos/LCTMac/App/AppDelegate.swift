@@ -1,7 +1,6 @@
 import SwiftUI
 import AppKit
 import CoreGraphics
-@preconcurrency import ScreenCaptureKit
 import os
 
 /// Custom output stream that writes to a log file
@@ -96,9 +95,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Register system-wide hotkeys (⌃⌥⌘ S/P/O)
         GlobalHotKeyManager.shared.registerDefaults()
 
-        // Request necessary permissions
-        requestPermissions()
-        
         // Activate the app and bring window to front
         DispatchQueue.main.async {
             NSApp.activate(ignoringOtherApps: true)
@@ -198,23 +194,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Quit LCT", action: #selector(quitApp), keyEquivalent: "q"))
         
         statusItem?.menu = menu
-    }
-    
-    // MARK: - Permissions
-    
-    private func requestPermissions() {
-        // 使用 CGPreflightScreenCaptureAccess 检查权限
-        // 这比 SCShareableContent 更稳定，不会触发 RPDaemonProxy 错误
-        let hasScreenCapturePermission = CGPreflightScreenCaptureAccess()
-        
-        if hasScreenCapturePermission {
-            print("Screen capture permission granted")
-        } else {
-            print("Screen capture permission not yet granted. Will request when needed.")
-            // 不要在启动时请求权限，让用户点击 Start 时再请求
-        }
-        
-        // Microphone permission will be requested when first used
     }
     
     // MARK: - Cleanup

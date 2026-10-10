@@ -1,11 +1,11 @@
 import SwiftUI
 import Speech
 import AVFoundation
-@preconcurrency import ScreenCaptureKit
 
 /// Persists the onboarding step across an app relaunch so the setup flow
-/// resumes where the user left off — screen-recording permission only takes
-/// effect after a restart, which used to send users back to step one.
+/// resumes where the user left off. Retained for its tests; no current UI
+/// writes to it (the screen-recording restart flow that used it is gone —
+/// system audio capture no longer needs that permission).
 enum OnboardingResumeStore {
     static let key = "onboardingResumeStep"
 
@@ -70,13 +70,9 @@ struct WelcomeView: View {
     @State private var downloadError: String?
 
     // Permission states
-    @State private var hasScreenCapturePermission = false
     @State private var hasMicrophonePermission = false
     @State private var hasSpeechRecognitionPermission = false
     @State private var isCheckingPermissions = false
-    /// Set once the user has triggered the screen-recording prompt; until the
-    /// app restarts, CGPreflight keeps returning false even after granting.
-    @State private var screenRecordingRequested = false
 
     /// This Mac's chip/memory and the model picked for it.
     private let hardware = HardwareProfile.current()
@@ -145,9 +141,6 @@ struct WelcomeView: View {
             footerView
         }
         .frame(width: 600, height: 560)
-        .onAppear {
-            resumeSavedStepIfNeeded()
-        }
     }
 
     // MARK: - Header
@@ -244,7 +237,7 @@ struct WelcomeView: View {
                 .font(.title)
                 .fontWeight(.bold)
             
-            Text("Grant microphone and speech recognition to get started. Speech is processed on-device and never leaves your Mac. Screen recording is optional — it lets LCT caption audio from videos and meetings. A language without on-device support requires downloading its on-device speech model in System Settings.")
+            Text("Grant microphone and speech recognition to get started. Speech is processed on-device and never leaves your Mac. Capturing audio from videos and meetings needs no extra permission. A language without on-device support requires downloading its on-device speech model in System Settings.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -269,36 +262,12 @@ struct WelcomeView: View {
                     isChecking: isCheckingPermissions,
                     onGrant: requestSpeechRecognitionPermission
                 )
-
-                Divider()
-
-                // Screen Recording Permission (optional — needs a restart to take effect)
-                PermissionRow(
-                    icon: "rectangle.dashed.badge.record",
-                    title: "Screen Recording",
-                    description: "Capture audio from videos & meetings",
-                    isGranted: hasScreenCapturePermission,
-                    isChecking: isCheckingPermissions,
-                    isOptional: true,
-                    pendingRestart: screenRecordingRequested && !hasScreenCapturePermission,
-                    onGrant: requestScreenCapturePermission,
-                    onRestart: relaunchApp,
-                    onOpenSettings: openScreenRecordingSettings
-                )
             }
             .padding()
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color(nsColor: .controlBackgroundColor))
             )
-
-            if screenRecordingRequested && !hasScreenCapturePermission {
-                Text("macOS requires a restart for screen recording to take effect. You can also continue with microphone only.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
         .onAppear {
             Task {
@@ -315,9 +284,8 @@ struct WelcomeView: View {
             }
         }
     }
-    
-    /// Only microphone + speech recognition are required to proceed. Screen
-    /// recording is optional (microphone-only mode covers the rest).
+
+    /// Microphone + speech recognition are the only permissions LCT needs.
     private var requiredPermissionsGranted: Bool {
         hasMicrophonePermission && hasSpeechRecognitionPermission
     }
@@ -675,18 +643,6 @@ struct WelcomeView: View {
     
     // MARK: - Actions
 
-    /// After a restart triggered from the setup flow, jump back to the saved
-    /// step and re-check permissions immediately — grant state may have
-    /// changed while the app was away.
-    private func resumeSavedStepIfNeeded() {
-        guard let stepID = OnboardingResumeStore.consume(),
-              let step = SetupStep(rawValue: stepID) else { return }
-        currentStep = step
-        Task {
-            await checkAllPermissions()
-        }
-    }
-
     private func nextStep() {
         setupError = nil
         
@@ -996,90 +952,28 @@ struct WelcomeView: View {
     }
     
     // MARK: - Permission Methods
-    
+
     private func checkAllPermissions() async {
         isCheckingPermissions = true
         defer { isCheckingPermissions = false }
-        
-        // Check Screen Capture permission
-        hasScreenCapturePermission = await checkScreenCapturePermission()
-        
+
         // Check Microphone permission
         hasMicrophonePermission = await checkMicrophonePermission()
-        
+
         // Check Speech Recognition permission
         hasSpeechRecognitionPermission = await checkSpeechRecognitionPermission()
     }
-    
-    private func checkScreenCapturePermission() async -> Bool {
-        print("[WelcomeView] Checking Screen Capture Permission...")
-        let hasAccess = CGPreflightScreenCaptureAccess()
-        if hasAccess {
-            print("[WelcomeView] CGPreflight returned TRUE")
-            return true
-        }
-        
-        // Fallback to SCShareableContent to bypass cache
-        do {
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            let granted = !content.displays.isEmpty
-            print("[WelcomeView] SCShareableContent check completed. Displays > 0? \(granted)")
-            return granted
-        } catch {
-            print("[WelcomeView] SCShareableContent threw: \(error.localizedDescription)")
-            return false
-        }
-    }
-    
+
     private func checkMicrophonePermission() async -> Bool {
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
         return status == .authorized
     }
-    
+
     private func checkSpeechRecognitionPermission() async -> Bool {
         let status = SFSpeechRecognizer.authorizationStatus()
         return status == .authorized
     }
-    
-    private func requestScreenCapturePermission() {
-        screenRecordingRequested = true
-        Task {
-            // Requesting screen capture triggers the system dialog (first time)
-            do {
-                _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-                hasScreenCapturePermission = true
-            } catch {
-                // Not yet granted. Never open System Settings unprompted —
-                // the row surfaces an "Open System Settings" button instead.
-                // Even after granting, macOS needs an app restart for the
-                // permission to take effect, which is why the row also
-                // surfaces a Restart button.
-                hasScreenCapturePermission = false
-            }
-        }
-    }
 
-    private func openScreenRecordingSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    /// Relaunch the app so a newly granted screen-recording permission takes
-    /// effect (CGPreflight caches the old value for the process's lifetime).
-    /// The current step is saved first so setup resumes here after the restart.
-    private func relaunchApp() {
-        OnboardingResumeStore.save(stepID: currentStep.rawValue)
-        let bundleURL = Bundle.main.bundleURL
-        let config = NSWorkspace.OpenConfiguration()
-        config.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: bundleURL, configuration: config) { _, _ in
-            Task { @MainActor in
-                NSApp.terminate(nil)
-            }
-        }
-    }
-    
     private func requestMicrophonePermission() {
         Task {
             let granted = await AVCaptureDevice.requestAccess(for: .audio)
@@ -1131,32 +1025,18 @@ struct PermissionRow: View {
     let description: String
     let isGranted: Bool
     let isChecking: Bool
-    var isOptional: Bool = false
-    var pendingRestart: Bool = false
     let onGrant: () -> Void
-    var onRestart: (() -> Void)? = nil
-    var onOpenSettings: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 16) {
             Image(systemName: icon)
                 .font(.title2)
-                .foregroundStyle(iconColor)
+                .foregroundStyle(isGranted ? .green : .orange)
                 .frame(width: 40)
 
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(title)
-                        .font(.headline)
-                    if isOptional && !isGranted {
-                        Text("Recommended")
-                            .font(.caption2)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.secondary.opacity(0.15)))
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                Text(title)
+                    .font(.headline)
                 Text(description)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -1164,46 +1044,19 @@ struct PermissionRow: View {
 
             Spacer()
 
-            trailing
-        }
-    }
-
-    @ViewBuilder
-    private var trailing: some View {
-        if isChecking {
-            ProgressView()
-                .scaleEffect(0.8)
-        } else if isGranted {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-                .font(.title2)
-        } else if pendingRestart {
-            HStack(spacing: 8) {
-                if let onOpenSettings {
-                    Button("Open System Settings") {
-                        onOpenSettings()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+            if isChecking {
+                ProgressView()
+                    .scaleEffect(0.8)
+            } else if isGranted {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.title2)
+            } else {
+                Button("Grant") {
+                    onGrant()
                 }
-                Button("Restart to apply") {
-                    onRestart?()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
-                .controlSize(.small)
+                .buttonStyle(.bordered)
             }
-        } else {
-            Button("Grant") {
-                onGrant()
-            }
-            .buttonStyle(.bordered)
         }
-    }
-
-    private var iconColor: Color {
-        if isGranted { return .green }
-        if pendingRestart { return .orange }
-        return isOptional ? Color(nsColor: .tertiaryLabelColor) : .orange
     }
 }
