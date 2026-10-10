@@ -4,7 +4,8 @@ import Foundation
 /// Guards the development run contract of `Scripts/dev-run.sh` and the
 /// deprecated wrappers that forward to it:
 /// - a stable signing identity is mandatory (explicit `LCT_SIGN_IDENTITY`,
-///   otherwise the first Apple Development certificate's SHA-1);
+///   otherwise the SHA-1 of the first Apple Development certificate that is
+///   not revoked — macOS refuses to launch apps signed with a revoked one);
 /// - ad-hoc (`-`) signing is rejected outright;
 /// - a running instance is quit before packaging;
 /// - `--no-launch` builds without opening the app.
@@ -43,6 +44,7 @@ final class DevRunTests: XCTestCase {
     /// its invocation to the log at `LCT_STUB_LOG`.
     private func makeStubbedRun(
         securityOutput: String?,
+        securityScript: String? = nil,
         pgrepBody: String? = nil
     ) throws -> StubbedRun {
         let workDir = FileManager.default.temporaryDirectory
@@ -54,7 +56,9 @@ final class DevRunTests: XCTestCase {
         let logURL = workDir.appendingPathComponent("stub.log")
         addTeardownBlock { try? FileManager.default.removeItem(at: workDir) }
 
-        if let securityOutput {
+        if let securityScript {
+            try writeExecutable("security", contents: securityScript, in: binDir)
+        } else if let securityOutput {
             try writeExecutable("security", contents: """
                 #!/bin/bash
                 cat <<'LCT_SECURITY_EOF'
@@ -119,6 +123,47 @@ final class DevRunTests: XCTestCase {
         (try? String(contentsOf: stubs.logURL, encoding: .utf8)) ?? ""
     }
 
+    /// A `security` stub that answers `find-identity` with `identities`,
+    /// `find-certificate` with a fake PEM block per hash, and `verify-cert`
+    /// with failure for the certificates in `revokedHashes`. Each
+    /// verification is logged as `verify-cert <hash>`.
+    private func securityStub(identities: String, certificateHashes: [String], revokedHashes: [String]) -> String {
+        let certificates = certificateHashes.map { hash in
+            """
+            echo "SHA-256 hash: 0000"
+            echo "SHA-1 hash: \(hash)"
+            echo "-----BEGIN CERTIFICATE-----"
+            echo "fake-\(hash)"
+            echo "-----END CERTIFICATE-----"
+            """
+        }.joined(separator: "\n")
+        return """
+            #!/bin/bash
+            case "$1" in
+            find-identity)
+                cat <<'LCT_SECURITY_EOF'
+            \(identities)
+            LCT_SECURITY_EOF
+                ;;
+            find-certificate)
+            \(certificates)
+                ;;
+            verify-cert)
+                while [ $# -gt 0 ]; do [ "$1" = "-c" ] && file="$2"; shift; done
+                hash=$(sed -n 's/^fake-//p' "$file")
+                echo "verify-cert $hash" >> "$LCT_STUB_LOG"
+                for revoked in \(revokedHashes.joined(separator: " ")); do
+                    [ "$hash" = "$revoked" ] && exit 1
+                done
+                exit 0
+                ;;
+            esac
+            """
+    }
+
+    private let appleDevelopmentA = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    private let appleDevelopmentB = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+
     private let twoAppleDevelopmentIdentities = """
              1) AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA "Apple Development: Alice Example (TEAM1)"
              2) BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "Apple Development: Alice Example (TEAM1)"
@@ -142,6 +187,58 @@ final class DevRunTests: XCTestCase {
             "must print how to pin the selected identity, got: \(result.stdout)"
         )
         XCTAssertTrue(log.contains("open "), "default run must open the app, got: \(log)")
+    }
+
+    func testDevRun_FirstIdentityFailsVerification_SelectsNextSHA1() throws {
+        let stubs = try makeStubbedRun(securityOutput: nil, securityScript: securityStub(
+            identities: twoAppleDevelopmentIdentities,
+            certificateHashes: [appleDevelopmentA, appleDevelopmentB],
+            revokedHashes: [appleDevelopmentA]
+        ))
+        let result = try run("dev-run.sh", stubs: stubs)
+
+        XCTAssertEqual(result.exitStatus, 0, "dev-run.sh failed: \(result.stderr)")
+        let log = stubLog(stubs)
+        XCTAssertTrue(log.contains("verify-cert \(appleDevelopmentA)"), "the first certificate must be verified, got: \(log)")
+        XCTAssertTrue(
+            log.contains("package identity=\(appleDevelopmentB)"),
+            "a revoked certificate must be skipped in favor of the next one, got: \(log)"
+        )
+        XCTAssertTrue(result.stderr.contains("skipping \(appleDevelopmentA)"), "the skip must be reported, got: \(result.stderr)")
+    }
+
+    func testDevRun_IdentityFlaggedByFindIdentity_IsSkippedWithoutVerifying() throws {
+        let identities = """
+                 1) \(appleDevelopmentA) "Apple Development: Alice Example (TEAM1)" (CSSMERR_TP_CERT_REVOKED)
+                 2) \(appleDevelopmentB) "Apple Development: Alice Example (TEAM1)"
+                 2 valid identities found
+            """
+        let stubs = try makeStubbedRun(securityOutput: nil, securityScript: securityStub(
+            identities: identities,
+            certificateHashes: [appleDevelopmentA, appleDevelopmentB],
+            revokedHashes: []
+        ))
+        let result = try run("dev-run.sh", stubs: stubs)
+
+        XCTAssertEqual(result.exitStatus, 0, "dev-run.sh failed: \(result.stderr)")
+        let log = stubLog(stubs)
+        XCTAssertTrue(log.contains("package identity=\(appleDevelopmentB)"), "got: \(log)")
+        XCTAssertFalse(log.contains("verify-cert \(appleDevelopmentA)"), "a flagged identity needs no further check, got: \(log)")
+        XCTAssertTrue(result.stderr.contains("CSSMERR_TP_CERT_REVOKED"), "the reason must be reported, got: \(result.stderr)")
+    }
+
+    func testDevRun_EveryAppleDevelopmentIdentityRevoked_ExitsNonZeroWithGuidance() throws {
+        let stubs = try makeStubbedRun(securityOutput: nil, securityScript: securityStub(
+            identities: twoAppleDevelopmentIdentities,
+            certificateHashes: [appleDevelopmentA, appleDevelopmentB],
+            revokedHashes: [appleDevelopmentA, appleDevelopmentB]
+        ))
+        let result = try run("dev-run.sh", stubs: stubs)
+
+        XCTAssertNotEqual(result.exitStatus, 0, "dev-run.sh must fail when every identity is revoked")
+        XCTAssertFalse(stubLog(stubs).contains("package identity="), "nothing may be packaged")
+        XCTAssertTrue(result.stderr.contains("revoked"), "failure must name the cause, got: \(result.stderr)")
+        XCTAssertTrue(result.stderr.contains("LCT_SIGN_IDENTITY"), "failure must explain the override, got: \(result.stderr)")
     }
 
     func testDevRun_ExplicitIdentity_IsPassedThroughToPackaging() throws {
