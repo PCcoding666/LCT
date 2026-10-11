@@ -12,7 +12,7 @@ meetings, videos, or calls across a language barrier.
 | Platform | Stack | Status | Docs |
 |----------|-------|--------|------|
 | [Windows](windows/) | C# / .NET 8 (WPF) + LiveCaptions | Stable | [windows/README.md](windows/README.md) |
-| [macOS](macos/) | SwiftUI + `SFSpeechRecognizer` + local LLM (Ollama) | Active development | [macos/README.md](macos/README.md) |
+| [macOS](macos/) | SwiftUI + on-device speech (`SpeechAnalyzer` on macOS 26+, `SFSpeechRecognizer` on 15–25) + local LLM (Ollama) | Active development | [macos/README.md](macos/README.md) |
 
 The two apps are independent codebases tuned to each platform's native speech and
 UI frameworks. They share this repository for common documentation, translation
