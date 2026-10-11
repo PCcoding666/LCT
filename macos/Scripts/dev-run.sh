@@ -13,7 +13,7 @@
 #
 # Usage: Scripts/dev-run.sh [--no-launch] [--log]
 #   --no-launch   build & sign only, do not start the app
-#   --log         after launching, tail -f ~/Library/Logs/LCTMac.log
+#   --log         after launching, tail -F ~/Library/Logs/LCTMac.log
 
 set -euo pipefail
 
@@ -162,7 +162,10 @@ if [ "$LAUNCH" -eq 1 ]; then
     echo "dev-run.sh: launched $APP_BUNDLE"
     if [ "$TAIL_LOG" -eq 1 ]; then
         echo "dev-run.sh: tailing $LOG_FILE (Ctrl-C to stop)"
-        tail -f "$LOG_FILE"
+        # -F, not -f: the app replaces the log file (new inode) when it
+        # finishes launching, which is usually after tail has started, and
+        # `tail -f` would keep following the old, deleted file.
+        tail -F "$LOG_FILE"
     fi
 else
     echo "dev-run.sh: build complete (--no-launch): $APP_BUNDLE"
