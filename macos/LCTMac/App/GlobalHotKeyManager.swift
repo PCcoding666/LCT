@@ -6,8 +6,8 @@ import Carbon.HIToolbox
 /// Unlike NSEvent global monitors, this needs no Accessibility/Input-Monitoring
 /// permission — the OS notifies us only when our specific chord fires, rather
 /// than us observing every keystroke. Hotkey presses post the same
-/// Notifications the in-app menu/commands already use, so there's no coupling
-/// to the view model.
+/// Notifications the in-app menu/commands already use; AppCoordinator handles
+/// them whether or not the main window is open.
 ///
 /// Default chords (control-option-command + key, chosen to avoid clashing with
 /// system shortcuts like ⌘Space Spotlight):

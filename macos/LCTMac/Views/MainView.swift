@@ -52,8 +52,8 @@ enum LanguageLabel {
 /// Main application view with transcription and translation display
 @MainActor
 struct MainView: View {
-    @StateObject private var viewModel = TranscriptionViewModel()
-    @StateObject private var overlayController = OverlayWindowController()
+    /// Owned by AppCoordinator, so it outlives this window.
+    @ObservedObject var viewModel: TranscriptionViewModel
     @State private var showSettings = false
     @State private var showHistory = false
     @State private var autoScroll = true
@@ -83,50 +83,19 @@ struct MainView: View {
         }
         .animation(.easeInOut(duration: 0.3), value: viewModel.notice)
         .task {
-            // Warm the translation model in the background right after the
-            // main window appears, so the first start() finds it in memory.
-            await viewModel.prepareModelOnLaunch()
             // Populate the language menu's availability markers (which
-            // languages need an on-device model download).
+            // languages need an on-device model download). The model prewarm
+            // runs once in AppCoordinator, not on every window appearance.
             await viewModel.refreshLanguageAvailability()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .settingsDidChange)) { notification in
-            // The ⌘, settings window saved new settings — apply them to the
-            // running app. updateSettings never re-posts this notification.
-            guard let newSettings = notification.object as? AppSettings,
-                  newSettings != viewModel.settings else { return }
-            viewModel.updateSettings(newSettings)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleCapture)) { notification in
-            Task {
-                if let shouldStart = notification.object as? Bool {
-                    if shouldStart {
-                        await viewModel.start()
-                    } else {
-                        await viewModel.stop()
-                    }
-                } else {
-                    await viewModel.toggleCapture()
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .togglePause)) { _ in
-            viewModel.togglePause()
-        }
+        // Start/stop, pause, overlay, settings-change and File-menu export
+        // notifications are handled by AppCoordinator, which outlives this
+        // window; only window-scoped commands are handled here.
         .onReceive(NotificationCenter.default.publisher(for: .copyTranslation)) { _ in
             viewModel.copyToClipboard()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleOverlay)) { _ in
-            overlayController.toggle(with: viewModel)
-        }
         .onReceive(NotificationCenter.default.publisher(for: .showHistory)) { _ in
             showHistory = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .exportSession)) { notification in
-            // File menu export commands carry the format raw value.
-            guard let raw = notification.object as? String,
-                  let format = SessionExporter.Format(rawValue: raw) else { return }
-            viewModel.exportSession(format)
         }
     }
 
