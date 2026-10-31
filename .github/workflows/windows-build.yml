@@ -123,13 +123,22 @@ jobs:
             Write-Host '::endgroup::'
           }
 
+      - name: Install NSIS
+        # windows-latest no longer ships NSIS; Chocolatey is on every runner.
+        run: |
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            choco install nsis -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "choco install nsis failed" }
+          }
+          if (-not (Test-Path $makensis)) { throw "makensis not found at $makensis after install" }
+          & $makensis /VERSION
+
       - name: Build installer
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $makensis = (Get-Command makensis -ErrorAction SilentlyContinue).Source
-          if (-not $makensis) { $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe" }
-          if (-not (Test-Path $makensis)) { throw "makensis not found on this runner" }
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
           New-Item -ItemType Directory -Force dist | Out-Null
           $root = (Get-Location).Path
           & $makensis /V2 `

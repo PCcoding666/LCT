@@ -76,12 +76,15 @@ namespace LiveCaptionsTranslator.Models
         /// <returns>Installer asset or null if not found</returns>
         public ReleaseAsset? GetInstallerAsset()
         {
-            // Look for Windows installer (x64)
-            return Assets.FirstOrDefault(a => 
+            // Releases ship one installer, LCT-vX.Y.Z-Setup.exe, which is x64 only
+            // (see .github/workflows/windows-build.yml). It carries no architecture
+            // marker, so only exclude an explicitly ARM64-named installer; ARM64
+            // builds are portable executables and never match "setup"/"installer".
+            return Assets.FirstOrDefault(a =>
                 a.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
                 (a.Name.Contains("setup", StringComparison.OrdinalIgnoreCase) ||
                  a.Name.Contains("installer", StringComparison.OrdinalIgnoreCase)) &&
-                a.Name.Contains("x64", StringComparison.OrdinalIgnoreCase));
+                !a.Name.Contains("arm64", StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>

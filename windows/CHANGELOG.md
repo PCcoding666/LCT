@@ -24,6 +24,11 @@ pipeline. The application itself is the same as 0.1.4.
 - The in-app update check looks at this repository's releases instead of an
   older repository.
 
+### Fixed
+- The in-app updater could never find the installer: it required "x64" in the
+  file name, which `LCT-vX.Y.Z-Setup.exe` never had, so installing an update
+  always failed with "No suitable installer found for this platform".
+
 ## [0.1.4] - 2026-01-27
 
 Published out of sequence: the number is lower than 1.0.3 although the build is
