@@ -1,0 +1,85 @@
+<Window x:Class="LiveCaptionsTranslator.Views.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="LCT Overlay" Width="400" Height="200" MinWidth="240" MinHeight="90"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent" ResizeMode="CanResize"
+        ShowInTaskbar="False" ShowActivated="False" Topmost="True">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
+    <Border x:Name="Shell" CornerRadius="12" BorderThickness="1" BorderBrush="#33FFFFFF" Padding="12"
+            Background="{Binding Settings.OverlayOpacity, Converter={StaticResource OverlayBackground}}"
+            MouseLeftButtonDown="Shell_MouseLeftButtonDown" MouseEnter="Shell_MouseEnter" MouseLeave="Shell_MouseLeave">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Header: visible on hover -->
+            <Grid x:Name="Header" Visibility="Collapsed" Margin="0,0,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse Width="6" Height="6" Fill="{Binding IsCapturing, Converter={StaticResource OllamaDotBrush}}" VerticalAlignment="Center" />
+                    <TextBlock Style="{StaticResource MonoSmall}" Margin="6,0,0,0" VerticalAlignment="Center" Text="{Binding ElapsedText}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Style="{StaticResource GhostButton}" Content="⏯" FontSize="12" Padding="5,1" ToolTip="Pause / resume" Click="Pause_Click" />
+                    <Button Style="{StaticResource GhostButton}" Content="⧉" FontSize="12" Padding="5,1" ToolTip="Copy latest translation" Click="Copy_Click" />
+                    <Button Style="{StaticResource GhostButton}" Content="✕" FontSize="11" Padding="5,1" ToolTip="Hide overlay (Ctrl+Alt+O)" Click="Hide_Click" />
+                </StackPanel>
+            </Grid>
+
+            <StackPanel Grid.Row="1" VerticalAlignment="Bottom">
+                <!-- Last finalized segment -->
+                <Border CornerRadius="6" Padding="8,4" Background="#55000000" Margin="0,0,0,4" Visibility="{Binding HasLastSegment, Converter={StaticResource BoolToVis}}"
+                        Opacity="{Binding HasLiveDraft, Converter={StaticResource DimWhenTrue}}">
+                    <StackPanel DataContext="{Binding LastSegment}">
+                        <TextBlock Text="{Binding SourceText}" Foreground="#99FFFFFF" TextTrimming="CharacterEllipsis" MaxHeight="48"
+                                   FontSize="{Binding DataContext.Settings.OverlayFontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeOffset}, ConverterParameter=-1}" />
+                        <TextBlock Text="{Binding TranslatedText}" Foreground="White" FontWeight="Medium" Margin="0,3,0,0" MaxHeight="90"
+                                   FontSize="{Binding DataContext.Settings.OverlayFontSize, RelativeSource={RelativeSource AncestorType=Window}}"
+                                   Visibility="{Binding HasTranslation, Converter={StaticResource BoolToVis}}" />
+                    </StackPanel>
+                </Border>
+                <!-- Live draft -->
+                <Border CornerRadius="6" Padding="8,4" Background="#66000000" Visibility="{Binding HasLiveDraft, Converter={StaticResource BoolToVis}}">
+                    <StackPanel>
+                        <TextBlock Text="{Binding LiveSourceText}" Foreground="#99FFFFFF" MaxHeight="48" TextTrimming="CharacterEllipsis"
+                                   FontSize="{Binding Settings.OverlayFontSize, Converter={StaticResource FontSizeOffset}, ConverterParameter=-1}" />
+                        <TextBlock Text="{Binding LiveTranslation}" Foreground="White" FontWeight="Medium" Margin="0,3,0,0" MaxHeight="90"
+                                   FontSize="{Binding Settings.OverlayFontSize}" Visibility="{Binding HasLiveTranslation, Converter={StaticResource BoolToVis}}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- Status row -->
+            <Grid Grid.Row="2" Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal">
+                    <Border CornerRadius="4" Background="#66000000" Padding="6,2" Visibility="{Binding HasLiveDraft, Converter={StaticResource BoolToVis}}">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="6" Height="6" Fill="{StaticResource HudAccent}" VerticalAlignment="Center" />
+                            <TextBlock Text="Listening" Style="{StaticResource MonoSmall}" Foreground="#CCFFFFFF" Margin="5,0,0,0" />
+                        </StackPanel>
+                    </Border>
+                    <Border CornerRadius="4" Background="#66000000" Padding="6,2" Visibility="{Binding IsPaused, Converter={StaticResource BoolToVis}}">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="6" Height="6" Fill="{StaticResource HudOrange}" VerticalAlignment="Center" />
+                            <TextBlock Text="Paused" Style="{StaticResource MonoSmall}" Foreground="#CCFFFFFF" Margin="5,0,0,0" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+                <TextBlock Grid.Column="1" Text="{Binding LatencyText}" Style="{StaticResource MonoSmall}" Foreground="#99FFFFFF" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

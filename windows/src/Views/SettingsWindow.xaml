@@ -1,0 +1,210 @@
+<Window x:Class="LiveCaptionsTranslator.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="LCT — Settings" Width="640" Height="760" MinWidth="520" MinHeight="480"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource HudBackground}">
+    <Window.Resources>
+        <Style x:Key="Row" TargetType="Grid">
+            <Setter Property="Margin" Value="0,5" />
+        </Style>
+        <Style x:Key="RowLabel" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,12,0" />
+        </Style>
+    </Window.Resources>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Margin="20,14">
+            <TextBlock Text="// settings" Style="{StaticResource MonoAccent}" FontSize="14" VerticalAlignment="Center" />
+            <Button Content="Save" Style="{StaticResource AccentButton}" Command="{Binding SaveCommand}" HorizontalAlignment="Right" MinWidth="80" ToolTip="{Binding EndpointError}" />
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="20,0,20,10">
+            <StackPanel>
+                <Rectangle Style="{StaticResource Hairline}" />
+
+                <!-- Audio -->
+                <TextBlock Text="AUDIO CAPTURE" Style="{StaticResource SectionHeader}" />
+                <CheckBox Content="Capture system audio (what the PC plays)" IsChecked="{Binding Local.CaptureSystemAudio}" />
+                <CheckBox Content="Capture microphone" IsChecked="{Binding Local.CaptureMicrophone}" />
+                <Grid Style="{StaticResource Row}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Microphone device" Style="{StaticResource RowLabel}" />
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding InputDevices}" SelectedItem="{Binding MicrophoneDevice}" DisplayMemberPath="Label" />
+                </Grid>
+
+                <!-- Languages -->
+                <TextBlock Text="LANGUAGE" Style="{StaticResource SectionHeader}" />
+                <Grid Style="{StaticResource Row}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="System audio language" Style="{StaticResource RowLabel}" />
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding SourceLanguages}" SelectedValue="{Binding SourceLanguage}" SelectedValuePath="Value" DisplayMemberPath="Label" />
+                </Grid>
+                <Grid Style="{StaticResource Row}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Microphone language" Style="{StaticResource RowLabel}" />
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding MicrophoneLanguages}" SelectedItem="{Binding MicrophoneLanguage}" DisplayMemberPath="Label" />
+                </Grid>
+                <Grid Style="{StaticResource Row}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Translate to" Style="{StaticResource RowLabel}" />
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding TargetLanguages}" SelectedValue="{Binding Local.TargetLanguage}" SelectedValuePath="Value" DisplayMemberPath="Label" />
+                </Grid>
+
+                <!-- Speech model -->
+                <TextBlock Text="SPEECH RECOGNITION (ON-DEVICE)" Style="{StaticResource SectionHeader}" />
+                <TextBlock Text="{Binding WhisperRecommendationText}" Style="{StaticResource Caption}" Margin="0,0,0,6" />
+                <ComboBox ItemsSource="{Binding WhisperModels}" SelectedItem="{Binding SelectedWhisperOption}" DisplayMemberPath="Label" />
+                <Grid Style="{StaticResource Row}" Visibility="{Binding ShowWhisperDownload, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="This speech model is not downloaded yet." Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                    <Button Content="Download" Command="{Binding DownloadWhisperCommand}" HorizontalAlignment="Right" />
+                </Grid>
+                <StackPanel Visibility="{Binding IsDownloadingWhisper, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                    <ProgressBar Value="{Binding WhisperProgress, Mode=OneWay}" Maximum="1" />
+                    <Grid Margin="0,6,0,0">
+                        <TextBlock Text="{Binding WhisperProgressText}" Style="{StaticResource Mono}" VerticalAlignment="Center" />
+                        <Button Content="Cancel" Command="{Binding CancelWhisperCommand}" HorizontalAlignment="Right" Padding="8,3" />
+                    </Grid>
+                </StackPanel>
+                <TextBlock Text="{Binding WhisperProgressText}" Style="{StaticResource Caption}" Visibility="{Binding IsDownloadingWhisper, Converter={StaticResource InverseBoolToVis}}" Margin="0,4,0,0" />
+
+                <!-- Translation model -->
+                <TextBlock Text="TRANSLATION MODEL (OLLAMA)" Style="{StaticResource SectionHeader}" />
+                <TextBlock Text="{Binding RecommendationText}" Style="{StaticResource Caption}" Margin="0,0,0,6" />
+                <ComboBox IsEditable="True" ItemsSource="{Binding ModelOptions}" Text="{Binding OllamaModel, UpdateSourceTrigger=LostFocus}" ToolTip="Installed models plus this PC's recommendation; type any Ollama model name" />
+                <Grid Style="{StaticResource Row}" Visibility="{Binding ShowDownloadRow, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding SelectedModelMissingText}" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                    <Button Content="Download" Command="{Binding DownloadModelCommand}" HorizontalAlignment="Right" />
+                </Grid>
+                <StackPanel Visibility="{Binding ModelManager.IsPulling, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                    <ProgressBar Value="{Binding ModelManager.Progress, Mode=OneWay}" Maximum="1" />
+                    <Grid Margin="0,6,0,0">
+                        <TextBlock Text="{Binding ModelManager.ProgressText}" Style="{StaticResource Mono}" VerticalAlignment="Center" />
+                        <Button Content="Cancel" Command="{Binding CancelPullCommand}" HorizontalAlignment="Right" Padding="8,3" />
+                    </Grid>
+                </StackPanel>
+                <TextBlock Text="{Binding ModelDownloadError}" Style="{StaticResource Caption}" Foreground="{StaticResource HudOrange}" Visibility="{Binding ModelDownloadError, Converter={StaticResource StringToVis}}" Margin="0,4,0,0" />
+                <Grid Style="{StaticResource Row}">
+                    <TextBlock Text="{Binding ModelCountText}" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                    <Button Content="Refresh" Command="{Binding RefreshModelsCommand}" HorizontalAlignment="Right" Padding="8,3" />
+                </Grid>
+                <Grid Style="{StaticResource Row}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Keep model loaded" Style="{StaticResource RowLabel}" ToolTip="How long Ollama keeps the translation model in memory after its last use" />
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding KeepAliveOptions}" SelectedValue="{Binding Local.ModelKeepAlive}" SelectedValuePath="Value" DisplayMemberPath="Label" />
+                </Grid>
+                <CheckBox Content="Unload model when LCT quits" IsChecked="{Binding Local.UnloadModelOnQuit}" />
+
+                <!-- Ollama connection -->
+                <TextBlock Text="OLLAMA CONNECTION" Style="{StaticResource SectionHeader}" />
+                <Grid Style="{StaticResource Row}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="90" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Host" Style="{StaticResource RowLabel}" />
+                    <TextBox Grid.Column="1" Text="{Binding OllamaHost, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Column="2" Text="Port" Style="{StaticResource RowLabel}" Margin="12,0" />
+                    <TextBox Grid.Column="3" Text="{Binding OllamaPort, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+                <CheckBox Content="Allow remote Ollama (HTTPS only)" IsChecked="{Binding RemoteOllamaOptIn}" />
+                <TextBlock Style="{StaticResource Caption}" Text="Local servers (localhost / 127.0.0.1) use HTTP. Remote servers require this explicit opt-in and are only contacted over HTTPS." />
+                <TextBlock Text="{Binding EndpointError}" Style="{StaticResource Caption}" Foreground="{StaticResource HudOrange}" Margin="0,4,0,0" Visibility="{Binding HasEndpointError, Converter={StaticResource BoolToVis}}" />
+                <Grid Style="{StaticResource Row}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="90" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="90" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Timeout (seconds)" Style="{StaticResource RowLabel}" />
+                    <TextBox Grid.Column="1" Text="{Binding Local.OllamaTimeout}" />
+                    <TextBlock Grid.Column="2" Text="Context (num_ctx)" Style="{StaticResource RowLabel}" Margin="12,0" ToolTip="Sent with every request. 4096 keeps a 4B model around 3 GB; Ollama's default of 32K would need 7 GB+." />
+                    <TextBox Grid.Column="3" Text="{Binding Local.OllamaNumCtx}" />
+                </Grid>
+
+                <!-- Tuning -->
+                <TextBlock Text="TRANSLATION TUNING" Style="{StaticResource SectionHeader}" />
+                <Grid Style="{StaticResource Row}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Model type" Style="{StaticResource RowLabel}" />
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding ModelTypes}" SelectedValue="{Binding Local.TranslationModelType}" SelectedValuePath="Value" DisplayMemberPath="Label" />
+                </Grid>
+                <Grid Style="{StaticResource Row}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="44" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Temperature" Style="{StaticResource RowLabel}" />
+                    <Slider Grid.Column="1" Minimum="0" Maximum="1" TickFrequency="0.1" IsSnapToTickEnabled="True" Value="{Binding Local.OllamaTemperature}" />
+                    <TextBlock Grid.Column="2" Text="{Binding Local.OllamaTemperature, StringFormat=F1}" Style="{StaticResource Mono}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                </Grid>
+                <CheckBox Content="Live draft translation (translate while speaking)" IsChecked="{Binding Local.LiveDraftTranslation}" />
+                <CheckBox Content="Context-aware translation (previous lines as context)" IsChecked="{Binding ContextAware}" />
+                <Grid Style="{StaticResource Row}" Visibility="{Binding ContextAware, Converter={StaticResource BoolToVis}}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="44" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Max context entries" Style="{StaticResource RowLabel}" />
+                    <Slider Grid.Column="1" Minimum="1" Maximum="10" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Local.MaxContextEntries}" />
+                    <TextBlock Grid.Column="2" Text="{Binding Local.MaxContextEntries}" Style="{StaticResource Mono}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                </Grid>
+                <Grid Style="{StaticResource Row}">
+                    <TextBlock Text="Custom prompt" Style="{StaticResource RowLabel}" />
+                    <Button Content="{Binding PromptButtonText}" Click="EditPrompt_Click" HorizontalAlignment="Right" />
+                </Grid>
+
+                <!-- Display & overlay -->
+                <TextBlock Text="DISPLAY &amp; OVERLAY" Style="{StaticResource SectionHeader}" />
+                <CheckBox Content="Show latency" IsChecked="{Binding Local.ShowLatency}" />
+                <Grid Style="{StaticResource Row}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="44" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Max display cards" Style="{StaticResource RowLabel}" />
+                    <Slider Grid.Column="1" Minimum="1" Maximum="20" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Local.MaxDisplayCards}" />
+                    <TextBlock Grid.Column="2" Text="{Binding Local.MaxDisplayCards}" Style="{StaticResource Mono}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                </Grid>
+                <Grid Style="{StaticResource Row}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="44" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Overlay opacity" Style="{StaticResource RowLabel}" />
+                    <Slider Grid.Column="1" Minimum="0.3" Maximum="1" TickFrequency="0.05" IsSnapToTickEnabled="True" Value="{Binding Local.OverlayOpacity}" />
+                    <TextBlock Grid.Column="2" Text="{Binding Local.OverlayOpacity, Converter={StaticResource Percent}}" Style="{StaticResource Mono}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                </Grid>
+                <Grid Style="{StaticResource Row}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="44" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Overlay font size" Style="{StaticResource RowLabel}" />
+                    <Slider Grid.Column="1" Minimum="10" Maximum="24" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Local.OverlayFontSize}" />
+                    <TextBlock Grid.Column="2" Text="{Binding Local.OverlayFontSize, StringFormat={}{0:0} pt}" Style="{StaticResource Mono}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                </Grid>
+                <CheckBox Content="Overlay stays on top" IsChecked="{Binding Local.OverlayStayOnTop}" />
+                <CheckBox Content="Overlay click-through (clicks pass to the window below)" IsChecked="{Binding Local.OverlayClickThrough}" />
+
+                <!-- History -->
+                <TextBlock Text="HISTORY" Style="{StaticResource SectionHeader}" />
+                <CheckBox Content="Keep translation history" IsChecked="{Binding HistoryEnabled}" />
+                <TextBlock Style="{StaticResource Caption}" Text="History is off by default. When enabled, transcripts and translations are stored on this PC only — never sent anywhere. Turning it off keeps existing entries but stops saving new ones." />
+                <Grid Style="{StaticResource Row}" IsEnabled="{Binding HistoryEnabled}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="90" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="90" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="Retention (days)" Style="{StaticResource RowLabel}" />
+                    <TextBox Grid.Column="1" Text="{Binding Local.HistoryRetentionDays}" />
+                    <TextBlock Grid.Column="2" Text="Max entries" Style="{StaticResource RowLabel}" Margin="12,0" />
+                    <TextBox Grid.Column="3" Text="{Binding Local.HistoryMaxEntries}" />
+                </Grid>
+
+                <!-- Windows behaviour -->
+                <TextBlock Text="SHORTCUTS &amp; TRAY" Style="{StaticResource SectionHeader}" />
+                <CheckBox Content="Global hotkeys" IsChecked="{Binding Local.HotkeysEnabled}" />
+                <TextBlock Text="{Binding HotkeyText}" Style="{StaticResource Caption}" />
+                <CheckBox Content="Closing the window keeps LCT running in the tray" IsChecked="{Binding Local.MinimizeToTrayOnClose}" />
+
+                <!-- Diagnostics -->
+                <TextBlock Text="DIAGNOSTICS" Style="{StaticResource SectionHeader}" />
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="Export Diagnostics…" Click="ExportDiagnostics_Click" />
+                    <Button Content="Show Log Folder" Command="{Binding ShowLogFileCommand}" Margin="8,0,0,0" />
+                </StackPanel>
+                <TextBlock Text="{Binding DiagnosticsMessage}" Style="{StaticResource Caption}" Margin="0,6,0,0" Visibility="{Binding DiagnosticsMessage, Converter={StaticResource StringToVis}}" />
+                <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,16" Text="The diagnostics file contains settings and status only — never transcripts, translations or log content." />
+            </StackPanel>
+        </ScrollViewer>
+
+        <Grid Grid.Row="2" Margin="20,12">
+            <Button Content="Reset to Defaults" Style="{StaticResource GhostButton}" Foreground="{StaticResource HudRed}" Command="{Binding ResetCommand}" HorizontalAlignment="Left" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel" Click="Cancel_Click" />
+                <Button Content="Save" Style="{StaticResource AccentButton}" Command="{Binding SaveCommand}" Margin="8,0,0,0" MinWidth="80" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

@@ -91,6 +91,20 @@ jobs:
       - name: Restore
         run: dotnet restore $env:PROJECT_FILE
 
+      - name: Test LCT.Core
+        # Pure-logic tests (VAD, chunking, translation queue, Ollama client, exporters,
+        # settings, history). They gate the publishes below.
+        run: dotnet test Tests/LCT.Tests/LCT.Tests.csproj -c Release --nologo --logger "trx;LogFileName=lct-core-tests.trx" --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lct-core-test-results-${{ github.run_number }}
+          path: windows/TestResults/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Publish
         env:
           VERSION_ARGS: ${{ steps.version.outputs.msbuild-version-args }}

@@ -25,8 +25,8 @@ One tag, one version number, one place for release notes.
    date and write what changed for users.
 3. Commit as `chore(windows): release vX.Y.Z`, open a PR and wait for
    "Windows Build and Release" to pass. Download the artifact and smoke-test the
-   installer on a Windows machine when the change touches startup, Live Captions
-   integration or the installer itself.
+   installer on a Windows machine when the change touches startup, audio capture,
+   speech recognition or the installer itself.
 4. Merge to `master`, then tag the merge commit:
 
    ```bash
