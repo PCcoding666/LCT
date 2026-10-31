@@ -7,7 +7,7 @@ the app, not for the commit log.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.0.4] - Unreleased
+## [1.0.4] - 2026-11-01
 
 Puts the Windows app back on the 1.0.x version line and rebuilds the release
 pipeline. The application itself is the same as 0.1.4.
