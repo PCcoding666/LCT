@@ -11,13 +11,24 @@
 		<UseWPF>true</UseWPF>
 		<RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
 		
-		<!-- Version Management -->
-		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-		<VersionPrefix Condition="'$(VersionPrefix)' == ''">1.0.0</VersionPrefix>
-		<VersionSuffix Condition="'$(VersionSuffix)' == ''">dev</VersionSuffix>
+		<!--
+		  Version management. <VersionPrefix> is the single source of truth: a release
+		  tag vX.Y.Z must equal it (enforced by .github/workflows/windows-build.yml).
+		  Local builds get the "-dev" suffix; CI passes VersionSuffix=ci.N for branch
+		  builds and ReleaseBuild=true for tagged releases. Assembly attributes are
+		  generated from these properties, so never hand-edit version numbers in
+		  src/AssemblyInfo.cs.
+		-->
+		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+		<VersionPrefix Condition="'$(VersionPrefix)' == ''">1.0.4</VersionPrefix>
+		<VersionSuffix Condition="'$(VersionSuffix)' == '' And '$(ReleaseBuild)' != 'true'">dev</VersionSuffix>
 		<AssemblyVersion Condition="'$(AssemblyVersion)' == ''">$(VersionPrefix).0</AssemblyVersion>
 		<FileVersion Condition="'$(FileVersion)' == ''">$(VersionPrefix).0</FileVersion>
-		<InformationalVersion Condition="'$(InformationalVersion)' == ''">$(VersionPrefix)-$(VersionSuffix)</InformationalVersion>
+		<AssemblyTitle>LCT (LiveCaptions Translator)</AssemblyTitle>
+		<Product>LCT (LiveCaptions Translator)</Product>
+		<Description>Real-time Speech Translation Tool based on Windows LiveCaptions</Description>
+		<Company>Ai-All-You-Need-Platform Pte. Ltd.</Company>
+		<Copyright>Copyright © 2024 Ai-All-You-Need-Platform Pte. Ltd.</Copyright>
 		
 		<!-- 发布配置 -->
 		<PublishReadyToRun>true</PublishReadyToRun>
@@ -68,8 +79,11 @@
 		</PackageReference>
 	</ItemGroup>
 
-
-
-
+	<ItemGroup>
+		<!-- Build provenance, read by Services/Update/AppVersionInfo.cs. CI passes the values; local builds leave them out. -->
+		<AssemblyMetadata Include="GitCommitHash" Value="$(GitCommitHash)" Condition="'$(GitCommitHash)' != ''" />
+		<AssemblyMetadata Include="BuildTimestamp" Value="$(BuildTimestamp)" Condition="'$(BuildTimestamp)' != ''" />
+		<AssemblyMetadata Include="BuildConfiguration" Value="$(Configuration)" />
+	</ItemGroup>
 
 </Project>

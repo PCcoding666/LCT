@@ -46,7 +46,7 @@ goto :parse_args
 :args_done
 
 :: Set default version if not provided
-if "%VERSION_PREFIX%"=="" set VERSION_PREFIX=1.0.1
+if "%VERSION_PREFIX%"=="" for /f "tokens=*" %%i in ('powershell.exe -NoProfile -Command "([regex]::Match((Get-Content 'LiveCaptionsTranslator.csproj' -Raw), '<VersionPrefix[^>]*>([0-9.]+)</VersionPrefix>')).Groups[1].Value"') do set VERSION_PREFIX=%%i
 if "%VERSION_SUFFIX%"=="" set VERSION_SUFFIX=
 
 echo Configuration:
@@ -90,7 +90,8 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-dotnet publish %PROJECT_FILE% -c %BUILD_CONFIG% -r %TARGET_RUNTIME% --self-contained
+if "%VERSION_SUFFIX%"=="" (set VERSION_PROPS=-p:VersionPrefix=%VERSION_PREFIX% -p:ReleaseBuild=true) else (set VERSION_PROPS=-p:VersionPrefix=%VERSION_PREFIX% -p:VersionSuffix=%VERSION_SUFFIX%)
+dotnet publish %PROJECT_FILE% -c %BUILD_CONFIG% -r %TARGET_RUNTIME% --self-contained %VERSION_PROPS%
 if %errorlevel% neq 0 (
     echo.
     echo ERROR: .NET publish command failed.

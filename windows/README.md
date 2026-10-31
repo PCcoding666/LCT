@@ -6,7 +6,7 @@
 
 A professional real-time speech translation solution that combines Windows' built-in Live Captions with local AI models via Ollama for private, secure, and efficient translation. Developed by Ai-All-You-Need-Platform Pte. Ltd.
 
-**🚀 Quick Start:** Download from releases and launch instantly!
+**🚀 Quick Start:** Download `LCT-vX.Y.Z-Setup.exe` from the [latest release](https://github.com/PCcoding666/LCT/releases/latest) and run it. Portable builds (x64 / ARM64, with or without the .NET runtime) and SHA-256 checksums are attached to every release. The binaries are not code-signed yet, so SmartScreen may ask you to confirm with **More info ▸ Run anyway**.
 
 **🔒 Privacy First:** All translation happens locally on your device - no data leaves your machine.
 

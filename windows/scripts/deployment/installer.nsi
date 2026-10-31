@@ -27,6 +27,16 @@
   !define INSTALLER_NAME "${OUTPUT_NAME}"
 !endif
 
+; Published application files (dotnet publish output). CI passes an explicit
+; directory; the default matches build-installer.bat.
+!ifndef PUBLISH_DIR
+  !define PUBLISH_DIR "${PROJECT_ROOT}\bin\Release\net8.0-windows\win-x64\publish"
+!endif
+; License shown by the installer. The repository license lives one level above windows\.
+!ifndef LICENSE_FILE
+  !define LICENSE_FILE "${PROJECT_ROOT}\..\LICENSE"
+!endif
+
 ; Version parsing for Windows version info
 !searchparse /noerrors ${APP_VERSION} "" MAJOR_VERSION "." MINOR_VERSION "." PATCH_VERSION "." BUILD_VERSION
 !ifndef BUILD_VERSION
@@ -73,7 +83,7 @@ VIAddVersionKey "OriginalFilename" "${INSTALLER_NAME}"
 
 # --- Pages ---
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "${PROJECT_ROOT}\LICENSE"
+!insertmacro MUI_PAGE_LICENSE "${LICENSE_FILE}"
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -98,7 +108,7 @@ Section "Main Application" SecMain
     
     ; Install application files
     DetailPrint "Installing application files..."
-    File /r "${PROJECT_ROOT}\bin\Release\net8.0-windows\win-x64\publish\*.*"
+    File /r "${PUBLISH_DIR}\*.*"
     
     ; Store installation information
     WriteRegStr HKLM "Software\${COMPANY_NAME}\${APP_NAME}" "InstallDir" "$INSTDIR"

@@ -24,7 +24,7 @@ namespace LiveCaptionsTranslator.Models
         /// </summary>
         public List<string> UpdateServerUrls { get; set; } = new()
         {
-            "https://api.github.com/repos/PCcoding666/LiveCaptions-Translator/releases",
+            "https://api.github.com/repos/PCcoding666/LCT/releases",
             "https://update.livecaptions-translator.com/api/releases"
         };
 

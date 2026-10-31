@@ -1,0 +1,238 @@
+name: Windows Build and Release
+
+# Every push or pull request that touches windows/ builds the installer and the
+# portable executables and uploads them as a workflow artifact (unsigned CI
+# build, version X.Y.Z-ci.N). Pushing a tag vX.Y.Z builds X.Y.Z and publishes
+# the GitHub Release, with release notes taken from windows/CHANGELOG.md.
+#
+# The tag must equal <VersionPrefix> in windows/LiveCaptionsTranslator.csproj,
+# otherwise the build fails on purpose: that is what keeps the shipped exe, the
+# installer and the release page on one version number.
+#
+# Release checklist: windows/docs/dev/RELEASE.md
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+    paths:
+      - 'windows/**'
+      - '.github/workflows/windows-build.yml'
+  pull_request:
+    paths:
+      - 'windows/**'
+      - '.github/workflows/windows-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  PROJECT_FILE: LiveCaptionsTranslator.csproj
+
+jobs:
+  build:
+    name: Build installer and portable executables
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: windows
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      full-version: ${{ steps.version.outputs.full-version }}
+      is-release: ${{ steps.version.outputs.is-release }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Resolve version
+        id: version
+        env:
+          REF: ${{ github.ref }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          $csproj = Get-Content $env:PROJECT_FILE -Raw
+          if ($csproj -notmatch '<VersionPrefix[^>]*>(\d+\.\d+\.\d+)</VersionPrefix>') {
+            throw "No <VersionPrefix>X.Y.Z</VersionPrefix> found in $env:PROJECT_FILE"
+          }
+          $version = $Matches[1]
+
+          if ($env:REF -like 'refs/tags/*') {
+            $tag = $env:REF.Substring('refs/tags/'.Length)
+            if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') {
+              throw "Release tags must be vX.Y.Z (got '$tag')"
+            }
+            if ($Matches[1] -ne $version) {
+              throw "Tag $tag does not match <VersionPrefix>$version</VersionPrefix> in $env:PROJECT_FILE. Bump the csproj and windows/CHANGELOG.md first, then tag again."
+            }
+            $fullVersion = $version
+            $versionArgs = '-p:ReleaseBuild=true'
+            $isRelease = 'true'
+          } else {
+            $fullVersion = "$version-ci.$env:RUN_NUMBER"
+            $versionArgs = "-p:VersionSuffix=ci.$env:RUN_NUMBER"
+            $isRelease = 'false'
+          }
+
+          "version=$version"               >> $env:GITHUB_OUTPUT
+          "full-version=$fullVersion"      >> $env:GITHUB_OUTPUT
+          "is-release=$isRelease"          >> $env:GITHUB_OUTPUT
+          "msbuild-version-args=$versionArgs" >> $env:GITHUB_OUTPUT
+          Write-Host "Building $fullVersion (release: $isRelease)"
+
+      - name: Restore
+        run: dotnet restore $env:PROJECT_FILE
+
+      - name: Publish
+        env:
+          VERSION_ARGS: ${{ steps.version.outputs.msbuild-version-args }}
+        run: |
+          $timestamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+          $common = @(
+            $env:PROJECT_FILE, '-c', 'Release', '--nologo',
+            $env:VERSION_ARGS,
+            "-p:GitCommitHash=$env:GITHUB_SHA",
+            "-p:BuildTimestamp=$timestamp",
+            '-p:ContinuousIntegrationBuild=true'
+          )
+          # name, runtime, self-contained, extra MSBuild properties.
+          # "installer" is a plain folder publish that the NSIS script packs; the
+          # others are single-file executables (single-file settings come from the
+          # csproj; compression is only allowed for self-contained bundles).
+          $variants = @(
+            @('installer',         'win-x64',   'true',  '-p:PublishSingleFile=false', '-p:IncludeNativeLibrariesForSelfExtract=false', '-p:IncludeAllContentForSelfExtract=false', '-p:EnableCompressionInSingleFile=false'),
+            @('x64-withruntime',   'win-x64',   'true'),
+            @('x64',               'win-x64',   'false', '-p:EnableCompressionInSingleFile=false'),
+            @('arm64-withruntime', 'win-arm64', 'true'),
+            @('arm64',             'win-arm64', 'false', '-p:EnableCompressionInSingleFile=false')
+          )
+          foreach ($variant in $variants) {
+            $name, $rid, $selfContained = $variant[0], $variant[1], $variant[2]
+            $extra = @($variant | Select-Object -Skip 3)
+            Write-Host "::group::publish $name ($rid, self-contained=$selfContained)"
+            dotnet publish @common -r $rid --self-contained $selfContained -o "publish/$name" @extra
+            if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed for $name" }
+            Write-Host '::endgroup::'
+          }
+
+      - name: Install NSIS
+        # windows-latest no longer ships NSIS; Chocolatey is on every runner.
+        run: |
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            choco install nsis -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "choco install nsis failed" }
+          }
+          if (-not (Test-Path $makensis)) { throw "makensis not found at $makensis after install" }
+          & $makensis /VERSION
+
+      - name: Build installer
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $root = (Get-Location).Path
+          & $makensis /V2 `
+            "/DPROJECT_ROOT=$root" `
+            "/DAPP_VERSION=$env:VERSION" `
+            "/DPUBLISH_DIR=$root\publish\installer" `
+            "/DLICENSE_FILE=$root\..\LICENSE" `
+            "/DOUTPUT_NAME=$root\dist\LCT-v$env:VERSION-Setup.exe" `
+            scripts\deployment\installer.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
+
+      - name: Collect portable executables and checksums
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          foreach ($name in 'x64', 'x64-withruntime', 'arm64', 'arm64-withruntime') {
+            Copy-Item "publish/$name/LiveCaptionsTranslator.exe" "dist/LiveCaptionsTranslator-$env:VERSION-win-$name.exe"
+          }
+          Get-ChildItem dist -Filter *.exe | Sort-Object Name | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+          Get-Content dist/SHA256SUMS.txt
+
+      - name: Verify embedded version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          FULL_VERSION: ${{ steps.version.outputs.full-version }}
+        run: |
+          $failed = $false
+          $executables = @(Get-ChildItem dist -Filter 'LiveCaptionsTranslator-*.exe') + @(Get-Item publish/installer/LiveCaptionsTranslator.exe)
+          foreach ($exe in $executables) {
+            $info = $exe.VersionInfo
+            Write-Host ("{0,-60} FileVersion={1} ProductVersion={2}" -f $exe.Name, $info.FileVersion, $info.ProductVersion)
+            if ($info.FileVersion -ne "$env:VERSION.0" -or -not $info.ProductVersion.StartsWith($env:FULL_VERSION)) { $failed = $true }
+          }
+          if ($failed) { throw "An executable does not carry version $env:FULL_VERSION" }
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: LCT-windows-${{ steps.version.outputs.full-version }}
+          path: windows/dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: needs.build.outputs.is-release == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: LCT-windows-${{ needs.build.outputs.full-version }}
+          path: dist
+
+      - name: Compose release notes from windows/CHANGELOG.md
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          awk -v ver="$VERSION" '
+            /^## / { if (found) exit; if (index($0, "[" ver "]") > 0) { found = 1; next } }
+            found { print }
+          ' windows/CHANGELOG.md > section.md
+          if ! grep -q '[^[:space:]]' section.md; then
+            echo "::error::windows/CHANGELOG.md has no '## [$VERSION]' section. Write the user-facing notes there, then tag again."
+            exit 1
+          fi
+          {
+            echo "# LCT (LiveCaptions Translator) v$VERSION for Windows"
+            echo
+            cat section.md
+            echo
+            sed "s/{{VERSION}}/$VERSION/g" windows/docs/dev/release-notes-footer.md
+          } > RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: LCT v${{ needs.build.outputs.version }} for Windows
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/LCT-v${{ needs.build.outputs.version }}-Setup.exe
+            dist/LiveCaptionsTranslator-${{ needs.build.outputs.version }}-win-x64.exe
+            dist/LiveCaptionsTranslator-${{ needs.build.outputs.version }}-win-x64-withruntime.exe
+            dist/LiveCaptionsTranslator-${{ needs.build.outputs.version }}-win-arm64.exe
+            dist/LiveCaptionsTranslator-${{ needs.build.outputs.version }}-win-arm64-withruntime.exe
+            dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          make_latest: true
