@@ -50,6 +50,10 @@ public partial class MainWindow : Window
     private void OnClosing(object? sender, CancelEventArgs e)
     {
         SaveBounds();
+        if (App.Current.IsExiting)
+        {
+            return; // real shutdown: let the window go
+        }
         _vm.SaveSettings();
         e.Cancel = true;
         App.Current.OnMainWindowCloseRequested();

@@ -156,6 +156,27 @@ public class AudioTests
     }
 
     [Fact]
+    public void testEnergyVad_ConstantNoise_EventuallyReleasesAndStaysQuiet()
+    {
+        var vad = new EnergyVad(hangoverMs: 200);
+        var noise = Tone(vad.FrameSamples, 0.04f); // steady hum above the 0.01 minimum
+        var events = new List<VadEvent>();
+        for (var i = 0; i < 3000; i++) // 60 s
+        {
+            var e = vad.ProcessFrame(noise);
+            if (e != VadEvent.None) events.Add(e);
+        }
+        Assert.Equal(VadEvent.SpeechStarted, events[0]);
+        Assert.Contains(VadEvent.SpeechEnded, events);
+        Assert.False(vad.IsSpeech);
+        Assert.True(vad.Threshold > 0.04f * 0.7f, "threshold adapted above the noise");
+        // Real speech well above the hum still triggers
+        var speech = Tone(vad.FrameSamples, 0.3f);
+        vad.ProcessFrame(speech);
+        Assert.Equal(VadEvent.SpeechStarted, vad.ProcessFrame(speech));
+    }
+
+    [Fact]
     public void testChunker_EmitsPartialsThenFinal()
     {
         var chunker = new UtteranceChunker(new EnergyVad(hangoverMs: 200), partialIntervalMs: 500, preRollMs: 100);

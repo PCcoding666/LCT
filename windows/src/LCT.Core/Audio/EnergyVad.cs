@@ -51,13 +51,22 @@ public sealed class EnergyVad
         var rms = LevelMeter.Rms(frame);
         var loud = rms >= Threshold;
 
+        // Quiet frames pull the floor quickly toward the current level. Loud frames
+        // lift it only very slowly: real speech is too short to move it, but a
+        // constant background (fan, hum, an open mic in a noisy room) eventually
+        // raises the threshold above itself instead of locking the detector in
+        // "speech" forever.
+        if (!loud)
+        {
+            NoiseFloor = NoiseFloor * 0.95f + rms * 0.05f;
+        }
+        else
+        {
+            NoiseFloor += (rms - NoiseFloor) * 0.0005f;
+        }
+
         if (!IsSpeech)
         {
-            // Track the noise floor only while quiet, slowly, so speech never lifts it.
-            if (!loud)
-            {
-                NoiseFloor = NoiseFloor * 0.95f + rms * 0.05f;
-            }
             _loudRun = loud ? _loudRun + 1 : 0;
             if (_loudRun >= _attackFrames)
             {

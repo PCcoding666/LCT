@@ -77,7 +77,7 @@
             </StackPanel>
 
             <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                <ToggleButton x:Name="AutoScrollToggle" IsChecked="True" Content="⤓" FontSize="14" Padding="6,1" Background="Transparent" BorderBrush="Transparent" ToolTip="Auto-scroll" Checked="AutoScroll_Changed" />
+                <ToggleButton x:Name="AutoScrollToggle" IsChecked="True" Content="⤓" FontSize="14" Padding="6,1" Background="Transparent" BorderBrush="Transparent" ToolTip="Auto-scroll" Checked="AutoScroll_Changed" Unchecked="AutoScroll_Changed" />
                 <Button Style="{StaticResource ToolbarButton}" Content="⟲" ToolTip="History" Click="History_Click" />
                 <Button x:Name="ExportButton" Style="{StaticResource ToolbarButton}" Content="⇪" ToolTip="Export this session" Click="Export_Click" IsEnabled="{Binding HasTranscript}">
                     <Button.ContextMenu>

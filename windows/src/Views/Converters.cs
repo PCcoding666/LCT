@@ -138,6 +138,20 @@ public sealed class FontSizeOffsetConverter : IValueConverter
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => throw new NotSupportedException();
 }
 
+public sealed class BoolToOpacityConverter : IValueConverter
+{
+    public double TrueOpacity { get; set; } = 0.5;
+    public double FalseOpacity { get; set; } = 1.0;
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value is true ? TrueOpacity : FalseOpacity;
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => throw new NotSupportedException();
+}
+
+public sealed class SourceToLabelConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value is AudioSource s ? s.Label() : "";
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => throw new NotSupportedException();
+}
+
 /// <summary>Overlay background: near-black with the configured opacity.</summary>
 public sealed class OpacityToBrushConverter : IValueConverter
 {

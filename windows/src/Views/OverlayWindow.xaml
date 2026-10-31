@@ -38,7 +38,7 @@
             <StackPanel Grid.Row="1" VerticalAlignment="Bottom">
                 <!-- Last finalized segment -->
                 <Border CornerRadius="6" Padding="8,4" Background="#55000000" Margin="0,0,0,4" Visibility="{Binding HasLastSegment, Converter={StaticResource BoolToVis}}"
-                        Opacity="{Binding HasLiveDraft, Converter={StaticResource InverseBool}, FallbackValue=1}">
+                        Opacity="{Binding HasLiveDraft, Converter={StaticResource DimWhenTrue}}">
                     <StackPanel DataContext="{Binding LastSegment}">
                         <TextBlock Text="{Binding SourceText}" Foreground="#99FFFFFF" TextTrimming="CharacterEllipsis" MaxHeight="48"
                                    FontSize="{Binding DataContext.Settings.OverlayFontSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource FontSizeOffset}, ConverterParameter=-1}" />

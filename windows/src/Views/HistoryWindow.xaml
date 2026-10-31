@@ -35,7 +35,7 @@
                         </Grid.ColumnDefinitions>
                         <StackPanel>
                             <TextBlock Text="{Binding Timestamp, StringFormat=MM-dd HH:mm:ss}" Style="{StaticResource MonoSmall}" />
-                            <TextBlock Text="{Binding Source}" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="{Binding Source, Converter={StaticResource SourceToBrush}}" />
+                            <TextBlock Text="{Binding Source, Converter={StaticResource SourceToLabel}}" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="{Binding Source, Converter={StaticResource SourceToBrush}}" />
                         </StackPanel>
                         <StackPanel Grid.Column="1">
                             <TextBlock Text="{Binding SourceText}" Style="{StaticResource Caption}" />

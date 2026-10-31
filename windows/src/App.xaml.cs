@@ -28,6 +28,7 @@ public partial class App : Application
     private bool _exiting;
 
     public static new App Current => (App)Application.Current;
+    public bool IsExiting => _exiting;
     public TranscriptionViewModel ViewModel => _vm ?? throw new InvalidOperationException("not initialized");
 
     protected override void OnStartup(StartupEventArgs e)
@@ -53,6 +54,7 @@ public partial class App : Application
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         TaskScheduler.UnobservedTaskException += (_, args) => { Log.Error(args.Exception, "Unobserved task exception"); args.SetObserved(); };
 
+        _ = Task.Run(() => HardwareInfo.Current); // WMI probe off the UI thread; cached for the wizard and settings
         var settings = AppSettings.Load(AppPaths.SettingsFile);
         var http = new HttpClient();
         var ollama = new OllamaClient(http, OllamaClientOptions.From(settings));
@@ -70,8 +72,8 @@ public partial class App : Application
             var welcome = new WelcomeWindow { DataContext = welcomeVm };
             welcomeVm.Completed += () =>
             {
-                welcome.Close();
                 StartMain(settings, ollama, guardian, modelManager, whisperStore);
+                welcome.Close();
             };
             welcome.Closed += (_, _) =>
             {

@@ -42,6 +42,8 @@
     <v:PercentConverter x:Key="Percent" />
     <v:FontSizeOffsetConverter x:Key="FontSizeOffset" />
     <v:OpacityToBrushConverter x:Key="OverlayBackground" />
+    <v:BoolToOpacityConverter x:Key="DimWhenTrue" TrueOpacity="0.55" FalseOpacity="1" />
+    <v:SourceToLabelConverter x:Key="SourceToLabel" />
 
     <!-- ===== Base text ===== -->
     <Style TargetType="TextBlock">
