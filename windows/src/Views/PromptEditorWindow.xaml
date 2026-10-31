@@ -1,0 +1,28 @@
+<Window x:Class="LiveCaptionsTranslator.Views.PromptEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Translation Prompt" Width="560" Height="440" MinWidth="420" MinHeight="320"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource HudBackground}">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock Text="// translation prompt" Style="{StaticResource MonoAccent}" />
+        <TextBlock Grid.Row="1" Style="{StaticResource Caption}" Margin="0,6,0,10"
+                   Text="Customize the system prompt sent to the chat model. Use {TARGET_LANGUAGE} as the placeholder for the target language. Leave empty to use the default." />
+        <TextBox x:Name="Editor" Grid.Row="2" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" Padding="10" />
+        <Grid Grid.Row="3" Margin="0,12,0,0">
+            <StackPanel Orientation="Horizontal">
+                <Button Content="Reset to Default" Click="Reset_Click" />
+                <Button Content="Preview Default" Click="Preview_Click" Margin="8,0,0,0" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel" Click="Cancel_Click" />
+                <Button Content="Done" Style="{StaticResource AccentButton}" Click="Done_Click" Margin="8,0,0,0" MinWidth="80" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

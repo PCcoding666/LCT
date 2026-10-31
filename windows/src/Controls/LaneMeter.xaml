@@ -1,0 +1,38 @@
+<UserControl x:Class="LiveCaptionsTranslator.Controls.LaneMeter"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root" Height="Auto">
+    <StackPanel>
+        <Grid Height="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="26" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="30" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="{Binding Label, ElementName=Root}" FontFamily="{StaticResource MonoFont}" FontSize="9" FontWeight="Bold" VerticalAlignment="Center"
+                       Foreground="{Binding LabelBrush, ElementName=Root}" />
+            <Border x:Name="Track" Grid.Column="1" Height="6" CornerRadius="2" Background="{StaticResource HudHairline}" VerticalAlignment="Center" ClipToBounds="True">
+                <Rectangle x:Name="Fill" HorizontalAlignment="Left" Height="6" RadiusX="2" RadiusY="2">
+                    <Rectangle.Width>
+                        <MultiBinding Converter="{StaticResource LevelToWidth}">
+                            <Binding Path="Level" ElementName="Root" />
+                            <Binding Path="ActualWidth" ElementName="Track" />
+                            <Binding Path="IsActive" ElementName="Root" />
+                        </MultiBinding>
+                    </Rectangle.Width>
+                    <Rectangle.Fill>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                            <GradientStop Color="#33D499" Offset="0" />
+                            <GradientStop Color="#33D499" Offset="0.6" />
+                            <GradientStop Color="#F5D547" Offset="0.85" />
+                            <GradientStop Color="#F0525A" Offset="1" />
+                        </LinearGradientBrush>
+                    </Rectangle.Fill>
+                </Rectangle>
+            </Border>
+            <TextBlock Grid.Column="2" Text="{Binding Level, ElementName=Root, Converter={StaticResource LevelToDb}}" Style="{StaticResource MonoSmall}" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Center" />
+        </Grid>
+        <TextBlock Text="{Binding DeviceName, ElementName=Root}" Style="{StaticResource MonoSmall}" FontSize="8.5" Margin="26,0,0,0" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                   Visibility="{Binding DeviceName, ElementName=Root, Converter={StaticResource StringToVis}}" />
+    </StackPanel>
+</UserControl>
