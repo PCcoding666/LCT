@@ -57,7 +57,7 @@ RequestExecutionLevel admin
 VIProductVersion "${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}.${BUILD_VERSION}"
 VIAddVersionKey "ProductName" "${APP_NAME}"
 VIAddVersionKey "CompanyName" "${COMPANY_NAME}"
-VIAddVersionKey "FileDescription" "Real-time speech translation tool based on Windows LiveCaptions"
+VIAddVersionKey "FileDescription" "Real-time captions and translation with on-device speech recognition"
 VIAddVersionKey "FileVersion" "${APP_VERSION}"
 VIAddVersionKey "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey "LegalCopyright" "Copyright © 2024 Ai-All-You-Need-Platform Pte. Ltd."
@@ -74,7 +74,7 @@ VIAddVersionKey "OriginalFilename" "${INSTALLER_NAME}"
 
 # --- Custom Pages ---
 !define MUI_WELCOMEPAGE_TITLE "Welcome to LCT (LiveCaptions Translator) Setup"
-!define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of LCT (LiveCaptions Translator).$\r$\n$\r$\nLCT is a professional real-time speech translation solution that works with Windows LiveCaptions to provide live translation of spoken content.$\r$\n$\r$\nClick Next to continue."
+!define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of LCT (LiveCaptions Translator).$\r$\n$\r$\nLCT captures what your PC plays and your microphone, recognizes speech on your PC and translates it with a local Ollama model. Nothing leaves your machine.$\r$\n$\r$\nClick Next to continue."
 
 !define MUI_FINISHPAGE_TITLE "LCT (LiveCaptions Translator) Installation Complete"
 !define MUI_FINISHPAGE_TEXT "LCT (LiveCaptions Translator) has been successfully installed on your computer.$\r$\n$\r$\nClick Finish to close this wizard."
@@ -235,6 +235,7 @@ Section "Uninstall"
     MessageBox MB_YESNO "Do you want to remove user settings and data?" /SD IDNO IDNO skip_userdata
     RMDir /r "$APPDATA\LiveCaptions-Translator"
     RMDir /r "$LOCALAPPDATA\LiveCaptions-Translator"
+    RMDir /r "$LOCALAPPDATA\LCT"
     
     skip_userdata:
     DetailPrint "Uninstallation completed!"
@@ -243,7 +244,7 @@ SectionEnd
 # --- Component Descriptions ---
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
     !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "Core application files for LCT (LiveCaptions Translator). This component is required."
-    !insertmacro MUI_DESCRIPTION_TEXT ${SecVCRedist} "Microsoft Visual C++ 2015-2022 Redistributable (x64). Required for the AI engine (Ollama). Will be skipped if already installed."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecVCRedist} "Microsoft Visual C++ 2015-2022 Redistributable (x64). Required by the speech recognition engine. Will be skipped if already installed."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "Additional desktop integration features and optional enhancements."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
@@ -251,7 +252,7 @@ SectionEnd
 Function .onInit
     ; Check Windows version
     ${IfNot} ${AtLeastWin10}
-        MessageBox MB_OK "LCT (LiveCaptions Translator) requires Windows 10 or later."
+        MessageBox MB_OK "LCT (LiveCaptions Translator) requires Windows 10 version 1809 or later."
         Abort
     ${EndIf}
     

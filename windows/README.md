@@ -1,194 +1,133 @@
-# LCT (LiveCaptions Translator) - Professional Edition
+# LCT (LiveCaptions Translator) for Windows
 
-## Overview
+Real-time captions and translation, entirely on your PC. LCT listens to what
+Windows plays and to your microphone, recognizes speech on-device with
+[whisper.cpp](https://github.com/ggml-org/whisper.cpp), and translates with a
+local model through [Ollama](https://ollama.com). No cloud, no account, no
+Windows Live Captions.
 
-**✨ LCT (LiveCaptions Translator) = Windows Live Captions + Local AI Translation ✨**
+**Quick start:** download `LCT-vX.Y.Z-Setup.exe` from the
+[latest release](https://github.com/PCcoding666/LCT/releases/latest) and run
+it. Portable builds (x64 / ARM64, with or without the .NET runtime) and
+SHA-256 checksums are attached to every release. The binaries are not
+code-signed yet, so SmartScreen may ask you to confirm with
+**More info ▸ Run anyway**.
 
-A professional real-time speech translation solution that combines Windows' built-in Live Captions with local AI models via Ollama for private, secure, and efficient translation. Developed by Ai-All-You-Need-Platform Pte. Ltd.
+> Version 2.0 is a new app under the same name. It replaces the 1.x
+> Live Captions scraper: see [CHANGELOG.md](CHANGELOG.md) for what changed and
+> [docs/dev/ARCHITECTURE.md](docs/dev/ARCHITECTURE.md) for how it works.
 
-**🚀 Quick Start:** Download `LCT-vX.Y.Z-Setup.exe` from the [latest release](https://github.com/PCcoding666/LCT/releases/latest) and run it. Portable builds (x64 / ARM64, with or without the .NET runtime) and SHA-256 checksums are attached to every release. The binaries are not code-signed yet, so SmartScreen may ask you to confirm with **More info ▸ Run anyway**.
+## What it does
 
-**🔒 Privacy First:** All translation happens locally on your device - no data leaves your machine.
+- **Two capture channels.** System audio (anything the PC plays: videos,
+  calls, meetings) and the microphone, each with its own recognition
+  language. Switch languages live from the status bar; only the affected
+  channel restarts.
+- **On-device speech recognition.** whisper.cpp ggml models (tiny → large-v3-turbo),
+  downloaded once on demand. Fourteen recognition languages.
+- **Streaming local translation.** Ollama chat models (Qwen3.5 recommended,
+  TranslateGemma supported) with live draft translation while people are still
+  speaking, context from previous lines, an editable prompt, and a model
+  catalog that picks a model for your CPU, GPU and memory.
+- **Terminal-style HUD.** Recording timer, `SYS ZH · MIC EN → JA` language
+  label, model and Ollama status, latency, per-channel level meters, SYS/MIC
+  badges and timestamps on every line, a real pause.
+- **Overlay, tray, hotkeys.** A floating always-on-top subtitle window
+  (position, size, opacity, font size, click-through), a tray icon, and global
+  hotkeys: `Ctrl+Alt+S` start/stop, `Ctrl+Alt+P` pause, `Ctrl+Alt+O` overlay.
+- **Export and history.** Export the session as Markdown, text or SRT. History
+  is off by default; when on, it stays in a local SQLite file with retention
+  limits, search, delete and CSV export.
+- **Ollama kept healthy.** LCT uses the Ollama you already have and never kills
+  one you started yourself. It starts `ollama serve` only when nothing answers,
+  restarts it with backoff if it dies mid-session, reloads the model if Ollama
+  dropped it, and sends `num_ctx` with every request so a 4B model stays around
+  3 GB.
 
-## Key Features
+## System requirements
 
-### 🔄 **Seamless Integration**
-- Automatically invokes Windows Live Captions without opening a separate window
-- Provides unified experience for real-time audio/speech translation
-- Live Captions are hidden by default after first use (configurable in settings)
-- Enable ***Include microphone audio*** in Windows Live Captions settings for real-time speech translation
+| | |
+|---|---|
+| **Windows** | Windows 10 version 1809 or later, or Windows 11 — x64 or ARM64 |
+| **Translation** | [Ollama for Windows](https://ollama.com/download/windows), or a remote Ollama reachable over HTTPS |
+| **Memory** | 8 GB RAM minimum; 16 GB (or a GPU with 6 GB+ VRAM) for the 4B translation model |
+| **Disk** | 2–4 GB for the translation model plus 150–500 MB for the speech model |
+| **Network** | Only on first run, to download the models |
 
-### 🤖 **Local AI Translation**
-- **Ollama Engine**: Exclusive use of local AI models for translation
-- **Privacy Focused**: All processing happens on your device
-- **Multiple Models**: Support for various language models (qwen2.5:3b default)
-- **Intel IPEX-LLM**: Optimized for Intel hardware acceleration
-- **No Internet Required**: Works completely offline after initial setup
+## First run
 
-### 🎨 **Modern Interface**
-- Clean Fluent UI that matches modern Windows aesthetics
-- Automatic light/dark theme switching based on system settings
-- Professional branding and user experience
-- Multiple viewing modes: standard and compact overlay
+The wizard walks through everything:
 
-### 🪟 **Overlay Window**
-- Borderless, transparent floating window for immersive experience
-- Perfect for gaming, videos, and live streaming
-- Fully customizable appearance: background, text color, font size, transparency
-- Can be embedded seamlessly into screen without interfering with other operations
-- Adjustable sentence count display
+1. **Audio & languages** — enable system audio and/or the microphone, pick the
+   microphone device, the spoken language and the target language.
+2. **Ollama** — LCT looks for a running service, then for an installed
+   `ollama.exe`. If none is found it offers the download page, a remote server
+   (HTTPS, explicit opt-in), or — on PCs with an Intel GPU — the optional
+   IPEX-LLM portable build.
+3. **Translation model** — downloads the model recommended for your hardware
+   (with progress, cancel and a disk-space check), or lets you pick another.
+4. **Speech model** — downloads the whisper model (`small` by default, `base`
+   on low-end PCs).
 
-### ⚙️ **Flexible Control**
-- Window always-on-top functionality
-- Convenient translation pause/resume
-- One-click text copying for quick sharing
-- Comprehensive settings for Ollama configuration
+Then press **start** (or `Ctrl+Alt+S`) and play some audio.
 
-### 📒 **History Management**
-- Records both original and translated text
-- Perfect for meetings, lectures, and important discussions
-- Export all records to CSV format
-- Search and filter capabilities
+## Settings
 
-### 🎞️ **Log Cards**
-- Recent transcription records displayed as log cards
-- Helps maintain context during conversations
-- Configurable card count in settings
+Everything lives in **⚙ Settings** and in `%LOCALAPPDATA%\LCT\settings.json`:
 
-## System Requirements
+- Audio capture: channels on/off, microphone device.
+- Languages: system-audio language, microphone language (or "same"), target.
+- Speech recognition: whisper model (download / size per model).
+- Translation model: installed models, recommendation, in-app download,
+  keep-alive (5 m … until quit), unload on quit.
+- Ollama connection: host, port, remote opt-in (HTTPS only), timeout, `num_ctx`.
+- Translation tuning: model type, temperature, live draft translation,
+  context-aware translation and how many lines, custom prompt
+  (`{TARGET_LANGUAGE}` placeholder, reset, preview).
+- Display & overlay: latency, max cards, overlay opacity / font size / stay on
+  top / click-through.
+- History: on/off, retention days, max entries.
+- Shortcuts & tray: global hotkeys, keep running in the tray on close.
+- Diagnostics: export a metadata-only report (never transcripts) and open the
+  log folder.
 
-| Requirement | Details |
-|-------------|----------|
-| **Windows** | Windows 11 (22H2+) with Live Captions support |
-| **.NET** | .NET 8.0+ Runtime (included in installer) |
-| **Hardware** | Intel CPU recommended for IPEX-LLM optimization |
-| **Memory** | 8GB+ RAM for optimal AI model performance |
-| **Storage** | 2GB+ free space for application and models |
+Logs: `%LOCALAPPDATA%\LCT\logs\`. Models: `%LOCALAPPDATA%\LCT\models\whisper\`
+(speech) and Ollama's own store (translation).
 
-> ⚠️ **Important**: This tool is based on Windows Live Captions, available since **Windows 11 22H2**.
+## Troubleshooting
 
-## Getting Started
+- **"receiving audio but nothing is being recognized"** — the channel's
+  recognition language probably does not match what is being spoken. Change it
+  from the language label in the status bar.
+- **The microphone is completely silent** — check the selected device in
+  Settings and Windows ▸ Privacy ▸ Microphone (desktop apps must be allowed).
+- **Ollama indicator is red** — click it to start Ollama. If Ollama is not
+  installed, the notice offers the download page.
+- **Model not installed** — the notice offers an in-app download; or run
+  `ollama pull qwen3.5:4b`.
+- **Translation is slow on CPU** — pick `qwen3.5:2b` or `qwen3.5:0.8b` in
+  Settings, or `base` as the speech model.
 
-> ⚠️ **IMPORTANT:** Complete the following setup before running LCT for the first time.
->
-> For more details, see Microsoft's guide: [Using live captions to better understand audio](https://support.microsoft.com/en-us/windows/use-live-captions-to-better-understand-audio-b52da59c-14b8-4031-aeeb-f6a47e6055df)
+## Building
 
-### Step 1: Verify Windows Live Captions Availability
+```bash
+cd windows
+dotnet test Tests/LCT.Tests/LCT.Tests.csproj
+dotnet build LiveCaptionsTranslator.csproj
+```
 
-Ensure Live Captions is available on your system through any of these methods:
+`LCT.Core` (all the logic without WPF) and its tests build on any OS; the WPF
+app builds on Windows, or elsewhere with `-p:EnableWindowsTargeting=true`.
+Releases are produced by `.github/workflows/windows-build.yml`; see
+[docs/dev/RELEASE.md](docs/dev/RELEASE.md).
 
-- Toggle **Live captions** in the Quick Settings panel
-- Use the keyboard shortcut **Win + Ctrl + L**
-- Navigate to **Quick Settings** > **Accessibility** > **Live captions**
-- Access from **Start** > **All apps** > **Accessibility** > **Live captions**
-- Go to **Settings** > **Accessibility** > **Captions** and toggle on **Live captions**
+## Privacy
 
-### Step 2: Initial Live Captions Configuration
+Audio never leaves the PC. Speech recognition runs in-process; translation goes
+to the Ollama endpoint you configure (local by default; remote only with an
+explicit opt-in and only over HTTPS). History is off unless you turn it on, and
+the diagnostics export contains settings and status only.
 
-When you first launch Windows Live Captions, it will:
-1. Request permission to process voice data locally on your device
-2. Prompt you to download the necessary language files for on-device speech recognition
+## License
 
-After the initial setup, configure the following settings:
-1. Click the **⚙️ gear** icon in Live Captions to open settings
-2. In **Change language**, select your **source language** (the language to be recognized)
-3. Under **Position**, select **Overlaid on screen**
-
-> ⚠️ **Critical:** The position setting is required to prevent display issues when Live Captions runs in the background.
-
-### Step 3: Enable Microphone Audio (Optional)
-
-To enable real-time translation of your own speech through the microphone:
-
-1. In Live Captions, click the **⚙️ gear** icon
-2. Go to **Preferences**
-3. Check **Include microphone audio**
-
-This allows LCT to capture and translate both system audio and your microphone input simultaneously.
-
-### Step 4: Launch LCT
-
-After completing the configuration, close Windows Live Captions and start LiveCaptions Translator! 🎉
-
-The application will automatically:
-- Download and install Ollama if not present
-- Pull the default translation model (qwen2.5:3b)
-- Configure optimal settings for your hardware
-
-## Configuration
-
-Customize the following options in the **Settings** view:
-
-### Display Options
-- **LiveCaptions**: Show/hide original caption text in Home view
-- **Log Cards**: Number of recent translation cards displayed
-- **Overlay Sentences**: Number of sentences shown in overlay mode
-- **Show Latency**: Display translation processing time
-
-### Ollama Configuration
-- **API Endpoint**: Local Ollama server URL (default: http://localhost:11434)
-- **Model Name**: AI model for translation (default: qwen2.5:3b)
-- **System Prompt**: Custom instructions for translation behavior
-- **Temperature**: Control translation creativity/consistency
-- **Max Tokens**: Maximum response length
-
-### Performance Tuning
-- **API Interval**: Delay between translation requests (balance speed vs. resource usage)
-- **Target Language**: Destination language for translations
-- **Model Loading**: Automatic model management and optimization
-
-## Architecture
-
-### Core Components
-- **Translation Engine**: Exclusive Ollama integration with Intel IPEX-LLM
-- **UI Framework**: WPF with Fluent UI components
-- **Data Layer**: SQLite for history storage
-- **System Integration**: Windows Live Captions automation
-- **Model Management**: Automatic download and optimization
-
-### Build Information
-- **Version**: 1.0.1 (Build 279)
-- **Target Framework**: .NET 8.0-windows
-- **Runtime**: Self-contained win-x64
-- **Installer Size**: ~97MB
-- **Configuration**: Release with ReadyToRun optimization
-
-## Privacy & Security
-
-✅ **Complete Local Processing**: All translation happens on your device  
-✅ **No Internet Required**: Works offline after initial setup  
-✅ **No Data Collection**: Your conversations never leave your machine  
-✅ **Secure by Design**: No external API calls or cloud dependencies  
-✅ **Enterprise Ready**: Suitable for confidential business communications  
-
-## Support and Contact
-
-### Company Information
-**Ai-All-You-Need-Platform Pte. Ltd.**  
-Official Website: [https://aiallyouneed.dev](https://aiallyouneed.dev)
-
-### Troubleshooting
-
-#### Common Issues
-- **Model Download Fails**: Check internet connection during initial setup
-- **Performance Issues**: Ensure adequate RAM and close unnecessary applications
-- **Live Captions Not Working**: Verify Windows version and accessibility settings
-- **Translation Delays**: Adjust API interval in settings for better performance
-
-#### Support Resources
-- Check logs in application data folder
-- Verify Ollama service status in Task Manager
-- Ensure Windows Live Captions is properly configured
-- Visit our official website for documentation and support
-
-## Technical Notes
-
-- Built with .NET 8.0 and WPF-UI framework
-- Uses Intel IPEX-LLM for hardware acceleration
-- Supports ARM64 architecture for future compatibility
-- Implements SQLite for efficient local data storage
-- Features automatic error recovery and model management
-
----
-
-**Copyright © 2024 Ai-All-You-Need-Platform Pte. Ltd. All rights reserved.**
+See [LICENSE](../LICENSE). Developed by Ai-All-You-Need-Platform Pte. Ltd.

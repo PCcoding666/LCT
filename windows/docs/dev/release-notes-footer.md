@@ -11,9 +11,10 @@
 
 ## Requirements
 
-- Windows 11 22H2 or later with **Live Captions** available (Settings ▸ Accessibility ▸ Captions). Turn Live Captions on once and let it download its language pack before starting LCT; the [setup guide](https://github.com/PCcoding666/LCT/blob/master/windows/README.md) walks through it.
-- An internet connection on first launch: LCT downloads a local Ollama engine and the default translation model. After that, translation runs fully on your PC.
-- 8 GB of RAM or more recommended.
+- Windows 10 version 1809 or later, or Windows 11 (x64 or ARM64). Live Captions is **not** needed any more.
+- [Ollama for Windows](https://ollama.com/download/windows) for translation. LCT uses an Ollama you already have; the first-run wizard helps you install one, or connect to a remote Ollama server over HTTPS.
+- An internet connection on first launch to download the translation model (about 1–3 GB) and the speech-recognition model (about 150–500 MB). After that everything runs on your PC.
+- 8 GB of RAM or more recommended; 16 GB or a GPU with 6 GB+ of memory for the 4B translation model.
 
 ## Known limitations
 
