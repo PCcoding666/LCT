@@ -1,6 +1,6 @@
 # LiveCaptions Translator (LCT) for macOS 🎙️✨
 
-LiveCaptions Translator (LCT) 是一款专为 macOS 设计的原生级实时语音识别与 AI 翻译桌面工具。它通过无缝结合苹果原生的 `SFSpeechRecognizer` 框架与本地化部署的 LLM（Ollama大模型），提供真正的“零延迟感知”与“隐私安全”的实时跨语言字幕与口语润色服务。
+LiveCaptions Translator (LCT) 是一款 macOS 原生实时字幕与 AI 翻译工具。macOS 26 上使用 `SpeechAnalyzer` / `SpeechTranscriber`，旧系统或旧工具链回退到 `SFSpeechRecognizer`；翻译由本地 Ollama 模型完成。仓库主分支维护 macOS，Windows 版本见[归档说明](../docs/WINDOWS_ARCHIVE.md)。
 
 ## 🌟 核心特性 (Features)
 
@@ -9,7 +9,7 @@ LiveCaptions Translator (LCT) 是一款专为 macOS 设计的原生级实时语�
 - **渐进式交互 (Progressive Disclosure)**：悬停时优雅淡入控制栏，移开后恢复纯净阅读体验。
 - **双路流式翻译管道 (Translation Pipeline)**：独创的 `CaptionSegmenter` 文本切分器，实现本地 ASR “边听边修补” 与后台 “单次提问双重输出（原句去噪改写 + 目标语言翻译）” 完美结合。
 - **全面本地化支持**：直接对接本地 Ollama 服务（默认推荐模型 `qwen3.5:4b-mlx`），让你的数据不出本机，保证极致的隐私和离线可用性。
-- **全自动 CI/CD 流程**：已配置完整的 GitHub Actions 工作流，代码合并自动拉起 macOS Runner 完成 `.app` 编译与压缩归档分发。
+- **构建与发布**：PR 和主线提交自动构建并运行测试；签名、公证和 DMG 上传通过单独的手动工作流执行，合并不会自动发布。
 
 ## 📁 本地代码架构 (Architecture)
 
@@ -46,4 +46,4 @@ cd macos
 
 **不要**用 `swift run` 启动或直接运行 `.build/.../LCTMac` 来测试权限相关功能：macOS 按签名身份记录隐私授权，裸可执行文件会把权限记到终端名下，和打包后的 app 对不上，表现为"授权过却失效"。
 
-(注：你也可以直接利用已经配置好的 GitHub Actions 自动获取每日构建的 `LCTMac-macOS.zip` 包)
+签名与分发要求见 [RELEASE.md](RELEASE.md)，测试方式见 [TESTING.md](TESTING.md)。

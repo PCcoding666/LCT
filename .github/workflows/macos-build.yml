@@ -18,14 +18,8 @@ name: macOS Build and Release
 on:
   push:
     branches: [ master, main, develop, 'release/*' ]
-    paths:
-      - 'macos/**'
-      - '.github/workflows/macos-build.yml'
   pull_request:
     branches: [ master, main, develop ]
-    paths:
-      - 'macos/**'
-      - '.github/workflows/macos-build.yml'
   workflow_dispatch:
     inputs:
       release-version:
