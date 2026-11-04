@@ -1,5 +1,8 @@
-﻿blank_issues_enabled: false
+blank_issues_enabled: false
 contact_links:
-  - name: Discussion
-    url: https://github.com/SakiRinn/LiveCaptions-Translator/discussions
-    about: Ask something more here.
+  - name: macOS documentation
+    url: https://github.com/PCcoding666/LCT/blob/master/macos/README.md
+    about: Build, run, and use LCT for macOS.
+  - name: Windows archive
+    url: https://github.com/PCcoding666/LCT/blob/master/docs/WINDOWS_ARCHIVE.md
+    about: Find the archived Windows source and previous releases.

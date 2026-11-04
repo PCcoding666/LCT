@@ -1,41 +1,65 @@
-# LCT — LiveCaptions Translator
+# LCT for macOS
 
-Real-time speech-to-text captioning with on-the-fly AI translation, available as
-native apps for **Windows** and **macOS**.
+LCT is a native macOS app for real-time captions and local AI translation.
+It captures system audio or microphone input, transcribes speech, and streams
+the translation alongside the original text.
 
-LCT listens to live audio (system playback or microphone), transcribes it, and
-streams a translation alongside the original — useful for following talks,
-meetings, videos, or calls across a language barrier.
+The default branch (`master`) is maintained for **macOS**. The Windows app is
+[archived](docs/WINDOWS_ARCHIVE.md), including its latest unmerged development
+work. Its source and earlier releases remain available.
 
-## Platforms
+## Requirements
 
-| Platform | Stack | Status | Docs |
-|----------|-------|--------|------|
-| [Windows](windows/) | C# / .NET 8 (WPF) + LiveCaptions | Stable | [windows/README.md](windows/README.md) |
-| [macOS](macos/) | SwiftUI + `SFSpeechRecognizer` + local LLM (Ollama) | Active development | [macos/README.md](macos/README.md) |
+- macOS 15 or later; macOS 26 is recommended for concurrent system-audio and
+  microphone recognition using `SpeechAnalyzer` / `SpeechTranscriber`.
+- Xcode 16 / Swift 6 or later to build. Xcode 26 is needed to include the newer
+  speech engine; older toolchains use `SFSpeechRecognizer`.
+- [Ollama](https://ollama.com) and a local translation model.
+- Microphone, speech recognition, and system-audio permissions as needed for
+  the selected audio sources.
 
-The two apps are independent codebases tuned to each platform's native speech and
-UI frameworks. They share this repository for common documentation, translation
-benchmarks, and a single issue/release home.
+## Development
+
+```bash
+cd macos
+./Scripts/dev-run.sh
+```
+
+Use `dev-run.sh` to build, sign, and launch the app with a consistent identity.
+Do not launch it with `swift run` or the raw `.build/.../LCTMac` executable:
+macOS privacy permissions would not match the packaged app.
+
+```bash
+cd macos
+swift build                # Debug build
+./Scripts/run_tests.sh     # Debug, release, warnings-as-errors, and XCTest
+./package-app.sh           # Package the app
+```
 
 ## Repository layout
 
-```
-.
-├── windows/      # Windows app (.NET solution, source, installer scripts)
-├── macos/        # macOS app (Swift Package, SwiftUI)
-├── benchmark/    # Cross-platform translation-quality benchmarks
-├── docs/         # Shared / macOS user documentation
-└── .github/      # CI workflows (per-platform, path-filtered)
+```text
+macos/LCTMac/              App, views, view models, services, and models
+macos/Tests/LCTMacTests/   XCTest suite
+macos/Scripts/             Development, packaging, and release tools
+docs/                     User documentation and Windows archive reference
+benchmark/                Ollama translation benchmarks and fixtures
+.github/workflows/        macOS build, test, and manual delivery workflow
 ```
 
-## Building
+## Documentation and delivery
 
-- **Windows** — open `windows/LiveCaptionsTranslator.sln` in Visual Studio, or
-  `dotnet build` inside `windows/`. See [windows/README.md](windows/README.md).
-- **macOS** — `cd macos && ./package-app.sh` (or `swift build`). Requires macOS 15+
-  and a local [Ollama](https://ollama.com) install. See [macos/README.md](macos/README.md).
+- [macOS development guide](macos/README.md)
+- [User guide](macos/USER_GUIDE.md)
+- [Testing](macos/TESTING.md)
+- [Signing and release](macos/RELEASE.md)
+- [Windows archive and recovery instructions](docs/WINDOWS_ARCHIVE.md)
+
+Pull requests and mainline pushes run the macOS build and test workflow.
+Signing, notarization, and DMG upload are a separate, manually triggered
+delivery job requiring the configured Apple signing credentials. Merging a PR
+does not publish a release.
 
 ## License
 
-See [LICENSE](LICENSE). Applies to both platform apps.
+See [LICENSE](LICENSE).
