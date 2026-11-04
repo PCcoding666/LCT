@@ -22,6 +22,7 @@ private final class CoordinatorHarness {
     var setupComplete = true
     var createdViewModels: [RecordingViewModel] = []
     let notificationCenter = NotificationCenter()
+    let historyDatabase = TemporaryHistoryDatabase()
 
     func makeCoordinator() -> AppCoordinator {
         let coordinator = AppCoordinator(
@@ -29,7 +30,15 @@ private final class CoordinatorHarness {
             isSetupComplete: { self.setupComplete },
             isMainWindowVisible: { self.windowVisible },
             makeViewModel: {
-                let viewModel = RecordingViewModel()
+                let viewModel = RecordingViewModel(
+                    settings: CaptionOnlyTestHarness.settings(),
+                    audioCaptureService: AudioCaptureService(makeSystemAudioTap: { CaptionOnlyTestHarness.Tap() }),
+                    speechEngine: CaptionOnlyTestHarness.Speech(),
+                    translationEngine: CaptionOnlyTestHarness.Translator(),
+                    translationReadiness: { false },
+                    historyService: self.historyDatabase.service,
+                    persistSettings: { _ in true }
+                )
                 viewModel.onCall = { self.events.append($0) }
                 self.createdViewModels.append(viewModel)
                 return viewModel
@@ -47,16 +56,6 @@ private final class CoordinatorHarness {
 /// model whether or not the main window is open.
 @MainActor
 final class AppCoordinatorTests: XCTestCase {
-
-    override func setUp() {
-        super.setUp()
-        UserDefaults.standard.removeObject(forKey: "LCTMacSettings")
-    }
-
-    override func tearDown() {
-        UserDefaults.standard.removeObject(forKey: "LCTMacSettings")
-        super.tearDown()
-    }
 
     /// Poll until `condition` holds or the deadline passes; returns the final value.
     private func waitFor(timeout: TimeInterval = 2, _ condition: () -> Bool) async -> Bool {
@@ -201,6 +200,7 @@ final class AppCoordinatorTests: XCTestCase {
         let harness = CoordinatorHarness()
         let coordinator = harness.makeCoordinator()
         let viewModel = coordinator.viewModel
+        viewModel.captureState = .capturing
         XCTAssertFalse(viewModel.isPaused)
 
         harness.notificationCenter.post(name: .togglePause, object: nil)

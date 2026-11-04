@@ -333,157 +333,72 @@ final class OllamaModelLifecycleRequestTests: XCTestCase {
 
 @MainActor
 final class ModelLifecycleViewModelTests: XCTestCase {
+    func testStop_CaptionOnly_PreservesSessionWithoutLegacyLifecycleRequests() async {
+        let harness = CaptionOnlyTestHarness()
+        await harness.viewModel.start()
+        harness.speech.emit("Recorded source.")
+        let transcript = harness.viewModel.sessionTranscript
 
-    private let recorder = RequestRecorder()
+        await harness.viewModel.stop()
+        try? await Task.sleep(nanoseconds: 50_000_000)
 
-    override func setUp() {
-        super.setUp()
-        LifecycleMockURLProtocol.recorder = recorder
-        LifecycleMockURLProtocol.requestHandler = { request in
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: 200,
-                httpVersion: nil,
-                headerFields: nil
-            )!
-            let path = request.url?.path ?? ""
-            if path.hasSuffix("/api/ps") {
-                return (response, Data(#"{"models": [{"name": "model-a:old"}]}"#.utf8))
-            }
-            if path.hasSuffix("/api/tags") {
-                return (response, Data(#"{"models": [{"name": "model-a:old"}, {"name": "model-b:new"}]}"#.utf8))
-            }
-            if path.hasSuffix("/api/chat") {
-                return (response, Data(#"{"message":{"role":"assistant","content":"ok"},"done":true}"#.utf8))
-            }
-            return (response, Data())
-        }
-        // Tests here load/save AppSettings through the VM; keep the shared
-        // store clean so other suites see defaults.
-        UserDefaults.standard.removeObject(forKey: "LCTMacSettings")
+        XCTAssertEqual(harness.viewModel.captureState, .idle)
+        XCTAssertEqual(harness.viewModel.sessionTranscript, transcript)
+        XCTAssertEqual(harness.network.value, 0)
+        XCTAssertEqual(harness.launcher.launchServeCallCount, 0)
     }
 
-    override func tearDown() {
-        LifecycleMockURLProtocol.requestHandler = nil
-        LifecycleMockURLProtocol.recorder = nil
-        AppSettings.resetSetupFlag()
-        UserDefaults.standard.removeObject(forKey: "LCTMacSettings")
-        super.tearDown()
+    func testUpdateSettings_LegacyModelChanged_DoesNotLoadOrUnloadOllama() async {
+        let harness = CaptionOnlyTestHarness()
+        await harness.viewModel.start()
+        harness.speech.emit("Existing source.")
+        let transcript = harness.viewModel.sessionTranscript
+        var settings = harness.viewModel.settings
+        settings.ollamaModel = "obsolete-model:7b"
+
+        harness.viewModel.updateSettings(settings)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(harness.viewModel.sessionTranscript, transcript)
+        XCTAssertEqual(harness.viewModel.captureState, .capturing)
+        XCTAssertEqual(harness.network.value, 0)
+        XCTAssertEqual(harness.launcher.launchServeCallCount, 0)
+        await harness.viewModel.stop()
     }
 
-    private func makeViewModel(settings: AppSettings) -> TranscriptionViewModel {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [LifecycleMockURLProtocol.self]
-        let service = OllamaService(settings: settings, session: URLSession(configuration: config))
-        // An endpoint-less guardian can never reach the network; its status
-        // probe degrades to local filesystem checks only.
-        let guardian = OllamaGuardian(ollamaPath: "/bin/echo", ollamaURL: "not a url")
-        return TranscriptionViewModel(settings: settings, ollamaService: service, ollamaGuardian: guardian)
-    }
+    func testPrepareModelOnLaunch_NoReadyTranslation_SendsNoLegacyRequests() async {
+        let harness = CaptionOnlyTestHarness()
 
-    private func localSettings(model: String) -> AppSettings {
-        var settings = AppSettings()
-        settings.ollamaModel = model
-        settings.ollamaTimeout = 1
-        return settings
-    }
+        await harness.viewModel.prepareModelOnLaunch()
+        try? await Task.sleep(nanoseconds: 50_000_000)
 
-    /// Poll until `condition` holds or the deadline passes; returns the final value.
-    private func waitFor(timeout: TimeInterval = 2, _ condition: () -> Bool) async -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if condition() { return true }
-            try? await Task.sleep(nanoseconds: 10_000_000)
-        }
-        return condition()
-    }
-
-    func testStop_DoesNotSendUnloadRequest() async throws {
-        let viewModel = makeViewModel(settings: localSettings(model: "model-a:old"))
-        viewModel.captureState = .capturing
-
-        await viewModel.stop()
-
-        XCTAssertEqual(viewModel.captureState, .idle)
-        _ = await waitFor { !self.recorder.snapshot.isEmpty }
-        try await Task.sleep(nanoseconds: 200_000_000)
-        let unloadRequests = recorder.snapshot.filter { $0.path.hasSuffix("/api/generate") }
-        XCTAssertTrue(unloadRequests.isEmpty,
-                      "stop() must not unload the model; keep_alive governs the idle timeout")
-    }
-
-    func testUpdateSettings_ModelChanged_UnloadsOldModelByName() async throws {
-        let viewModel = makeViewModel(settings: localSettings(model: "model-a:old"))
-
-        viewModel.updateSettings(localSettings(model: "model-b:new"))
-
-        let sawUnload = await waitFor {
-            self.recorder.snapshot.contains { $0.path.hasSuffix("/api/generate") }
-        }
-        XCTAssertTrue(sawUnload, "switching models must unload the old model")
-
-        let record = try XCTUnwrap(recorder.snapshot.first { $0.path.hasSuffix("/api/generate") })
-        let body = try XCTUnwrap(record.body)
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        XCTAssertEqual(json["model"] as? String, "model-a:old",
-                       "the unload request must name the OLD model, not the new one")
-        XCTAssertEqual(json["keep_alive"] as? Int, 0)
-    }
-
-    func testUpdateSettings_ModelChanged_PrewarmsNewModel() async throws {
-        let viewModel = makeViewModel(settings: localSettings(model: "model-a:old"))
-
-        viewModel.updateSettings(localSettings(model: "model-b:new"))
-
-        let sawPrewarm = await waitFor {
-            self.recorder.snapshot.contains { $0.path.hasSuffix("/api/chat") }
-        }
-        XCTAssertTrue(sawPrewarm, "switching models while idle must prewarm the new model")
-
-        let record = try XCTUnwrap(recorder.snapshot.first { $0.path.hasSuffix("/api/chat") })
-        let body = try XCTUnwrap(record.body)
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        XCTAssertEqual(json["model"] as? String, "model-b:new")
-
-        let stateSettled = await waitFor { viewModel.modelState == .loaded }
-        XCTAssertTrue(stateSettled, "modelState must become .loaded after the new model prewarms")
-    }
-
-    func testPrepareModelOnLaunch_RemoteOllama_SendsNoRequests() async throws {
-        AppSettings.markSetupComplete()
-        var settings = localSettings(model: "model-a:old")
-        settings.ollamaHost = "ollama.example.com"
-        settings.remoteOllamaOptIn = true
-        let viewModel = makeViewModel(settings: settings)
-
-        try await Task.sleep(nanoseconds: 500_000_000)
-        recorder.reset()
-
-        await viewModel.prepareModelOnLaunch()
-        try await Task.sleep(nanoseconds: 300_000_000)
-
-        XCTAssertTrue(recorder.snapshot.isEmpty,
-                      "launch prewarm is local-only; remote Ollama must not be probed")
-    }
-
-    func testPrepareModelOnLaunch_SetupIncomplete_SendsNoRequests() async throws {
-        AppSettings.resetSetupFlag()
-        let viewModel = makeViewModel(settings: localSettings(model: "model-a:old"))
-
-        try await Task.sleep(nanoseconds: 500_000_000)
-        recorder.reset()
-
-        await viewModel.prepareModelOnLaunch()
-        try await Task.sleep(nanoseconds: 300_000_000)
-
-        XCTAssertTrue(recorder.snapshot.isEmpty,
-                      "before onboarding completes, launch prewarm must not probe Ollama")
+        XCTAssertEqual(harness.network.value, 0, "count from construction, without resetting away init requests")
+        XCTAssertEqual(harness.launcher.launchServeCallCount, 0)
+        XCTAssertTrue(harness.translator.texts.isEmpty)
+        XCTAssertFalse(harness.viewModel.isTranslationReady)
     }
 }
 
 // MARK: - Settings decoding
 
 final class ModelLifecycleSettingsTests: XCTestCase {
+
+    func testAppSettings_LegacyJSONWithoutTranslationOptIn_PreservesConsentAndLanguages() throws {
+        var legacy = AppSettings()
+        legacy.historyEnabled = true
+        legacy.targetLanguage = .japanese
+        legacy.ollamaHost = "old-server.example"
+        legacy.customPrompt = "Keep my terminology."
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+        object.removeValue(forKey: "translationEnabled")
+
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONSerialization.data(withJSONObject: object))
+
+        XCTAssertFalse(decoded.translationEnabled, "legacy service settings must not silently enable an engine")
+        XCTAssertTrue(decoded.historyEnabled)
+        XCTAssertEqual(decoded.targetLanguage, .japanese)
+        XCTAssertEqual(decoded.customPrompt, "Keep my terminology.")
+    }
 
     func testAppSettings_LegacyJSONWithoutModelLifecycleKeys_DecodesWithDefaults() throws {
         let data = try JSONEncoder().encode(AppSettings())

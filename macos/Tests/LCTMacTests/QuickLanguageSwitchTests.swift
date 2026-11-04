@@ -47,15 +47,7 @@ final class QuickLanguageSwitchTests: XCTestCase {
 
     // MARK: - Setup
 
-    override func setUp() {
-        super.setUp()
-        UserDefaults.standard.removeObject(forKey: "LCTMacSettings")
-    }
-
-    override func tearDown() {
-        UserDefaults.standard.removeObject(forKey: "LCTMacSettings")
-        super.tearDown()
-    }
+    private var persistedSettings: AppSettings?
 
     /// A "capturing" view model with a fake engine. The capture state and
     /// running recognition lanes are set directly — no audio, Ollama, or
@@ -65,7 +57,10 @@ final class QuickLanguageSwitchTests: XCTestCase {
         sources: [AudioSource] = [.system, .microphone]
     ) -> (TranscriptionViewModel, FakeSpeechEngine) {
         let engine = FakeSpeechEngine()
-        let viewModel = TranscriptionViewModel(settings: settings, speechEngine: engine)
+        let viewModel = TranscriptionViewModel(settings: settings, speechEngine: engine, persistSettings: { [weak self] value in
+            self?.persistedSettings = value
+            return true
+        })
         viewModel.captureState = .capturing
         viewModel.recognitionLanes = sources
         return (viewModel, engine)
@@ -204,13 +199,16 @@ final class QuickLanguageSwitchTests: XCTestCase {
 
     func testSetSourceLanguage_Idle_SavesWithoutRestarting() async {
         let engine = FakeSpeechEngine()
-        let viewModel = TranscriptionViewModel(settings: AppSettings(), speechEngine: engine)
+        let viewModel = TranscriptionViewModel(settings: AppSettings(), speechEngine: engine, persistSettings: { [weak self] value in
+            self?.persistedSettings = value
+            return true
+        })
 
         await viewModel.setSourceLanguage(.japanese, for: .system)
 
         XCTAssertTrue(engine.restartedLanes.isEmpty, "nothing restarts while idle — the next start() picks it up")
         XCTAssertEqual(viewModel.settings.sourceLanguage, .japanese)
-        XCTAssertEqual(AppSettings.load().sourceLanguage, .japanese, "the change must persist")
+        XCTAssertEqual(persistedSettings?.sourceLanguage, .japanese, "the change must reach the settings store")
     }
 
     func testSetSourceLanguage_CapturingLaneNotRunning_SkipsRestart() async {
@@ -230,7 +228,7 @@ final class QuickLanguageSwitchTests: XCTestCase {
         var settings = AppSettings()
         settings.sourceLanguage = .chinese
         let (viewModel, engine) = makeCapturingViewModel(settings: settings)
-        viewModel.isPaused = true  // paused: nothing is enqueued for translation
+        // Caption-only is the default; no translation tasks are submitted.
 
         engine.onTranscription?(TranscriptionResult(text: "hello world", isVolatile: true, source: .microphone))
         XCTAssertTrue(viewModel.liveSourceText.contains("hello world"), "test setup: the draft must be live")
@@ -302,7 +300,7 @@ final class QuickLanguageSwitchTests: XCTestCase {
         let (viewModel, _) = makeCapturingViewModel()
 
         var newSettings = viewModel.settings
-        newSettings.captureMicrophone = false
+        newSettings.captureMicrophone.toggle()
         viewModel.updateSettings(newSettings)
 
         XCTAssertTrue(viewModel.notice?.message.contains("need a restart") ?? false,

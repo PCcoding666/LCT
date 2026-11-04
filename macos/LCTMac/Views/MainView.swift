@@ -22,15 +22,14 @@ enum LanguageLabel {
         system: SourceLanguage,
         microphone: SourceLanguage?,
         target: TargetLanguage,
-        microphoneActive: Bool
+        microphoneActive: Bool,
+        translationEnabled: Bool = true
     ) -> String {
         let sys = system.isoCode.uppercased()
         let mic = (microphone ?? system).isoCode.uppercased()
         let tgt = target.isoCode.uppercased()
-        guard microphoneActive, mic != sys else {
-            return "\(sys) → \(tgt)"
-        }
-        return "SYS \(sys) · MIC \(mic) → \(tgt)"
+        let source = microphoneActive && mic != sys ? "SYS \(sys) · MIC \(mic)" : sys
+        return translationEnabled ? "\(source) → \(tgt)" : source
     }
 
     /// Empty-state line while capturing: `// listening (ZH)…`, or
@@ -84,8 +83,7 @@ struct MainView: View {
         .animation(.easeInOut(duration: 0.3), value: viewModel.notice)
         .task {
             // Populate the language menu's availability markers (which
-            // languages need an on-device model download). The model prewarm
-            // runs once in AppCoordinator, not on every window appearance.
+            // languages need an on-device model download). Translation is separate.
             await viewModel.refreshLanguageAvailability()
         }
         // Start/stop, pause, overlay, settings-change and File-menu export
@@ -139,24 +137,20 @@ struct MainView: View {
             HStack(spacing: 8) {
                 languageMenu
 
-                OllamaStatusIndicator(isConnected: viewModel.isOllamaConnected) {
-                    viewModel.startOllamaFromIndicator()
-                }
-
-                HStack(spacing: 4) {
-                    Text(viewModel.settings.ollamaModel)
-                        .font(HUD.mono(.caption))
-                        .foregroundStyle(modelNameColor)
-
-                    if viewModel.modelState == .loading {
-                        Text("loading…")
+                Button(action: { showSettings = true }) {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(viewModel.isTranslationReady ? HUD.accent : Color.secondary)
+                            .frame(width: 7, height: 7)
+                        Text("Translation: \(viewModel.translationStatusText)")
                             .font(HUD.mono(.caption))
                             .foregroundStyle(.secondary)
                     }
                 }
-                .help(modelStateHelp)
+                .buttonStyle(.plain)
+                .help("Translation settings — original captions work independently")
 
-                if viewModel.lastLatencyMs > 0 {
+                if viewModel.settings.translationEnabled && viewModel.settings.showLatency && viewModel.lastLatencyMs > 0 {
                     Text("· \(viewModel.lastLatencyMs) ms")
                         .font(HUD.mono(.caption))
                         .foregroundStyle(viewModel.isTranslating ? HUD.accent : Color.secondary.opacity(0.6))
@@ -240,7 +234,8 @@ struct MainView: View {
                 system: viewModel.settings.sourceLanguage,
                 microphone: viewModel.settings.microphoneSourceLanguage,
                 target: viewModel.settings.targetLanguage,
-                microphoneActive: viewModel.settings.captureMicrophone
+                microphoneActive: viewModel.settings.captureMicrophone,
+                translationEnabled: viewModel.settings.translationEnabled
             ))
             .font(HUD.mono(.caption))
             .foregroundStyle(.secondary)
@@ -422,14 +417,19 @@ struct MainView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 16) {
-            AudioMetersView(
-                systemLevel: viewModel.systemLevel,
-                micLevel: viewModel.micLevel,
-                sources: viewModel.captureSources,
-                isActive: viewModel.isCapturing && !viewModel.isPaused,
-                micDeviceName: viewModel.microphoneDeviceName,
-                micDeviceIsVirtual: viewModel.microphoneDeviceIsVirtual
-            )
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Speech: \(viewModel.speechStatusText)")
+                    .font(HUD.mono(.caption2))
+                    .foregroundStyle(.secondary)
+                AudioMetersView(
+                    systemLevel: viewModel.systemLevel,
+                    micLevel: viewModel.micLevel,
+                    sources: viewModel.captureSources,
+                    isActive: viewModel.isCapturing && !viewModel.isPaused,
+                    micDeviceName: viewModel.microphoneDeviceName,
+                    micDeviceIsVirtual: viewModel.microphoneDeviceIsVirtual
+                )
+            }
 
             Text(viewModel.isCapturing
                  ? "⌘␣ stop · ⌘P pause · ⇧⌘C copy · ⌘O overlay"
@@ -495,32 +495,6 @@ struct MainView: View {
         case .starting: return HUD.accent
         case .capturing: return viewModel.isPaused ? Color.orange : HUD.accent
         case .stopping: return Color.orange
-        }
-    }
-
-    /// Model name in the HUD: full brightness while loading/loaded (or before
-    /// the first probe), dimmed when the model is known to be out of memory.
-    private var modelNameColor: Color {
-        switch viewModel.modelState {
-        case .notLoaded, .failed:
-            return .secondary.opacity(0.5)
-        case .unknown, .loading, .loaded:
-            return .secondary
-        }
-    }
-
-    private var modelStateHelp: String {
-        switch viewModel.modelState {
-        case .unknown:
-            return "Translation model"
-        case .loading:
-            return "Model is loading into memory…"
-        case .loaded:
-            return "Model loaded in memory"
-        case .notLoaded:
-            return "Model not loaded — it will load when you start"
-        case .failed(let reason):
-            return "Model not loaded — \(reason)"
         }
     }
 
@@ -706,7 +680,7 @@ struct TranscriptSegmentRow: View {
                 .font(HUD.mono(.caption2))
                 .foregroundStyle(.orange)
         case .failed:
-            Text(segment.translatedText)
+            Text("Translation unavailable — original caption retained")
                 .font(HUD.mono(.caption2))
                 .foregroundStyle(.red)
         default:
@@ -845,80 +819,5 @@ struct LaneMeterView: View {
         }
         .animation(.linear(duration: 0.06), value: level)
         .help(lane == .microphone ? "Microphone input level" : "System audio level")
-    }
-}
-
-// MARK: - Ollama Status Indicator
-
-@MainActor
-struct OllamaStatusIndicator: View {
-    let isConnected: Bool
-    /// Tap handler for the disconnected state; the view model owns the
-    /// start attempt and any error notice it produces.
-    let onStartRequested: () -> Void
-    @State private var isHovering = false
-    @StateObject private var guardian = OllamaGuardian.shared
-
-    var body: some View {
-        Button(action: {
-            if !isConnected {
-                onStartRequested()
-            }
-        }) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 7, height: 7)
-
-                if guardian.status != .running && !isConnected {
-                    Text(statusText)
-                        .font(HUD.mono(.caption))
-                        .foregroundStyle(.secondary)
-                }
-
-                if guardian.isChecking {
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 12, height: 12)
-                }
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isHovering ? Color.gray.opacity(0.15) : Color.clear)
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            isHovering = hovering
-        }
-        .help((guardian.status == .running || isConnected) ? "Ollama service running" : "Click to start Ollama")
-    }
-
-    private var statusColor: Color {
-        if guardian.isChecking {
-            return .yellow
-        }
-        return (guardian.status == .running || isConnected) ? HUD.accent : .red
-    }
-
-    private var statusText: String {
-        if guardian.isChecking {
-            return "checking…"
-        }
-
-        switch guardian.status {
-        case .running:
-            return "ollama up"
-        case .starting:
-            return "starting…"
-        case .notInstalled:
-            return "ollama not installed"
-        case .installed, .stopped:
-            return "ollama stopped"
-        case .error(let message):
-            return "error: \(message)"
-        }
     }
 }

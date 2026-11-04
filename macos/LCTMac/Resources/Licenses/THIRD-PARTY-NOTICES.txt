@@ -1,0 +1,10 @@
+LCT includes llama.cpp v0.8.0 (official build b11960), copyright 2023-2026
+The ggml authors, under the MIT license. See llama.cpp-MIT.txt.
+Source: https://github.com/ggml-org/llama.cpp/tree/b11960
+
+The optional Qwen2.5-1.5B-Instruct-GGUF Q4_K_M model is published by Qwen
+under Apache License 2.0. See Qwen2.5-Apache-2.0.txt. The original model
+weights are downloaded without modification only when the user requests them.
+Source: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
+Weight revision: dd26da440ef0330c47919d1ecae0966d24022222
+Weight SHA-256: 6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e

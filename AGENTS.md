@@ -35,7 +35,7 @@ Use deterministic XCTest fixtures and names such as
 Use scoped Conventional Commits, for example `fix(macos): ...` or
 `refactor(repo): ...`. PRs should explain the resulting behavior, link an issue
 when available, report validation, and include screenshots or recordings for
-visible UI changes. State any required OS, permission, or Ollama setup.
+visible UI changes. State any required OS, permission, speech-resource, or local-model setup.
 Build and unit-test results do not establish live audio or GUI E2E acceptance.
 
 ## Delivery and local data

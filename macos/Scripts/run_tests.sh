@@ -38,8 +38,4 @@ run_step "swift build -c release" swift build -c release
 run_step "swift build with warnings as errors" swift build -Xswiftc -warnings-as-errors
 run_step "swift test" swift test
 
-if curl -fsS --max-time 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
-    echo -e "${GREEN}✓${NC} Ollama service reachable at http://localhost:11434"
-else
-    echo -e "${YELLOW}!${NC} Ollama service not reachable. App can auto-start it, but live integration tests were skipped."
-fi
+echo "Build and unit tests do not establish live audio, GUI, model download, or offline acceptance. See TESTING.md."

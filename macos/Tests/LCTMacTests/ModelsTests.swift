@@ -241,7 +241,7 @@ final class ModelsTests: XCTestCase {
         let settings = AppSettings()
 
         XCTAssertTrue(settings.captureSystemAudio)
-        XCTAssertTrue(settings.captureMicrophone)
+        XCTAssertFalse(settings.captureMicrophone)
         XCTAssertNil(settings.microphoneDeviceUID)
         XCTAssertEqual(settings.sourceLanguage, .english)
         XCTAssertNil(settings.microphoneSourceLanguage)
@@ -357,7 +357,7 @@ final class ModelsTests: XCTestCase {
 
         XCTAssertNil(decoded.microphoneDeviceUID)
         XCTAssertTrue(decoded.captureSystemAudio)
-        XCTAssertTrue(decoded.captureMicrophone)
+        XCTAssertFalse(decoded.captureMicrophone)
     }
 
     func testAppSettings_MicrophoneDeviceUID_RoundTrips() throws {

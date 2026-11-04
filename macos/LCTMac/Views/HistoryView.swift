@@ -210,12 +210,13 @@ struct HistoryView: View {
     }
     
     private func copyEntry(_ entry: TranslationEntry) {
-        let text = """
-        Source: \(entry.sourceText)
-        Translation: \(entry.translatedText)
-        Language: \(entry.targetLanguage)
-        Time: \(entry.formattedTimestamp)
-        """
+        var lines = ["Source: \(entry.sourceText)"]
+        if !entry.translatedText.isEmpty {
+            lines.append("Translation: \(entry.translatedText)")
+            lines.append("Language: \(entry.targetLanguage)")
+        }
+        lines.append("Time: \(entry.formattedTimestamp)")
+        let text = lines.joined(separator: "\n")
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
     }
@@ -242,9 +243,11 @@ struct HistoryEntryRow: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 
-                Text(entry.formattedLatency)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                if !entry.translatedText.isEmpty {
+                    Text(entry.formattedLatency)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             
             // Source text
@@ -253,24 +256,20 @@ struct HistoryEntryRow: View {
                 .foregroundStyle(.primary)
                 .lineLimit(2)
             
-            // Translated text
-            Text(entry.translatedText)
-                .font(.body)
-                .foregroundStyle(.blue)
-                .lineLimit(2)
-            
-            // Language badge
-            HStack {
-                Text(entry.targetLanguage)
-                    .font(.caption2)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule()
-                            .fill(Color.blue.opacity(0.1))
-                    )
-                
-                Spacer()
+            if !entry.translatedText.isEmpty {
+                Text(entry.translatedText)
+                    .font(.body)
+                    .foregroundStyle(.blue)
+                    .lineLimit(2)
+
+                HStack {
+                    Text(entry.targetLanguage)
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.blue.opacity(0.1)))
+                    Spacer()
+                }
             }
         }
         .padding(.vertical, 4)

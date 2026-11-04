@@ -2,6 +2,7 @@ import Foundation
 
 /// State of a translation segment
 enum TranslationState: String, Codable, Equatable {
+    case captionOnly = "captionOnly" // Final source caption; translation was not requested or ready.
     case recognizing = "recognizing" // (Not used directly if we only create it when finalized, but useful)
     case pending = "pending" // Finalized while paused; will be enqueued on resume
     case translating = "translating"

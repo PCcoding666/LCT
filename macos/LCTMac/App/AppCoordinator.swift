@@ -186,9 +186,8 @@ final class AppCoordinator {
         NSApp?.windows.contains { $0.identifier?.rawValue == MainWindow.id && $0.isVisible } ?? false
     }
 
-    /// The production view model. Warms the translation model in the
-    /// background right away, so the first start() finds it in memory —
-    /// once per run, not every time the main window reopens.
+    /// The production view model. Optional translation preparation is separate
+    /// from caption startup and never downloads a model automatically.
     static func makeAppViewModel() -> TranscriptionViewModel {
         let viewModel = TranscriptionViewModel()
         Task { await viewModel.prepareModelOnLaunch() }

@@ -11,18 +11,9 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var localSettings: AppSettings
     @State private var showingPromptEditor = false
-    @State private var installedModels: [String] = []
-    @State private var modelListError: String?
-    @State private var isLoadingModels = false
-    @State private var modelDownloadError: String?
     @State private var diagnosticsMessage: String?
     @State private var inputDevices: [AudioInputDevice] = []
-    @StateObject private var modelManager = OllamaModelManager()
-
-    private let hardware = HardwareProfile.current()
-    private var recommendation: ModelRecommendation {
-        ModelRecommender.recommend(for: hardware)
-    }
+    @State private var languageAvailability: [SourceLanguage: LanguageAvailability] = [:]
 
     init(settings: Binding<AppSettings>, onSave: @escaping (AppSettings) -> Void) {
         self._settings = settings
@@ -45,8 +36,7 @@ struct SettingsView: View {
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(localSettings.ollamaEndpointError != nil)
-                .help(localSettings.ollamaEndpointError ?? "")
+                .disabled(!localSettings.captureSystemAudio && !localSettings.captureMicrophone)
             }
             .padding()
 
@@ -84,7 +74,9 @@ struct SettingsView: View {
         }
         .task {
             refreshInputDevices()
-            await refreshInstalledModels()
+            let kind = SpeechEngineSelection.engineKind(transcriberEngineAvailable: SpeechEngineAvailability.isTranscriberEngineAvailable)
+            let engine = SpeechEngineFactory.makeEngine(kind: kind, language: localSettings.sourceLanguage)
+            languageAvailability = await engine.languageAvailability()
         }
     }
 
@@ -104,6 +96,7 @@ struct SettingsView: View {
                 }
             }
             .help("Which input device LCT listens to for microphone capture")
+            .disabled(!localSettings.captureMicrophone)
         }
 
         Section("Language") {
@@ -111,7 +104,7 @@ struct SettingsView: View {
                 ForEach(SourceLanguage.allCases) { language in
                     HStack {
                         Text(language.displayName)
-                        if !isLanguageAvailable(language) {
+                        if languageAvailability[language] != nil && !isLanguageAvailable(language) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .font(.caption2)
                                 .foregroundStyle(.orange)
@@ -122,11 +115,13 @@ struct SettingsView: View {
             }
             .help("The language being spoken on the system audio that you want to recognize")
 
-            if !isLanguageAvailable(localSettings.sourceLanguage) {
+            if let availability = languageAvailability[localSettings.sourceLanguage], availability != .installed {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
-                    Text("This language has no on-device speech model on your Mac. Download it in System Settings, or choose another language. LCT only recognizes speech on-device.")
+                    Text(availability == .downloadable
+                         ? "This speech language needs an Apple on-device resource. LCT will request the download when you start captions; an internet connection is needed for that download."
+                         : "This language is not available for on-device speech on this Mac. Choose another language or install its speech resources in System Settings.")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
@@ -148,86 +143,8 @@ struct SettingsView: View {
             .help("The language to translate into")
         }
 
-        Section("Translation Model") {
-            Text("Recommended for this Mac (\(hardware.chipName), \(hardware.memoryGB) GB): \(recommendation.recommended.displayName)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if installedModels.isEmpty {
-                HStack {
-                    Text("Model")
-                    TextField("Model Name", text: $localSettings.ollamaModel)
-                        .textFieldStyle(.roundedBorder)
-                }
-                .help("e.g., qwen3.5:4b-mlx, qwen3.5:0.8b, translategemma:4b-it-q4_K_M")
-            } else {
-                Picker("Model", selection: $localSettings.ollamaModel) {
-                    ForEach(installedModels, id: \.self) { model in
-                        Text(model == recommendation.recommended.name ? "\(model) (recommended)" : model)
-                            .tag(model)
-                    }
-                    if !installedModels.contains(recommendation.recommended.name) {
-                        Text("\(recommendation.recommended.name) (recommended, not installed)")
-                            .tag(recommendation.recommended.name)
-                    }
-                    if !installedModels.contains(localSettings.ollamaModel),
-                       localSettings.ollamaModel != recommendation.recommended.name {
-                        Text("\(localSettings.ollamaModel) (not installed)")
-                            .tag(localSettings.ollamaModel)
-                    }
-                }
-                .help("Models currently installed in Ollama, plus this Mac's recommendation")
-            }
-
-            if ModelCatalog.isMLXModel(localSettings.ollamaModel), !hardware.isAppleSilicon {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                    Text("MLX models need Apple Silicon — this Mac cannot run '\(localSettings.ollamaModel)'.")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-            }
-
-            modelDownloadRow
-
-            HStack {
-                if isLoadingModels {
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 16, height: 16)
-                    Text("Checking installed models…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if let error = modelListError {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("\(installedModels.count) model(s) installed")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Button("Refresh") {
-                    Task { await refreshInstalledModels() }
-                }
-                .controlSize(.small)
-            }
-
-            Picker("Keep Model Loaded", selection: $localSettings.modelKeepAlive) {
-                ForEach(ModelKeepAlive.allCases) { option in
-                    Text(option.displayName).tag(option)
-                }
-            }
-            .help("How long Ollama keeps the translation model in memory after its last use")
-
-            Toggle("Unload Model When LCT Quits", isOn: $localSettings.unloadModelOnQuit)
-                .help("Free the model's memory when LCT exits")
+        Section("Local Translation") {
+            LocalTranslationControls(enabled: $localSettings.translationEnabled)
         }
     }
 
@@ -236,87 +153,14 @@ struct SettingsView: View {
     @ViewBuilder
     private var advancedSections: some View {
         Section("Advanced") {
-            DisclosureGroup("Ollama Connection") {
-                HStack {
-                    Text("Host")
-                    TextField("Host", text: $localSettings.ollamaHost)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                HStack {
-                    Text("Port")
-                    TextField("Port", value: $localSettings.ollamaPort, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 100)
-                    Spacer()
-                }
-
-                Toggle("Allow Remote Ollama (HTTPS only)", isOn: $localSettings.remoteOllamaOptIn)
-                    .help("Explicit consent required before connecting to a non-local Ollama server. Remote servers are only contacted over HTTPS.")
-
-                Text("Local servers (localhost/127.0.0.1) use HTTP. Remote servers require this explicit opt-in and are only contacted over HTTPS.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                if let endpointError = localSettings.ollamaEndpointError {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                        Text(endpointError)
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
-                }
-
-                HStack {
-                    Text("Timeout")
-                    TextField("Timeout", value: $localSettings.ollamaTimeout, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 80)
-                    Text("seconds")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-            }
-
             DisclosureGroup("Translation Tuning") {
-                Picker("Model Type", selection: $localSettings.translationModelType) {
-                    ForEach(TranslationModelType.allCases) { type in
-                        Text(type.displayName).tag(type)
-                    }
-                }
-                .help("Standard uses chat prompts; TranslateGemma uses specialized translation format")
-
                 HStack {
                     Text("Temperature")
                     Slider(value: $localSettings.ollamaTemperature, in: 0...1, step: 0.1)
                     Text(String(format: "%.1f", localSettings.ollamaTemperature))
-                        .frame(width: 40)
-                        .monospacedDigit()
                 }
-                .help("Lower = more consistent, Higher = more creative")
-
-                Toggle("Live Draft Translation", isOn: $localSettings.liveDraftTranslation)
-                    .help("Translate speech as it's being spoken for lower latency, instead of waiting for each sentence to finish")
-
-                Toggle("Context-Aware Translation", isOn: $localSettings.contextAware)
-                    .help("Use previous translations for better context")
-
-                if localSettings.contextAware {
-                    HStack {
-                        Text("Max Context Entries")
-                        Stepper("\(localSettings.maxContextEntries)", value: $localSettings.maxContextEntries, in: 1...10)
-                    }
-                }
-
-                HStack {
-                    Text("Custom Prompt")
-                    Spacer()
-                    Button(localSettings.customPrompt.isEmpty ? "Use Default" : "Customized") {
-                        showingPromptEditor = true
-                    }
-                    .buttonStyle(.bordered)
-                }
+                Toggle("Use Previous Captions as Context", isOn: $localSettings.contextAware)
+                Button("Edit Translation Prompt…") { showingPromptEditor = true }
             }
 
             DisclosureGroup("Display & Overlay") {
@@ -401,119 +245,12 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Installed Models
-
-    /// Inline download control for a selected-but-missing model. Hidden while
-    /// the selection is installed, incompatible with this Mac, or the Ollama
-    /// endpoint is invalid.
-    @ViewBuilder
-    private var modelDownloadRow: some View {
-        if modelManager.isPulling {
-            VStack(alignment: .leading, spacing: 6) {
-                ProgressView(value: modelManager.pullProgress)
-                HStack {
-                    Text(modelManager.pullTotalBytes > 0
-                         ? "\(Int(modelManager.pullProgress * 100))% · \(ByteFormatting.string(modelManager.pullCompletedBytes)) / \(ByteFormatting.string(modelManager.pullTotalBytes))"
-                         : "Downloading…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                    Spacer()
-                    Button("Cancel") {
-                        modelManager.cancelPull()
-                    }
-                    .controlSize(.small)
-                }
-            }
-        } else if !isSelectedModelInstalled,
-                  !localSettings.ollamaModel.isEmpty,
-                  ModelCatalog.isCompatible(modelName: localSettings.ollamaModel, with: hardware),
-                  localSettings.validatedOllamaEndpoint != nil {
-            HStack {
-                Text("'\(localSettings.ollamaModel)' is not installed.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Button("Download") {
-                    startModelDownload()
-                }
-                .controlSize(.small)
-            }
-
-            if let error = modelDownloadError {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    private var isSelectedModelInstalled: Bool {
-        installedModels.contains {
-            $0 == localSettings.ollamaModel || $0.hasPrefix("\(localSettings.ollamaModel):")
-        }
-    }
-
-    private func startModelDownload() {
-        guard let endpoint = localSettings.validatedOllamaEndpoint else { return }
-        modelManager.endpoint = endpoint
-        modelDownloadError = nil
-        let modelName = localSettings.ollamaModel
-        Task {
-            do {
-                try await modelManager.pullModel(modelName)
-                await refreshInstalledModels()
-            } catch is CancellationError {
-                // The manager already reset its state; nothing to surface.
-            } catch {
-                modelDownloadError = error.localizedDescription
-            }
-        }
-    }
-
     private var systemDefaultInputName: String {
         inputDevices.first(where: { $0.isSystemDefault })?.name ?? "unavailable"
     }
 
     private func refreshInputDevices() {
         inputDevices = AudioInputDevices.listInputDevices()
-    }
-
-    private func refreshInstalledModels() async {
-        isLoadingModels = true
-        modelListError = nil
-        defer { isLoadingModels = false }
-
-        guard let endpoint = localSettings.validatedOllamaEndpoint else {
-            modelListError = localSettings.ollamaEndpointError ?? "Invalid Ollama address"
-            return
-        }
-        let url = endpoint.baseURL.appendingPathComponent("api/tags")
-
-        struct TagsResponse: Decodable {
-            struct Model: Decodable { let name: String }
-            let models: [Model]
-        }
-
-        do {
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 5
-            let (data, _) = try await URLSession.shared.data(for: request)
-            let response = try JSONDecoder().decode(TagsResponse.self, from: data)
-            installedModels = response.models.map(\.name).sorted()
-            if installedModels.isEmpty {
-                modelListError = "No models installed — run: ollama pull \(recommendation.recommended.name)"
-            }
-        } catch {
-            installedModels = []
-            modelListError = "Cannot reach Ollama — start it or check Advanced › Ollama Connection"
-        }
     }
 
     // MARK: - Diagnostics Export
@@ -545,31 +282,23 @@ struct SettingsView: View {
         let speechStatus = SFSpeechRecognizer.authorizationStatus()
         let screenStatus = CGPreflightScreenCaptureAccess()
 
-        let guardian = OllamaGuardian.shared
-        let historyEntryCount = (try? HistoryService().getCount()) ?? 0
-
-        return DiagnosticsReport.build(
-            appVersion: appVersion,
-            buildNumber: buildNumber,
-            osVersion: osVersion,
-            microphoneStatus: describe(micStatus),
-            speechStatus: describe(speechStatus),
-            screenRecordingGranted: screenStatus,
-            systemAudioAuthorization: SystemAudioAuthorizationStore.lastResult()?.rawValue ?? "unknown",
-            ollamaURL: localSettings.ollamaURL,
-            ollamaIsLocal: localSettings.isLocalOllama,
-            modelName: localSettings.ollamaModel,
-            modelType: localSettings.translationModelType.displayName,
-            sourceLanguage: localSettings.sourceLanguage.displayName,
-            targetLanguage: localSettings.targetLanguage.displayName,
-            captureSystemAudio: localSettings.captureSystemAudio,
-            captureMicrophone: localSettings.captureMicrophone,
-            ollamaStatus: guardian.status.displayText,
-            ollamaVersion: guardian.ollamaVersion ?? "unknown",
-            installedModels: installedModels,
-            historyEnabled: localSettings.historyEnabled,
-            historyEntryCount: historyEntryCount
-        )
+        let service = EmbeddedTranslationService.shared
+        return [
+            "LCT Diagnostics Report (metadata only)",
+            "Version: \(appVersion) (\(buildNumber))",
+            "macOS: \(osVersion)",
+            "Microphone: \(describe(micStatus))",
+            "Speech Recognition: \(describe(speechStatus))",
+            "Screen Recording (fallback only): \(screenStatus)",
+            "System Audio: \(SystemAudioAuthorizationStore.lastResult()?.rawValue ?? "unknown")",
+            "Capture: systemAudio=\(localSettings.captureSystemAudio) microphone=\(localSettings.captureMicrophone)",
+            "Translation: enabled=\(localSettings.translationEnabled) ready=\(service.isReady)",
+            "Runtime: embedded llama.cpp",
+            "Model: \(EmbeddedTranslationService.modelName), downloaded=\(service.isModelDownloaded)",
+            "Languages: \(localSettings.sourceLanguage.displayName) → \(localSettings.targetLanguage.displayName)",
+            "History enabled: \(localSettings.historyEnabled)",
+            "No transcripts, translations, or log contents are included."
+        ].joined(separator: "\n")
     }
 
     private func describe(_ status: AVAuthorizationStatus) -> String {
@@ -595,10 +324,9 @@ struct SettingsView: View {
     // MARK: - Helpers
 
     private func isLanguageAvailable(_ language: SourceLanguage) -> Bool {
-        let locale = Locale(identifier: language.isoCode)
-        // LCT requires on-device recognition, so availability means the
-        // on-device model is present — not just that a recognizer exists.
-        return SFSpeechRecognizer(locale: locale)?.supportsOnDeviceRecognition ?? false
+        // On macOS 26 the selected engine's inventory is authoritative;
+        // the legacy recognizer alone can incorrectly label installed assets.
+        languageAvailability[language] == .installed
     }
 }
 

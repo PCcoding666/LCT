@@ -68,7 +68,7 @@ enum SessionExporter {
             "# LCT Session\(titleDate)",
             "",
             "- Duration: \(clockString(duration(of: transcript, since: sessionStart)))",
-            "- Languages: \(sourceLanguages) → \(targetLanguage)",
+            "- Languages: \(languageLabel(transcript, source: sourceLanguages, target: targetLanguage))",
             "- Lines: \(transcript.entries.count)",
         ]
         if let sessionStart, !transcript.entries.isEmpty {
@@ -96,7 +96,7 @@ enum SessionExporter {
     private static func plainText(_ transcript: SessionTranscript, sourceLanguages: String, targetLanguage: String, timeZone: TimeZone) -> String {
         let sessionStart = self.sessionStart(of: transcript)
         let titleDate = sessionStart.map { " — \(headerDateString($0, timeZone: timeZone))" } ?? ""
-        var lines: [String] = ["LCT Session\(titleDate) (\(sourceLanguages) → \(targetLanguage))"]
+        var lines: [String] = ["LCT Session\(titleDate) (\(languageLabel(transcript, source: sourceLanguages, target: targetLanguage)))"]
         if let sessionStart {
             for entry in transcript.entries {
                 lines.append("")
@@ -157,6 +157,14 @@ enum SessionExporter {
     }
 
     // MARK: - Shared helpers
+
+    private static func languageLabel(_ transcript: SessionTranscript, source: String, target: String) -> String {
+        let hasTranslation = transcript.entries.contains {
+            !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return hasTranslation ? "\(source) → \(target)" : "\(source) (original captions)"
+    }
+
 
     /// Session baseline for offsets and headers. Falls back to the first
     /// entry when a clear() mid-session erased the explicit start time.

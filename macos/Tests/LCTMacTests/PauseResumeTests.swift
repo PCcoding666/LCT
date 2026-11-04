@@ -1,75 +1,88 @@
 import XCTest
+import AVFoundation
 @testable import LCTMac
 
-/// Tests for pause/resume translation lifecycle:
-/// segments must never dangle in .translating after a pause.
+/// Pause is a capture control: no captions are recorded while it is active.
 @MainActor
 final class PauseResumeTests: XCTestCase {
-
-    // MARK: - TranslationState.pending model tests
-
     func testPendingStateCodableRoundTrip() throws {
+        // Old persisted histories containing pending must remain readable.
         let segment = TranslationSegment(sourceText: "Hello", state: .pending)
-
         let data = try JSONEncoder().encode(segment)
         let decoded = try JSONDecoder().decode(TranslationSegment.self, from: data)
-
         XCTAssertEqual(decoded.state, .pending)
         XCTAssertEqual(decoded.sourceText, "Hello")
     }
 
-    // MARK: - ViewModel pause/resume tests
+    func testPause_FinalAndPartialSpeech_DoNotChangeCaptions() async {
+        let harness = CaptionOnlyTestHarness()
+        await harness.viewModel.start()
+        harness.speech.emit("Before pause.")
+        let transcript = harness.viewModel.sessionTranscript
+        let segments = harness.viewModel.segments
 
-    func testPauseMarksTranslatingSegmentsAsPending() {
-        let viewModel = TranscriptionViewModel()
-        viewModel.segments = [
-            TranslationSegment(sourceText: "Done", translatedText: "完成", state: .translated),
-            TranslationSegment(sourceText: "In flight", translatedText: "部分流式输出", state: .translating),
-            TranslationSegment(sourceText: "Queued", state: .translating),
-            TranslationSegment(sourceText: "Failed", translatedText: "Error: x", state: .failed),
-        ]
+        harness.viewModel.togglePause()
+        XCTAssertTrue(harness.viewModel.isPaused)
+        harness.speech.emit("Must not appear.")
+        harness.speech.emit("Neither should this draft", isVolatile: true)
 
-        XCTAssertFalse(viewModel.isPaused)
-        viewModel.togglePause()
-        XCTAssertTrue(viewModel.isPaused)
-
-        XCTAssertEqual(viewModel.segments[0].state, .translated, "Completed segments must be untouched")
-        XCTAssertEqual(viewModel.segments[1].state, .pending, "In-flight segment must become pending")
-        XCTAssertEqual(viewModel.segments[1].translatedText, "", "Partial streaming output must be discarded")
-        XCTAssertEqual(viewModel.segments[2].state, .pending, "Queued segment must become pending")
-        XCTAssertEqual(viewModel.segments[3].state, .failed, "Failed segments must be untouched")
+        XCTAssertEqual(harness.viewModel.sessionTranscript, transcript)
+        XCTAssertEqual(harness.viewModel.segments, segments)
+        XCTAssertFalse(harness.viewModel.liveSourceText.contains("Neither"))
+        await harness.viewModel.stop()
     }
 
-    func testResumeReEnqueuesPendingSegments() {
-        let viewModel = TranscriptionViewModel()
-        viewModel.segments = [
-            TranslationSegment(sourceText: "Hello world", state: .translating),
-        ]
+    func testResume_NewSpeech_ContinuesSameSession() async {
+        let harness = CaptionOnlyTestHarness()
+        await harness.viewModel.start()
+        harness.speech.emit("First line.")
+        let startedAt = harness.viewModel.sessionTranscript.startedAt
+        let firstID = harness.viewModel.sessionTranscript.entries.first?.id
 
-        viewModel.togglePause()
-        XCTAssertEqual(viewModel.segments[0].state, .pending)
+        harness.viewModel.togglePause()
+        harness.speech.emit("Ignored while paused.")
+        harness.viewModel.togglePause()
+        harness.speech.emit("Next line.")
 
-        viewModel.togglePause()
-        XCTAssertFalse(viewModel.isPaused)
-        XCTAssertEqual(
-            viewModel.segments[0].state, .translating,
-            "Pending segment must return to translating (re-enqueued) on resume"
-        )
+        XCTAssertFalse(harness.viewModel.isPaused)
+        XCTAssertEqual(harness.viewModel.captureState, .capturing)
+        XCTAssertEqual(harness.viewModel.sessionTranscript.startedAt, startedAt)
+        XCTAssertEqual(harness.viewModel.sessionTranscript.entries.first?.id, firstID)
+        XCTAssertEqual(harness.viewModel.sessionTranscript.entries.map(\.sourceText), ["First line.", "Next line."])
+        XCTAssertTrue(harness.translator.texts.isEmpty)
+        await harness.viewModel.stop()
     }
 
-    func testNoSegmentLeftPendingAfterResume() {
-        let viewModel = TranscriptionViewModel()
-        viewModel.segments = (0..<5).map {
-            TranslationSegment(sourceText: "Segment \($0)", state: .translating)
-        }
+    func testStop_WhilePaused_PreservesExistingSourceExport() async {
+        let harness = CaptionOnlyTestHarness()
+        await harness.viewModel.start()
+        harness.speech.emit("Keep this line.")
+        harness.viewModel.togglePause()
+        let transcript = harness.viewModel.sessionTranscript
 
-        viewModel.togglePause()
-        XCTAssertTrue(viewModel.segments.allSatisfy { $0.state == .pending })
+        await harness.viewModel.stop()
 
-        viewModel.togglePause()
-        XCTAssertFalse(
-            viewModel.segments.contains { $0.state == .pending },
-            "No segment may remain pending after resume"
-        )
+        XCTAssertEqual(harness.viewModel.captureState, .idle)
+        XCTAssertEqual(harness.viewModel.sessionTranscript, transcript)
+        XCTAssertEqual(harness.viewModel.sessionTranscript.entries.map(\.sourceText), ["Keep this line."])
+    }
+
+    func testPause_AudioBuffers_AreDroppedUntilResume() async throws {
+        let harness = CaptionOnlyTestHarness()
+        await harness.viewModel.start()
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16))
+        buffer.frameLength = 16
+        harness.capture.onAudioBuffer?(buffer, .system)
+        XCTAssertEqual(harness.speech.buffers.value, 1)
+
+        harness.viewModel.togglePause()
+        harness.capture.onAudioBuffer?(buffer, .system)
+        XCTAssertEqual(harness.speech.buffers.value, 1, "paused audio must never enter recognition")
+
+        harness.viewModel.togglePause()
+        harness.capture.onAudioBuffer?(buffer, .system)
+        XCTAssertEqual(harness.speech.buffers.value, 2)
+        await harness.viewModel.stop()
     }
 }

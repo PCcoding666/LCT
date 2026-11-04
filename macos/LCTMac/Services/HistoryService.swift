@@ -71,12 +71,12 @@ final class HistoryService: @unchecked Sendable {
 
     // MARK: - CRUD Operations
 
-    /// Log a new translation
+    /// Save a caption or its completed translation under the same stable id.
     func logTranslation(_ entry: TranslationEntry) throws {
         try dbQueue.sync {
             guard let db = db else { return }
 
-            try db.run(translationsTable.insert(
+            try db.run(translationsTable.insert(or: .replace,
                 id <- entry.id.uuidString,
                 sourceText <- entry.sourceText,
                 translatedText <- entry.translatedText,
@@ -314,7 +314,7 @@ extension HistoryService {
                         continuation.resume()
                         return
                     }
-                    try db.run(self.translationsTable.insert(
+                    try db.run(self.translationsTable.insert(or: .replace,
                         self.id <- entry.id.uuidString,
                         self.sourceText <- entry.sourceText,
                         self.translatedText <- entry.translatedText,
