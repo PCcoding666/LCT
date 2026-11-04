@@ -185,7 +185,7 @@ enum AppSettingsPersistenceError: LocalizedError {
 struct AppSettings: Codable, Equatable {
     // MARK: - Audio Settings
     var captureSystemAudio: Bool = true
-    var captureMicrophone: Bool = true
+    var captureMicrophone: Bool = false
     /// Core Audio UID of the microphone input device. nil follows the system
     /// default input device; a missing key (older installs) decodes as nil.
     var microphoneDeviceUID: String? = nil
@@ -226,6 +226,8 @@ struct AppSettings: Codable, Equatable {
     var unloadModelOnQuit: Bool = true
 
     // MARK: - Translation Settings
+    /// Captions are immediately usable; local translation is an explicit option.
+    var translationEnabled: Bool = false
     var targetLanguage: TargetLanguage = .chinese
     var translationModelType: TranslationModelType = .standard
     var contextAware: Bool = true
@@ -371,7 +373,7 @@ extension AppSettings {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         captureSystemAudio = try container.decodeIfPresent(Bool.self, forKey: .captureSystemAudio) ?? true
-        captureMicrophone = try container.decodeIfPresent(Bool.self, forKey: .captureMicrophone) ?? true
+        captureMicrophone = try container.decodeIfPresent(Bool.self, forKey: .captureMicrophone) ?? false
         microphoneDeviceUID = try container.decodeIfPresent(String.self, forKey: .microphoneDeviceUID)
         sourceLanguage = try container.decodeIfPresent(SourceLanguage.self, forKey: .sourceLanguage) ?? .english
         microphoneSourceLanguage = try container.decodeIfPresent(SourceLanguage.self, forKey: .microphoneSourceLanguage)
@@ -383,6 +385,7 @@ extension AppSettings {
         ollamaTemperature = try container.decodeIfPresent(Double.self, forKey: .ollamaTemperature) ?? 0.3
         modelKeepAlive = try container.decodeIfPresent(ModelKeepAlive.self, forKey: .modelKeepAlive) ?? .minutes30
         unloadModelOnQuit = try container.decodeIfPresent(Bool.self, forKey: .unloadModelOnQuit) ?? true
+        translationEnabled = try container.decodeIfPresent(Bool.self, forKey: .translationEnabled) ?? false
         targetLanguage = try container.decodeIfPresent(TargetLanguage.self, forKey: .targetLanguage) ?? .chinese
         translationModelType = try container.decodeIfPresent(TranslationModelType.self, forKey: .translationModelType) ?? .standard
         contextAware = try container.decodeIfPresent(Bool.self, forKey: .contextAware) ?? true

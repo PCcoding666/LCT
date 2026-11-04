@@ -1,49 +1,34 @@
-# LiveCaptions Translator (LCT) for macOS 🎙️✨
+# LCT for macOS
 
-LiveCaptions Translator (LCT) 是一款 macOS 原生实时字幕与 AI 翻译工具。macOS 26 上使用 `SpeechAnalyzer` / `SpeechTranscriber`，旧系统或旧工具链回退到 `SFSpeechRecognizer`；翻译由本地 Ollama 模型完成。仓库主分支维护 macOS，Windows 版本见[归档说明](../docs/WINDOWS_ARCHIVE.md)。
+LCT 是原生实时字幕与本地翻译应用。先完成所选音源和语音识别授权，即可使用原文字幕；不需要安装 Ollama、启动服务或配置端口。
 
-## 🌟 核心特性 (Features)
+## 使用
 
-- **原生级体验**：完全使用 Swift & SwiftUI 编写，极低的内存与 CPU 占用。
-- **毛玻璃悬浮窗 (Glassmorphism HUD)**：沉浸式窄边框字幕条，采用 `.ultraThinMaterial` 毛玻璃材质，与系统无缝融合。
-- **渐进式交互 (Progressive Disclosure)**：悬停时优雅淡入控制栏，移开后恢复纯净阅读体验。
-- **双路流式翻译管道 (Translation Pipeline)**：独创的 `CaptionSegmenter` 文本切分器，实现本地 ASR “边听边修补” 与后台 “单次提问双重输出（原句去噪改写 + 目标语言翻译）” 完美结合。
-- **全面本地化支持**：直接对接本地 Ollama 服务（默认推荐模型 `qwen3.5:4b-mlx`），让你的数据不出本机，保证极致的隐私和离线可用性。
-- **构建与发布**：PR 和主线提交自动构建并运行测试；签名、公证和 DMG 上传通过单独的手动工作流执行，合并不会自动发布。
+1. 打开 LCT，在向导中选择系统音频、麦克风或两者。系统音频模式不要求麦克风授权。
+2. 选择实际说话的语言并授权语音识别。缺少 Apple 语音资源时，按应用提示准备该语言资源。
+3. 点击 **start**，播放视频或说话。原文字幕、暂停/恢复、停止和导出均不依赖翻译模型。
+4. 如需翻译，打开 **Settings → Local Translation** 下载模型，再开启 **Translate Captions** 并保存设置。准备期间可继续原文字幕。
 
-## 📁 本地代码架构 (Architecture)
+翻译运行时随应用交付，使用进程内 llama.cpp；模型为 Qwen2.5-1.5B-Instruct Q4_K_M，下载约 **1.12 GB**，需要额外内存。权重保存在本机 LCT 的 Application Support 目录，下载完成并校验后才能加载。下载可取消或重试。模型和语音资源准备好后，识别与翻译可在离线状态运行。
 
-我们的项目将复杂逻辑分离到高内聚的模型中：
-- **`LCTMacApp.swift`**：程序入口，管理欢迎向导和主窗口样式。
-- **`MainView.swift`**：核心视图，采用基于 ZStack 和 `ScrollView` 的非完全透明悬浮面板设计，包含自动滚动的流式翻译卡片。
-- **`TranscriptionVM.swift`**：控制大局的 ViewModel，负责协调语音录制、断句切片、请求翻译和数据同步。
-- **`Utils/CaptionSegmenter.swift`**：负责把源源不断的实时 ASR 草稿流文本（Interim Text）基于停顿和标点进行切段（Segment）定型。
-- **`Models/TranslationSegment.swift`**：每一个定型的段落对应一个 `TranslationSegment` 卡片，追踪自己处于识别中、翻译中或已完成状态。
-- **`Services/OllamaService.swift`**：与本地大模型交互的网络层，解析特殊的指令模板进行翻译。
+这不是云 API，也不会把音频或字幕发给模型下载站点。下载权重需要网络；首次准备 Apple 语音资源也可能需要网络。历史记录默认关闭。
 
-## 📜 历史变更概要 (Changelog & Commits)
+## 系统与构建
 
-最近的重大架构演进与特性更新：
-* `c402aca` - 优化：默认关闭 Ollama 大模型的思考过程 (`think: false`)，降低首字延迟。
-* `de99eea` & `ee42dde` - CI/CD：新增并修复了基于 Swift 6.0 的 `macOS` GitHub Actions 构建和打包流程。
-* `fa328de` - 特性：实现了真正的流式 Transcript Stream，由单一全量字符串重构为分段式管道 (`Segmented Translation Pipeline`)。
-* `a47a5e6` - 架构：采用 Overlay-first 架构重新设计，并加入 CaptionSegment 状态机。
-* `094ba7c` - 特性：彻底移除基于 Python 的桥接代码，全盘换成性能更加优越的 Swift Native 原生组件。
-* `8d2fec6` - 架构：精简代码库，移除过时的 Windows 分支依赖，专注于打造 macOS 最佳体验。
-
-## 🚀 开发者构建指南
-
-本项目需要 **Xcode 16 / Swift 6.0** 环境。日常开发用一条命令完成构建、签名和运行：
+macOS 15+、Swift 6+；完整双通道识别推荐 macOS 26 和 Xcode 26。旧系统使用 SFSpeechRecognizer，双路识别能力有限。运行时包含 Apple silicon 与 Intel slice，Intel 的实机性能和兼容性须单独验证。
 
 ```bash
-# 进入项目目录
 cd macos
-# 退出旧实例 → 打包签名 → 启动（--no-launch 只构建不启动，--log 启动后跟踪日志）
 ./Scripts/dev-run.sh
 ```
 
-`dev-run.sh` 会自动挑选签名身份：优先使用 `LCT_SIGN_IDENTITY`；未设置时取钥匙串里第一个可用的 Apple Development 证书的 SHA-1 哈希，并打印出来。已被吊销的证书会被跳过并打印原因：用吊销证书签名的 app 能通过 `codesign --verify`，但 macOS 会拒绝启动。想固定身份，把它写进 `~/.zshrc`：`export LCT_SIGN_IDENTITY=<哈希>`（同名证书有多张时必须用哈希）。
+`dev-run.sh` 构建、签名并启动 `.app`，使用稳定的签名身份保持权限一致。不要使用 `swift run` 或直接启动 `.build/.../LCTMac`。
 
-**不要**用 `swift run` 启动或直接运行 `.build/.../LCTMac` 来测试权限相关功能：macOS 按签名身份记录隐私授权，裸可执行文件会把权限记到终端名下，和打包后的 app 对不上，表现为"授权过却失效"。
+```bash
+./Scripts/run_tests.sh        # Debug / Release / warnings-as-errors / XCTest
+./Scripts/dev-run.sh --no-launch
+```
 
-签名与分发要求见 [RELEASE.md](RELEASE.md)，测试方式见 [TESTING.md](TESTING.md)。
+详细验收见 [TESTING.md](TESTING.md)，签名、公证与发布见 [RELEASE.md](RELEASE.md)。PR 和主线提交只构建、测试；签名公证 DMG 交付须手动触发。开发签名包不等于已公证的正式下载包。
+
+Windows 版本保存在[归档标签](../docs/WINDOWS_ARCHIVE.md)。

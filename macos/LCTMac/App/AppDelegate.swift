@@ -48,6 +48,7 @@ func appLog(_ message: String) {
 /// Application delegate for handling app lifecycle events
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
+    private var translationTerminationPending = false
     /// Owns the view model and handles capture/pause/overlay commands for
     /// the whole run, including while the main window is closed.
     let coordinator = AppCoordinator()
@@ -112,56 +113,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         cleanup()
     }
 
-    /// Before quitting: unload the translation model (local Ollama only, and
-    /// only when the user kept the default "unload on quit" setting) and stop
-    /// the `ollama serve` process if LCT itself started it. Both are capped
-    /// at 2.5 seconds total so quitting never hangs on a slow or unreachable
-    /// server. A service the user started is never touched.
+    /// The embedded runtime belongs to this process. Cancel downloads and
+    /// unload its model without contacting or terminating an external service.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // Self-test runs are headless diagnostics; they never loaded a model
-        // through the app and must not send lifecycle requests.
         let arguments = ProcessInfo.processInfo.arguments
         if SpeechSelfTestOptions.parse(arguments: arguments) != nil
             || SpeechDualSelfTestOptions.parse(arguments: arguments) != nil {
             return .terminateNow
         }
-
-        let settings = AppSettings.load()
-        let shouldUnloadModel = settings.unloadModelOnQuit
-            && settings.isLocalOllama
-            && settings.validatedOllamaEndpoint != nil
-        let guardian = OllamaGuardian.shared
-        let shouldStopService = guardian.launchedByLCT == .cli
-
-        guard shouldUnloadModel || shouldStopService else {
+        let service = EmbeddedTranslationService.shared
+        switch service.state {
+        case .downloading, .verifying, .loading, .ready:
+            break
+        case .notDownloaded, .downloaded, .failed:
             return .terminateNow
         }
-
-        appLog("[AppDelegate] Quit requested — unloadModel=\(shouldUnloadModel) stopOllama=\(shouldStopService) (max 2.5s)")
-        Task {
-            let service = OllamaService(settings: settings)
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask {
-                    // Model unload and serve shutdown run concurrently; this
-                    // child completes only when both are done.
-                    async let stop: Void = guardian.stopService()
-                    if shouldUnloadModel {
-                        try? await service.unloadModel(settings.ollamaModel)
-                    }
-                    await stop
-                }
-                group.addTask {
-                    try? await Task.sleep(nanoseconds: 2_500_000_000)
-                }
-                // Whichever finishes first — the cleanup or the 2.5s budget —
-                // ends the wait; quitting must not hang.
-                await group.next()
-                group.cancelAll()
-            }
-            appLog("[AppDelegate] Shutdown cleanup finished or timed out — terminating")
-            NSApp.reply(toApplicationShouldTerminate: true)
+        guard !translationTerminationPending else { return .terminateLater }
+        translationTerminationPending = true
+        Task { [weak self] in
+            // URLSession must finish producing and persisting resume data
+            // before a normal quit closes the process.
+            await service.cancelDownloadAndWait()
+            await service.unloadModel()
+            self?.finishTranslationTermination()
+        }
+        // An independent timeout must not wait for an uncooperative native
+        // operation to finish; process exit itself releases any remaining RAM.
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            self?.finishTranslationTermination()
         }
         return .terminateLater
+    }
+
+    private func finishTranslationTermination() {
+        guard translationTerminationPending else { return }
+        translationTerminationPending = false
+        NSApp.reply(toApplicationShouldTerminate: true)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

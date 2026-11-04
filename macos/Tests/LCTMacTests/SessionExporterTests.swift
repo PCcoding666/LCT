@@ -124,7 +124,7 @@ final class SessionExporterTests: XCTestCase {
         # LCT Session — 2026-10-11 14:03
 
         - Duration: 00:00:00
-        - Languages: ZH → EN
+        - Languages: ZH (original captions)
         - Lines: 0
 
         """
@@ -271,6 +271,8 @@ final class SessionExporterTests: XCTestCase {
 
         let output = SessionExporter.export(transcript, format: .plainText, sourceLanguages: "EN", targetLanguage: "ZH", timeZone: utc)
 
+        XCTAssertTrue(output.contains("EN (original captions)"))
+        XCTAssertFalse(output.contains("→ ZH"))
         XCTAssertTrue(output.contains("[00:00:00] [SYS] New base"), "got:\n\(output)")
         XCTAssertTrue(output.contains("[00:01:00] [SYS] Later"), "got:\n\(output)")
     }

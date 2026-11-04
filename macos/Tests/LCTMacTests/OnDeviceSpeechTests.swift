@@ -60,23 +60,9 @@ final class OnDeviceSpeechTests: XCTestCase {
                       "start() must map the on-device error to an actionable notice")
     }
 
-    // MARK: - User-facing copy
-
-    func testWelcomeCopyStatesOnDeviceProcessing() throws {
-        let source = try readSource("Views/WelcomeView.swift")
-        XCTAssertTrue(source.contains("processed on-device"),
-                      "Welcome copy must state speech is processed on-device")
-        XCTAssertTrue(source.contains("on-device speech model"),
-                      "Welcome copy must explain that unavailable languages need an on-device speech model")
-    }
-
-    func testSettingsCopyExplainsOnDeviceRequirement() throws {
-        let source = try readSource("Views/SettingsView.swift")
-        XCTAssertTrue(source.contains("on-device speech model"),
-                      "Settings language warning must mention the on-device speech model")
-        XCTAssertTrue(source.contains("supportsOnDeviceRecognition"),
-                      "Settings language availability must reflect on-device support")
-    }
+    // UI copy is verified in packaged-app acceptance. Locale availability uses
+    // the selected speech engine (SpeechTranscriber on supported macOS), not
+    // an SFSpeechRecognizer-only source-string assertion.
 
     // MARK: - Helpers
 

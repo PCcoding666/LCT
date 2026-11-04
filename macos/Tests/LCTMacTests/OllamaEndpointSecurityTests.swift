@@ -6,8 +6,8 @@ import Foundation
 /// loopback endpoints may use HTTP; any non-loopback endpoint requires the
 /// explicit remote opt-in and is HTTPS-only; malformed hosts, embedded
 /// schemes/paths/credentials, and invalid ports are rejected without any
-/// request being possible. Missing consent (old settings) means remote
-/// disabled — only the dedicated Settings toggle can enable it.
+/// request being possible. These cover the legacy transport fixtures only;
+/// the current UI does not expose a remote provider.
 final class OllamaEndpointSecurityTests: XCTestCase {
 
     // MARK: - Loopback
@@ -122,14 +122,15 @@ final class OllamaEndpointSecurityTests: XCTestCase {
 
     // MARK: - UI consent surface
 
-    func testSettingsUIHasDedicatedConsentToggle() throws {
+    func testSettingsUIExposesNoExternalTranslationServer() throws {
         let sourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("LCTMac/Views/SettingsView.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
-        XCTAssertTrue(source.contains("remoteOllamaOptIn"), "Settings must bind the consent toggle to remoteOllamaOptIn")
-        XCTAssertTrue(source.contains("HTTPS"), "the consent copy must state the HTTPS consequence")
+        XCTAssertFalse(source.contains("remoteOllamaOptIn"))
+        XCTAssertFalse(source.contains("$localSettings.ollamaHost"))
+        XCTAssertFalse(source.contains("$localSettings.ollamaPort"))
     }
 }

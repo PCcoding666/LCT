@@ -1,8 +1,9 @@
 # LCT for macOS
 
 LCT is a native macOS app for real-time captions and local AI translation.
-It captures system audio or microphone input, transcribes speech, and streams
-the translation alongside the original text.
+It captures system audio or microphone input and transcribes speech locally.
+Start with original captions immediately after speech permissions and resources
+are ready; enable optional offline translation after downloading its model.
 
 The default branch (`master`) is maintained for **macOS**. The Windows app is
 [archived](docs/WINDOWS_ARCHIVE.md), including its latest unmerged development
@@ -14,7 +15,9 @@ work. Its source and earlier releases remain available.
   microphone recognition using `SpeechAnalyzer` / `SpeechTranscriber`.
 - Xcode 16 / Swift 6 or later to build. Xcode 26 is needed to include the newer
   speech engine; older toolchains use `SFSpeechRecognizer`.
-- [Ollama](https://ollama.com) and a local translation model.
+- Original captions need no translation model or separate service. Optional
+  translation uses the bundled llama.cpp engine and a 1.12 GB Qwen model
+  downloaded inside LCT.
 - Microphone, speech recognition, and system-audio permissions as needed for
   the selected audio sources.
 

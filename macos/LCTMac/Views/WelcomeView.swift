@@ -51,970 +51,143 @@ enum OnboardingModelSelection {
     }
 }
 
-/// Welcome/Setup view for first-time users
+/// Captions-first setup. Translation preparation is optional and lives in Settings.
 @MainActor
 struct WelcomeView: View {
-    @StateObject private var guardian = OllamaGuardian.shared
-    @StateObject private var modelManager = OllamaModelManager()
+    // Persisted identifiers from older onboarding versions remain decodable.
+    // The current UI only uses welcome and permissions; no service setup runs.
+    enum SetupStep: String {
+        case welcome, permissions, checkingOllama, ollamaNotInstalled
+        case modelMissing, remoteOllama, downloadingModel, complete
+    }
 
-    @State private var currentStep: SetupStep = .welcome
-    @State private var isSettingUp = false
-    @State private var setupError: String?
-    @State private var remoteHost = ""
-    @State private var remotePortText = "11434"
-    @State private var remoteModel = ModelRecommender.recommend(for: HardwareProfile.current()).recommended.name
-    @State private var readyModelName = ""
-    @State private var setupSkipped = false
-    @State private var selectedModelName = ModelRecommender.recommend(for: HardwareProfile.current()).recommended.name
-    @State private var downloadFailed = false
-    @State private var downloadError: String?
-
-    // Permission states
+    @State private var showPermissions = false
+    @State private var setupSettings = AppSettings.load()
     @State private var hasMicrophonePermission = false
     @State private var hasSpeechRecognitionPermission = false
-    @State private var isCheckingPermissions = false
-    /// The system-audio row starts untouched on purpose: probing starts a real
-    /// tap, which pops the TCC prompt — that must only happen when the user
-    /// clicks Allow, never on appear.
     @State private var systemAudioPermission: SystemAudioPermissionRow.State = .unknown
-
-    /// This Mac's chip/memory and the model picked for it.
-    private let hardware = HardwareProfile.current()
-    private var recommendation: ModelRecommendation {
-        ModelRecommender.recommend(for: hardware)
-    }
-    private var selectedModel: TranslationModelInfo {
-        ModelCatalog.entry(named: selectedModelName) ?? recommendation.recommended
-    }
-    
+    @State private var setupError: String?
     let onComplete: () -> Void
-    
-    enum SetupStep: String {
-        case welcome
-        case permissions
-        case checkingOllama
-        case ollamaNotInstalled
-        case modelMissing
-        case remoteOllama
-        case downloadingModel
-        case complete
-    }
 
-    private struct RemoteOllamaConfig {
-        let host: String
-        let port: Int
-        let baseURL: String
-        let model: String
-    }
-    
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            headerView
-            
+            HStack {
+                Image(systemName: "waveform.circle.fill")
+                    .font(.largeTitle).foregroundStyle(HUD.accent)
+                VStack(alignment: .leading) {
+                    Text("LCT for macOS").font(.title2.weight(.semibold))
+                    Text("Live captions, on your Mac").foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(showPermissions ? "2 / 2" : "1 / 2").foregroundStyle(.secondary)
+            }
+            .padding(24)
             Divider()
-            
-            // Content
             ScrollView {
-                VStack(spacing: 24) {
-                    switch currentStep {
-                    case .welcome:
-                        welcomeContent
-                    case .permissions:
-                        permissionsContent
-                    case .checkingOllama:
-                        checkingOllamaContent
-                    case .ollamaNotInstalled:
-                        ollamaNotInstalledContent
-                    case .modelMissing:
-                        modelMissingContent
-                    case .remoteOllama:
-                        remoteOllamaContent
-                    case .downloadingModel:
-                        downloadingModelContent
-                    case .complete:
-                        completeContent
+                VStack(alignment: .leading, spacing: 24) {
+                    if showPermissions { permissionsContent } else { welcomeContent }
+                    if let setupError {
+                        Text(setupError).foregroundStyle(.red).font(.callout)
                     }
                 }
-                .padding(32)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(28)
             }
-            
             Divider()
-            
-            // Footer
-            footerView
-        }
-        .frame(width: 600, height: 560)
-    }
-
-    // MARK: - Header
-    
-    private var headerView: some View {
-        HStack {
-            Image(systemName: "waveform.circle.fill")
-                .font(.largeTitle)
-                .foregroundStyle(.blue)
-            
-            VStack(alignment: .leading) {
-                Text("LCT for macOS")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                
-                Text("Live Captions Translator")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            
-            Spacer()
-            
-            // Step indicator
-            stepIndicator
-        }
-        .padding()
-    }
-    
-    private var stepIndicator: some View {
-        HStack(spacing: 8) {
-            ForEach(0..<4) { index in
-                Circle()
-                    .fill(stepColor(for: index))
-                    .frame(width: 8, height: 8)
-            }
-        }
-    }
-    
-    private func stepColor(for index: Int) -> Color {
-        let currentIndex = stepIndex
-        if index < currentIndex {
-            return .green
-        } else if index == currentIndex {
-            return .blue
-        } else {
-            return .gray.opacity(0.3)
-        }
-    }
-    
-    private var stepIndex: Int {
-        switch currentStep {
-        case .welcome: return 0
-        case .permissions: return 1
-        case .checkingOllama, .ollamaNotInstalled, .modelMissing, .remoteOllama, .downloadingModel: return 2
-        case .complete: return 3
-        }
-    }
-    
-    // MARK: - Welcome Content
-    
-    private var welcomeContent: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "hand.wave.fill")
-                .font(.system(size: 60))
-                .foregroundStyle(.blue)
-            
-            Text("Welcome to LCT")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-            
-            Text("Real-time speech recognition and translation powered by local AI")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            
-            VStack(alignment: .leading, spacing: 16) {
-                FeatureRow(icon: "waveform", title: "Speech Recognition", description: "Apple's native speech recognition, processed on-device")
-                FeatureRow(icon: "globe", title: "Local Translation", description: "Private, offline translation with Ollama")
-                FeatureRow(icon: "lock.shield", title: "Privacy First", description: "All processing happens on your device")
-            }
-            .padding(.top, 16)
-        }
-    }
-    
-    // MARK: - Permissions Content
-    
-    private var permissionsContent: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "lock.shield.fill")
-                .font(.system(size: 60))
-                .foregroundStyle(.blue)
-            
-            Text("Permissions Required")
-                .font(.title)
-                .fontWeight(.bold)
-            
-            Text("Grant microphone and speech recognition to get started. Speech is processed on-device and never leaves your Mac. Allow system audio to caption videos and meetings (recommended). A language without on-device support requires downloading its on-device speech model in System Settings.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-
-            VStack(spacing: 16) {
-                // Microphone Permission (required)
-                PermissionRow(
-                    icon: "mic.fill",
-                    title: "Microphone",
-                    description: "Capture your voice",
-                    isGranted: hasMicrophonePermission,
-                    isChecking: isCheckingPermissions,
-                    onGrant: requestMicrophonePermission
-                )
-
-                // Speech Recognition Permission (required)
-                PermissionRow(
-                    icon: "waveform",
-                    title: "Speech Recognition",
-                    description: "Convert speech to text",
-                    isGranted: hasSpeechRecognitionPermission,
-                    isChecking: isCheckingPermissions,
-                    onGrant: requestSpeechRecognitionPermission
-                )
-
-                // System Audio (optional, recommended)
-                SystemAudioPermissionRow(
-                    state: systemAudioPermission,
-                    onAllow: requestSystemAudioPermission,
-                    onOpenSettings: { AudioCaptureService.openSystemAudioSettings() }
-                )
-            }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-            )
-        }
-        .onAppear {
-            Task {
-                await checkAllPermissions()
-            }
-        }
-        // Auto-refresh when coming back from System Settings
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            if currentStep == .permissions {
-                print("[WelcomeView] App became active. Auto-checking permissions...")
-                Task {
-                    await checkAllPermissions()
+            HStack {
+                if showPermissions {
+                    Button("Back") { showPermissions = false }
                 }
-            }
-        }
-    }
-
-    /// Microphone + speech recognition are the only permissions LCT needs.
-    private var requiredPermissionsGranted: Bool {
-        hasMicrophonePermission && hasSpeechRecognitionPermission
-    }
-    
-    // MARK: - Checking Ollama Content
-    
-    private var checkingOllamaContent: some View {
-        VStack(spacing: 24) {
-            ProgressView()
-                .scaleEffect(1.5)
-            
-            Text("Setting up...")
-                .font(.title2)
-            
-            Text("Checking Ollama and preparing translation model")
-                .foregroundStyle(.secondary)
-        }
-    }
-    
-    // MARK: - Ollama Not Installed Content
-    
-    private var ollamaNotInstalledContent: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 60))
-                .foregroundStyle(.orange)
-            
-            Text("Ollama Required")
-                .font(.title)
-                .fontWeight(.bold)
-            
-            Text("Install Ollama locally or connect LCT to an existing Ollama server.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            
-            VStack(spacing: 12) {
-                Button(action: {
-                    guardian.openInstallationPage()
-                }) {
-                    Label("Download Ollama", systemImage: "arrow.down.circle")
-                        .frame(maxWidth: .infinity)
+                Spacer()
+                Button(showPermissions ? "Open Captions" : "Set Up Captions") {
+                    if showPermissions { finishSetup() } else { showPermissions = true }
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-
-                Button(action: {
-                    remoteHost = ""
-                    remotePortText = "11434"
-                    remoteModel = recommendation.recommended.name
-                    setupError = nil
-                    currentStep = .remoteOllama
-                }) {
-                    Label("Use Remote Ollama Server", systemImage: "network")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-                
-                Text("After installing Ollama locally, click 'Check Again' below.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .tint(HUD.accent)
+                .disabled(showPermissions && !canContinue)
             }
-            .padding(.top, 8)
+            .padding(20)
+        }
+        .frame(width: 600, height: 600)
+        .preferredColorScheme(.dark)
+        .onAppear { refreshPermissions() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshPermissions()
         }
     }
 
-    // MARK: - Model Missing Content
-
-    private var modelMissingContent: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "square.and.arrow.down")
-                .font(.system(size: 60))
-                .foregroundStyle(.blue)
-
-            Text("Translation Model Required")
-                .font(.title)
-                .fontWeight(.bold)
-
-            Text("Ollama is running, but no compatible translation model is installed.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Recommended for your Mac (\(hardware.chipName), \(hardware.memoryGB) GB):")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                HStack {
-                    Text(recommendation.recommended.displayName)
-                        .font(.headline)
-                    Spacer()
-                    Text(recommendation.recommended.formattedDownloadSize)
-                        .foregroundStyle(.secondary)
-                }
-
-                Text(recommendation.reason)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Divider()
-
-                Picker("Model", selection: $selectedModelName) {
-                    Text("\(recommendation.recommended.displayName) (recommended)")
-                        .tag(recommendation.recommended.name)
-                    ForEach(recommendation.alternatives) { alternative in
-                        Text(alternative.displayName)
-                            .tag(alternative.name)
-                    }
-                }
-                .pickerStyle(.menu)
-
-                Text(selectedModel.summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                HStack {
-                    Text("Download Size")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(selectedModel.formattedDownloadSize)
-                }
-
-                Divider()
-
-                Text("Command")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Text("ollama pull \(selectedModelName)")
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-            }
-            .padding()
-            .background(Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(8)
+    private var welcomeContent: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Text("Start with captions.").font(.largeTitle.bold())
+            Text("Read videos, meetings, or your microphone in real time. No translation model is needed to begin.")
+                .font(.title3).foregroundStyle(.secondary)
+            FeatureRow(icon: "waveform", title: "Original captions first", description: "Apple speech recognition runs locally. Some languages need a one-time speech download.")
+            FeatureRow(icon: "character.bubble", title: "Translation when you want it", description: "Download a local translation model in Settings. Captions keep working while it prepares.")
+            FeatureRow(icon: "lock.shield", title: "Private by default", description: "Audio and captions stay on your Mac. History is saved only if you enable it.")
         }
     }
 
-    // MARK: - Remote Ollama Content
-
-    private var remoteOllamaContent: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "network")
-                .font(.system(size: 60))
-                .foregroundStyle(.blue)
-
-            Text("Remote Ollama Server")
-                .font(.title)
-                .fontWeight(.bold)
-
-            Text("Connect to a reachable Ollama API that already has the translation model installed.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Host")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("192.168.1.20", text: $remoteHost)
-                    .textFieldStyle(.roundedBorder)
-
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Port")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextField("11434", text: $remotePortText)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 120)
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Model")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextField(recommendation.recommended.name, text: $remoteModel)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                }
-
-                Text("LCT will verify /api/tags and save this endpoint if the model is present.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding()
-            .background(Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(8)
-        }
-    }
-    
-    // MARK: - Downloading Model Content
-    
-    private var downloadingModelContent: some View {
-        VStack(spacing: 24) {
-            if downloadFailed {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 60))
-                    .foregroundStyle(.orange)
-
-                Text("Download Failed")
-                    .font(.title)
-                    .fontWeight(.bold)
-
-                if let error = downloadError {
-                    Text(error)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            } else if modelManager.pullProgress < 1.0 {
-                ProgressView(value: modelManager.pullProgress) {
-                    Text("Downloading \(selectedModel.displayName)")
-                        .font(.headline)
-                } currentValueLabel: {
-                    Text(modelManager.pullStatus)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .progressViewStyle(.linear)
-
-                Text("\(Int(modelManager.pullProgress * 100))%")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .monospacedDigit()
-
-                if modelManager.pullTotalBytes > 0 {
-                    Text("\(ByteFormatting.string(modelManager.pullCompletedBytes)) / \(ByteFormatting.string(modelManager.pullTotalBytes))")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .monospacedDigit()
-                } else {
-                    Text("Size: \(selectedModel.formattedDownloadSize)")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            } else {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 60))
-                    .foregroundStyle(.green)
-
-                Text("Download Complete!")
-                    .font(.title)
-                    .fontWeight(.bold)
-            }
-
-            if modelManager.isPulling {
-                Button("Cancel") {
-                    modelManager.cancelPull()
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-    }
-    
-    // MARK: - Complete Content
-    
-    private var completeContent: some View {
-        VStack(spacing: 24) {
-            Image(systemName: setupSkipped ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                .font(.system(size: 60))
-                .foregroundStyle(setupSkipped ? .orange : .green)
-            
-            Text(setupSkipped ? "Setup Skipped" : "You're All Set!")
-                .font(.title)
-                .fontWeight(.bold)
-            
-            Text(setupSkipped ? "Configure Ollama in Settings before starting translation." : "LCT is ready to use. Click 'Get Started' to begin translating.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            
-            if !setupSkipped {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                        Text("Ollama connection is ready")
-                    }
-
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                        Text("Model '\(readyModelName)' is ready")
-                    }
-                }
-                .padding()
-                .background(Color.green.opacity(0.1))
-                .cornerRadius(12)
-            }
-        }
-    }
-    
-    // MARK: - Footer
-    
-    private var footerView: some View {
-        HStack {
-            if currentStep == .ollamaNotInstalled || currentStep == .modelMissing {
-                Button("Check Again") {
-                    Task {
-                        await checkOllama()
-                    }
+    private var permissionsContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Choose what to caption").font(.title2.bold())
+            Toggle("System audio — videos and meetings", isOn: $setupSettings.captureSystemAudio)
+            Toggle("Microphone — your voice", isOn: $setupSettings.captureMicrophone)
+            Picker("Spoken language", selection: $setupSettings.sourceLanguage) {
+                ForEach(SourceLanguage.allCases) { language in
+                    Text(language.displayName).tag(language)
                 }
             }
-
-            if currentStep == .remoteOllama {
-                Button("Back") {
-                    setupError = nil
-                    currentStep = .ollamaNotInstalled
-                }
+            Divider()
+            PermissionRow(icon: "waveform", title: "Speech Recognition", description: "Convert speech into original captions", isGranted: hasSpeechRecognitionPermission, isChecking: false, onGrant: requestSpeechPermission)
+            if setupSettings.captureSystemAudio {
+                SystemAudioPermissionRow(state: systemAudioPermission, onAllow: requestSystemPermission, onOpenSettings: { AudioCaptureService.openSystemAudioSettings() })
             }
-            
-            Spacer()
-            
-            if let error = setupError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
+            if setupSettings.captureMicrophone {
+                PermissionRow(icon: "mic.fill", title: "Microphone", description: "Required only for microphone captions", isGranted: hasMicrophonePermission, isChecking: false, onGrant: requestMicrophonePermission)
             }
-            
-            Spacer()
-            
-            Button(action: nextStep) {
-                Text(nextButtonTitle)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(isSettingUp || (currentStep == .downloadingModel && modelManager.isPulling))
-        }
-        .padding()
-    }
-    
-    private var nextButtonTitle: String {
-        switch currentStep {
-        case .welcome:
-            return "Get Started"
-        case .permissions:
-            return requiredPermissionsGranted ? "Continue" : "Skip for Now"
-        case .checkingOllama:
-            return "Setting up..."
-        case .ollamaNotInstalled:
-            return "Skip for Now"
-        case .modelMissing:
-            return "Install Model"
-        case .remoteOllama:
-            return isSettingUp ? "Testing..." : "Test Connection"
-        case .downloadingModel:
-            if modelManager.isPulling {
-                return "Downloading..."
-            }
-            return downloadFailed ? "Retry" : "Continue"
-        case .complete:
-            return "Get Started"
-        }
-    }
-    
-    // MARK: - Actions
-
-    private func nextStep() {
-        setupError = nil
-        
-        switch currentStep {
-        case .welcome:
-            currentStep = .permissions
-            Task {
-                await checkAllPermissions()
-            }
-            
-        case .permissions:
-            currentStep = .checkingOllama
-            Task {
-                await checkOllama()
-            }
-            
-        case .checkingOllama:
-            // Wait for check to complete
-            break
-            
-        case .ollamaNotInstalled:
-            // Skip and continue anyway (user can set up later)
-            setupSkipped = true
-            currentStep = .complete
-
-        case .modelMissing:
-            downloadFailed = false
-            currentStep = .downloadingModel
-            Task {
-                await downloadModel()
-            }
-
-        case .remoteOllama:
-            Task {
-                await testRemoteOllama()
-            }
-
-        case .downloadingModel:
-            if downloadFailed {
-                downloadError = nil
-                downloadFailed = false
-                Task {
-                    await downloadModel()
-                }
-            } else if !modelManager.isPulling {
-                currentStep = .complete
-            }
-            
-        case .complete:
-            onComplete()
-        }
-    }
-    
-    private func checkOllama() async {
-        isSettingUp = true
-        setupError = nil
-        defer { isSettingUp = false }
-
-        await guardian.checkStatus()
-
-        switch guardian.status {
-        case .notInstalled:
-            currentStep = .ollamaNotInstalled
-
-        case .running:
-            await modelManager.fetchInstalledModels()
-
-            // Any compatible installed model will do — no re-download needed;
-            // the recommendation is preferred when several are present.
-            if let installed = preferredInstalledModel() {
-                completeWithLocalModel(installed)
-            } else {
-                currentStep = .modelMissing
-            }
-
-        case .installed, .stopped:
-            // Try to start Ollama
-            do {
-                try await guardian.ensureRunning()
-                await modelManager.fetchInstalledModels()
-
-                if let installed = preferredInstalledModel() {
-                    completeWithLocalModel(installed)
-                } else {
-                    currentStep = .modelMissing
-                }
-            } catch {
-                setupError = "Failed to start Ollama: \(error.localizedDescription)"
-                currentStep = .ollamaNotInstalled
-            }
-
-        case .starting:
-            // Wait for it
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            await checkOllama()
-
-        case .error(let message):
-            setupError = message
-            currentStep = .ollamaNotInstalled
+            Text("Speech language resources are checked when you start. Translation has a separate optional download in Settings.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
-    private func preferredInstalledModel() -> String? {
-        OnboardingModelSelection.preferredInstalledModel(recommendation: recommendation) {
-            modelManager.isModelInstalled($0)
-        }
+    private var canContinue: Bool {
+        (setupSettings.captureSystemAudio || setupSettings.captureMicrophone)
+            && hasSpeechRecognitionPermission
+            && (!setupSettings.captureMicrophone || hasMicrophonePermission)
     }
 
-    /// Settle on an already-installed model: persist it so the capture flow
-    /// uses exactly what onboarding verified, then show the final step.
-    private func completeWithLocalModel(_ modelName: String) {
-        guard let saveError = OnboardingModelSelection.saveChosenModel(modelName) else {
-            setupSkipped = false
-            readyModelName = modelName
-            currentStep = .complete
-            return
-        }
-        setupError = saveError
-        currentStep = .modelMissing
-    }
-
-    private func downloadModel() async {
-        let modelName = selectedModelName
-        downloadError = nil
-        do {
-            try await modelManager.pullModel(modelName)
-        } catch is CancellationError {
-            currentStep = .modelMissing
-            return
-        } catch {
-            downloadError = error.localizedDescription
-            downloadFailed = true
-            return
-        }
-
-        if let saveError = OnboardingModelSelection.saveChosenModel(modelName) {
-            downloadError = saveError
-            downloadFailed = true
-            return
-        }
-
-        setupSkipped = false
-        readyModelName = modelName
-        currentStep = .complete
-    }
-
-    private func testRemoteOllama() async {
-        isSettingUp = true
-        setupError = nil
-        defer { isSettingUp = false }
-
-        guard let config = normalizedRemoteOllamaConfig() else {
-            setupError = "Enter a valid HTTP host, port, and model."
-            return
-        }
-
-        // Remote connections require the explicit opt-in already enabled in
-        // Settings; it is never inferred or enabled here.
-        let settings = AppSettings.load()
-        let endpoint: OllamaEndpoint
-        do {
-            endpoint = try OllamaEndpoint.validated(
-                host: config.host,
-                port: config.port,
-                remoteOptIn: settings.remoteOllamaOptIn
-            )
-        } catch {
-            setupError = error.localizedDescription
-            return
-        }
-
-        let url = endpoint.baseURL.appendingPathComponent("api/tags")
-
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 8
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                setupError = "Remote Ollama did not return a healthy /api/tags response."
-                return
-            }
-
-            let modelsResponse = try JSONDecoder().decode(OllamaModelsResponse.self, from: data)
-            guard modelsResponse.models.contains(where: { isModelName($0.name, matching: config.model) }) else {
-                setupError = "Remote Ollama connected, but '\(config.model)' is not installed."
-                return
-            }
-
-            var settings = settings
-            settings.ollamaHost = config.host
-            settings.ollamaPort = config.port
-            settings.ollamaModel = config.model
-
-            guard settings.save() else {
-                setupError = AppSettings.consumeLastPersistenceError() ?? "Failed to save remote Ollama settings."
-                return
-            }
-
-            setupSkipped = false
-            readyModelName = config.model
-            currentStep = .complete
-        } catch {
-            setupError = "Cannot connect to remote Ollama: \(error.localizedDescription)"
-        }
-    }
-
-    private func normalizedRemoteOllamaConfig() -> RemoteOllamaConfig? {
-        let rawHost = remoteHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        let rawPort = remotePortText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let model = remoteModel.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !rawHost.isEmpty, !model.isEmpty else {
-            return nil
-        }
-
-        var port = 11434
-        if !rawPort.isEmpty {
-            guard let parsedPort = Int(rawPort) else {
-                return nil
-            }
-            port = parsedPort
-        }
-
-        guard (1...65_535).contains(port) else {
-            return nil
-        }
-
-        let lowercasedHost = rawHost.lowercased()
-        if lowercasedHost.hasPrefix("http://") || lowercasedHost.hasPrefix("https://") {
-            guard var components = URLComponents(string: rawHost),
-                  components.scheme?.lowercased() == "http",
-                  let parsedHost = components.host else {
-                return nil
-            }
-
-            if let parsedPort = components.port {
-                port = parsedPort
-            }
-
-            components.scheme = "http"
-            components.host = parsedHost
-            components.port = port
-            components.path = ""
-            components.query = nil
-            components.fragment = nil
-
-            guard let absoluteURL = components.url?.absoluteString else {
-                return nil
-            }
-            let baseURL = absoluteURL.hasSuffix("/") ? String(absoluteURL.dropLast()) : absoluteURL
-
-            return RemoteOllamaConfig(
-                host: normalizedHostForSettings(parsedHost),
-                port: port,
-                baseURL: baseURL,
-                model: model
-            )
-        }
-
-        let hostInput = rawHost.hasSuffix("/") ? String(rawHost.dropLast()) : rawHost
-
-        if let components = URLComponents(string: "http://\(hostInput)"),
-           let parsedHost = components.host {
-            if let parsedPort = components.port {
-                port = parsedPort
-            }
-
-            guard (1...65_535).contains(port) else {
-                return nil
-            }
-
-            let host = normalizedHostForSettings(parsedHost)
-            return RemoteOllamaConfig(
-                host: host,
-                port: port,
-                baseURL: "http://\(host):\(port)",
-                model: model
-            )
-        }
-
-        guard hostInput.filter({ $0 == ":" }).count > 1 else {
-            return nil
-        }
-
-        let host = normalizedHostForSettings(hostInput)
-        return RemoteOllamaConfig(
-            host: host,
-            port: port,
-            baseURL: "http://\(host):\(port)",
-            model: model
-        )
-    }
-
-    private func normalizedHostForSettings(_ host: String) -> String {
-        if host.contains(":") && !host.hasPrefix("[") {
-            return "[\(host)]"
-        }
-
-        return host
-    }
-
-    private func isModelName(_ installedName: String, matching requestedName: String) -> Bool {
-        installedName == requestedName || installedName.hasPrefix("\(requestedName):")
-    }
-    
-    // MARK: - Permission Methods
-
-    private func checkAllPermissions() async {
-        isCheckingPermissions = true
-        defer { isCheckingPermissions = false }
-
-        // Check Microphone permission
-        hasMicrophonePermission = await checkMicrophonePermission()
-
-        // Check Speech Recognition permission
-        hasSpeechRecognitionPermission = await checkSpeechRecognitionPermission()
-    }
-
-    private func checkMicrophonePermission() async -> Bool {
-        let status = AVCaptureDevice.authorizationStatus(for: .audio)
-        return status == .authorized
-    }
-
-    private func checkSpeechRecognitionPermission() async -> Bool {
-        let status = SFSpeechRecognizer.authorizationStatus()
-        return status == .authorized
+    private func refreshPermissions() {
+        hasMicrophonePermission = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        hasSpeechRecognitionPermission = SFSpeechRecognizer.authorizationStatus() == .authorized
     }
 
     private func requestMicrophonePermission() {
-        Task {
-            let granted = await AVCaptureDevice.requestAccess(for: .audio)
-            await MainActor.run {
-                hasMicrophonePermission = granted
-            }
-        }
+        Task { hasMicrophonePermission = await AVCaptureDevice.requestAccess(for: .audio) }
     }
-    
-    private func requestSpeechRecognitionPermission() {
+
+    private func requestSpeechPermission() {
         SFSpeechRecognizer.requestAuthorization { status in
-            Task { @MainActor in
-                hasSpeechRecognitionPermission = (status == .authorized)
-            }
+            Task { @MainActor in hasSpeechRecognitionPermission = status == .authorized }
         }
     }
 
-    /// Start a one-shot system-audio tap so macOS raises its "record system
-    /// audio" prompt now, at a moment the user expects it, instead of
-    /// mid-capture. The tap's `start()` blocks for as long as the prompt is
-    /// on screen, so the probe must run far away from the main thread.
-    private func requestSystemAudioPermission() {
+    private func requestSystemPermission() {
         guard systemAudioPermission != .probing else { return }
         systemAudioPermission = .probing
         Task.detached {
             let result = await SystemAudioPermissionProbe.run()
-            await MainActor.run {
-                systemAudioPermission = result == .granted ? .granted : .denied
-            }
+            await MainActor.run { systemAudioPermission = result == .granted ? .granted : .denied }
         }
+    }
+
+    private func finishSetup() {
+        setupSettings.translationEnabled = false
+        guard setupSettings.save() else {
+            setupError = AppSettings.consumeLastPersistenceError() ?? "Could not save settings. Please try again."
+            return
+        }
+        AppSettings.markSetupComplete()
+        onComplete()
     }
 }
 

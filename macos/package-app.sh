@@ -15,6 +15,20 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_PATH/LCTMac" "$APP/Contents/MacOS/LCTMac"
 cp LCTMac/Info.plist "$APP/Contents/Info.plist"
 cp LCTMac/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp -R LCTMac/Resources/Licenses "$APP/Contents/Resources/Licenses"
+
+# b11960's XCFramework contains a dynamic macOS framework. SwiftPM links it,
+# but this hand-built .app must embed it explicitly rather than use .build paths.
+FRAMEWORK=$(find .build/artifacts -path '*/macos-arm64_x86_64/llama.framework' -type d -print -quit)
+if [ -z "$FRAMEWORK" ]; then
+    echo "package-app.sh: macOS llama.framework is missing from the pinned runtime artifact" >&2
+    exit 1
+fi
+mkdir -p "$APP/Contents/Frameworks"
+ditto "$FRAMEWORK" "$APP/Contents/Frameworks/llama.framework"
+# Require the expected in-bundle install name and executable rpath before signing.
+otool -L "$APP/Contents/MacOS/LCTMac" | grep -F '@rpath/llama.framework/' > /dev/null
+otool -l "$APP/Contents/MacOS/LCTMac" | grep -F '@executable_path/../Frameworks' > /dev/null
 
 # Stamp version from the manually maintained VERSION file (or RELEASE_VERSION
 # env var) plus integer BUILD_NUMBER, so builds are distinguishable.

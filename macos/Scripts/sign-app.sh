@@ -52,6 +52,16 @@ if [ ! -f "$ENTITLEMENTS" ]; then
     exit 1
 fi
 
+# Sign nested runtime code with the same identity before sealing the outer app.
+# Do not use --deep for signing: it can silently omit nested components.
+for FRAMEWORK in "$APP"/Contents/Frameworks/*.framework; do
+    [ -d "$FRAMEWORK" ] || continue
+    if ! codesign --force --sign "$LCT_SIGN_IDENTITY" --options runtime --timestamp "$FRAMEWORK"; then
+        echo "sign-app.sh: error: signing embedded framework failed: $FRAMEWORK" >&2
+        exit 1
+    fi
+done
+
 if ! codesign --force \
     --sign "$LCT_SIGN_IDENTITY" \
     --options runtime \

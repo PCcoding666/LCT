@@ -104,13 +104,10 @@ final class SessionExportVMTests: XCTestCase {
     override func setUp() {
         super.setUp()
         URLProtocol.registerClass(ChunkedOllamaMockProtocol.self)
-        UserDefaults.standard.removeObject(forKey: "LCTMacSettings")
     }
 
     override func tearDown() {
         URLProtocol.unregisterClass(ChunkedOllamaMockProtocol.self)
-        AppSettings.resetSetupFlag()
-        UserDefaults.standard.removeObject(forKey: "LCTMacSettings")
         super.tearDown()
     }
 
@@ -118,6 +115,7 @@ final class SessionExportVMTests: XCTestCase {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [ChunkedOllamaMockProtocol.self]
         var settings = AppSettings()
+        settings.translationEnabled = true
         settings.captureSystemAudio = true
         settings.captureMicrophone = false
         settings.ollamaModel = "test-model:1b"
@@ -144,7 +142,8 @@ final class SessionExportVMTests: XCTestCase {
             ollamaService: service,
             ollamaGuardian: guardian,
             audioCaptureService: captureService,
-            speechEngine: engine
+            speechEngine: engine,
+            persistSettings: { _ in true }
         )
         return (viewModel, engine)
     }
@@ -301,22 +300,23 @@ final class SessionExportVMTests: XCTestCase {
         await viewModel.stop()
     }
 
-    func testSessionTranscript_FinalizedWhilePaused_TranslatesOnResume() async {
+    func testSessionTranscript_PausedSpeech_IsNotRecordedAndResumeKeepsSession() async {
         let (viewModel, engine) = makeViewModel()
         await viewModel.start()
+        let sessionStart = viewModel.sessionTranscript.startedAt
 
         viewModel.togglePause()
         fireFinal(engine, text: "Paused line.")
-        XCTAssertEqual(viewModel.sessionTranscript.entries.count, 1)
-        XCTAssertEqual(viewModel.sessionTranscript.entries.first?.translatedText, "")
+        XCTAssertTrue(viewModel.sessionTranscript.entries.isEmpty)
 
         viewModel.togglePause()
+        fireFinal(engine, text: "Resumed line.")
         let updated = await waitFor {
             viewModel.sessionTranscript.entries.first?.translatedText == "ok"
         }
-
-        XCTAssertTrue(updated, "a caption finalized while paused must update once resumed translation completes")
-
+        XCTAssertTrue(updated)
+        XCTAssertEqual(viewModel.sessionTranscript.startedAt, sessionStart)
+        XCTAssertEqual(viewModel.sessionTranscript.entries.map(\.sourceText), ["Resumed line."])
         await viewModel.stop()
     }
 }

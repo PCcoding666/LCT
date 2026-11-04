@@ -18,7 +18,7 @@ final class CaptureStateTests: XCTestCase {
     // MARK: - Derived isCapturing
 
     func testCaptureState_StateChanges_IsCapturingDerived() {
-        let viewModel = TranscriptionViewModel()
+        let viewModel = CaptionOnlyTestHarness().viewModel
         XCTAssertFalse(viewModel.isCapturing)
         viewModel.captureState = .starting
         XCTAssertFalse(viewModel.isCapturing)
@@ -30,22 +30,21 @@ final class CaptureStateTests: XCTestCase {
 
     // MARK: - Failed starts return to .idle
 
-    func testCaptureState_InvalidOllamaEndpoint_ReturnsToIdle() async {
-        let viewModel = TranscriptionViewModel()
-        var settings = AppSettings()
+    func testCaptureState_InvalidLegacyEndpoint_DoesNotBlockCaptions() async {
+        var settings = CaptionOnlyTestHarness.settings()
         settings.ollamaHost = "192.168.1.100"
         settings.remoteOllamaOptIn = false
-        XCTAssertNotNil(settings.ollamaEndpointError, "test setup: endpoint must be invalid")
-        viewModel.settings = settings
+        let harness = CaptionOnlyTestHarness(settings: settings)
 
-        await viewModel.start()
+        await harness.viewModel.start()
 
-        XCTAssertEqual(viewModel.captureState, .idle, "a failed start must return to idle")
-        XCTAssertEqual(viewModel.notice?.severity, .error)
+        XCTAssertEqual(harness.viewModel.captureState, .capturing)
+        XCTAssertEqual(harness.speech.startedSources, [.system])
+        await harness.viewModel.stop()
     }
 
     func testCaptureState_NoAudioSourceEnabled_ReturnsToIdle() async {
-        let viewModel = TranscriptionViewModel()
+        let viewModel = CaptionOnlyTestHarness().viewModel
         viewModel.settings = noSourceSettings()
 
         await viewModel.start()
@@ -57,7 +56,7 @@ final class CaptureStateTests: XCTestCase {
     // MARK: - Re-entry guards
 
     func testCaptureState_StartWhileStarting_IsIgnored() async {
-        let viewModel = TranscriptionViewModel()
+        let viewModel = CaptionOnlyTestHarness().viewModel
         viewModel.settings = noSourceSettings()
         viewModel.captureState = .starting
         let sentinel = AppNotice.warning("sentinel", autoDismiss: false)
@@ -70,7 +69,7 @@ final class CaptureStateTests: XCTestCase {
     }
 
     func testCaptureState_StartWhileCapturing_IsIgnored() async {
-        let viewModel = TranscriptionViewModel()
+        let viewModel = CaptionOnlyTestHarness().viewModel
         viewModel.captureState = .capturing
         let sentinel = AppNotice.warning("sentinel", autoDismiss: false)
         viewModel.notice = sentinel
@@ -82,7 +81,7 @@ final class CaptureStateTests: XCTestCase {
     }
 
     func testCaptureState_StopWhileStarting_IsIgnored() async {
-        let viewModel = TranscriptionViewModel()
+        let viewModel = CaptionOnlyTestHarness().viewModel
         viewModel.captureState = .starting
 
         await viewModel.stop()
@@ -91,7 +90,7 @@ final class CaptureStateTests: XCTestCase {
     }
 
     func testCaptureState_StopWhileIdle_IsIgnored() async {
-        let viewModel = TranscriptionViewModel()
+        let viewModel = CaptionOnlyTestHarness().viewModel
 
         await viewModel.stop()
 
@@ -99,7 +98,7 @@ final class CaptureStateTests: XCTestCase {
     }
 
     func testCaptureState_StopFromCapturing_ReturnsToIdle() async {
-        let viewModel = TranscriptionViewModel()
+        let viewModel = CaptionOnlyTestHarness().viewModel
         viewModel.captureState = .capturing
 
         await viewModel.stop()
@@ -110,7 +109,7 @@ final class CaptureStateTests: XCTestCase {
     // MARK: - toggleCapture routing
 
     func testCaptureState_ToggleWhileStarting_IsIgnored() async {
-        let viewModel = TranscriptionViewModel()
+        let viewModel = CaptionOnlyTestHarness().viewModel
         viewModel.settings = noSourceSettings()
         viewModel.captureState = .starting
         let sentinel = AppNotice.warning("sentinel", autoDismiss: false)
@@ -123,7 +122,7 @@ final class CaptureStateTests: XCTestCase {
     }
 
     func testCaptureState_ToggleWhileStopping_IsIgnored() async {
-        let viewModel = TranscriptionViewModel()
+        let viewModel = CaptionOnlyTestHarness().viewModel
         viewModel.captureState = .stopping
 
         await viewModel.toggleCapture()
@@ -132,7 +131,7 @@ final class CaptureStateTests: XCTestCase {
     }
 
     func testCaptureState_ToggleFromIdle_Starts() async {
-        let viewModel = TranscriptionViewModel()
+        let viewModel = CaptionOnlyTestHarness().viewModel
         viewModel.settings = noSourceSettings()
 
         await viewModel.toggleCapture()
@@ -144,7 +143,7 @@ final class CaptureStateTests: XCTestCase {
     }
 
     func testCaptureState_ToggleFromCapturing_Stops() async {
-        let viewModel = TranscriptionViewModel()
+        let viewModel = CaptionOnlyTestHarness().viewModel
         viewModel.captureState = .capturing
 
         await viewModel.toggleCapture()

@@ -72,7 +72,7 @@ class TranslationQueue: ObservableObject {
     private let maxTaskAge: TimeInterval
     private let shortTextMergeCharacterLimit: Int
     private let shortTextMergeWindow: TimeInterval
-    private let ollamaService: OllamaService
+    private let engine: any TranslationEngine
     var useStreaming: Bool = true  // Enable streaming by default
 
     // MARK: - Private Properties
@@ -81,6 +81,7 @@ class TranslationQueue: ObservableObject {
     private var processingTask: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
     private var lastProcessedText: String = ""
+    private var lastProcessedSegmentId: UUID?
 
     /// Generation counter to prevent stale streaming tokens from polluting the UI.
     /// Incremented on each new task. Captured by the onToken closure so that
@@ -90,7 +91,7 @@ class TranslationQueue: ObservableObject {
     // MARK: - Initialization
 
     init(
-        ollamaService: OllamaService,
+        engine: any TranslationEngine,
         debounceInterval: TimeInterval = 0.3,
         maxRetries: Int = 2,
         maxPendingTasks: Int = 20,
@@ -98,13 +99,18 @@ class TranslationQueue: ObservableObject {
         shortTextMergeCharacterLimit: Int = 24,
         shortTextMergeWindow: TimeInterval = 0.8
     ) {
-        self.ollamaService = ollamaService
+        self.engine = engine
         self.debounceInterval = debounceInterval
         self.maxRetries = maxRetries
         self.maxPendingTasks = max(1, maxPendingTasks)
         self.maxTaskAge = maxTaskAge
         self.shortTextMergeCharacterLimit = shortTextMergeCharacterLimit
         self.shortTextMergeWindow = shortTextMergeWindow
+    }
+
+    /// Compatibility for existing HTTP transport fixtures. App code uses engine:.
+    convenience init(ollamaService: OllamaService) {
+        self.init(engine: ollamaService)
     }
 
     // MARK: - Public Methods
@@ -116,8 +122,9 @@ class TranslationQueue: ObservableObject {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else { return }
 
-        // Skip if same as last processed text
-        if trimmedText == lastProcessedText && isFinal {
+        // Only a repeat of the same caption is a duplicate. Different segments
+        // (including different capture lanes) can legitimately say the same words.
+        if segmentId == lastProcessedSegmentId && trimmedText == lastProcessedText && isFinal {
             return
         }
 
@@ -162,6 +169,7 @@ class TranslationQueue: ObservableObject {
         // Reset the dedup baseline: canceled work may be re-enqueued with the
         // same text later (e.g. resume after pause) and must not be skipped
         lastProcessedText = ""
+        lastProcessedSegmentId = nil
         // Bump generation so any in-flight token dispatches are discarded
         generation &+= 1
     }
@@ -197,8 +205,9 @@ class TranslationQueue: ObservableObject {
         pruneStalePendingTasks()
         let taskToQueue = coalesceShortPendingTask(task)
 
-        // Remove any pending task with the same text (deduplication)
-        pendingTasks.removeAll { $0.text == taskToQueue.text }
+        // Keep the latest request for this segment without dropping another
+        // speaker's or later caption merely because its text happens to match.
+        pendingTasks.removeAll { $0.segmentId == taskToQueue.segmentId }
 
         // Add new task
         pendingTasks.append(taskToQueue)
@@ -314,7 +323,7 @@ class TranslationQueue: ObservableObject {
         streamingText = ""
 
         do {
-            let latencyMs = try await ollamaService.translateStreaming(
+            let latencyMs = try await engine.translateStreaming(
                 text: task.text,
                 context: task.context
             ) { [weak self] token in
@@ -338,6 +347,7 @@ class TranslationQueue: ObservableObject {
             // happens to share the same text.
             if task.isFinal {
                 lastProcessedText = task.text
+                lastProcessedSegmentId = task.segmentId
             }
 
             let result = TranslationQueueResult(
@@ -395,7 +405,7 @@ class TranslationQueue: ObservableObject {
         let startTime = Date()
 
         do {
-            let (translatedText, latencyMs) = try await ollamaService.translate(
+            let (translatedText, latencyMs) = try await engine.translate(
                 text: task.text,
                 context: task.context
             )
@@ -405,6 +415,7 @@ class TranslationQueue: ObservableObject {
 
             if task.isFinal {
                 lastProcessedText = task.text
+                lastProcessedSegmentId = task.segmentId
             }
 
             let result = TranslationQueueResult(

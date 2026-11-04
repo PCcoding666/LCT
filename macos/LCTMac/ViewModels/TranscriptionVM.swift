@@ -12,9 +12,8 @@ enum CaptureState: String, Equatable {
     case stopping
 }
 
-/// Whether the translation model is currently held in Ollama's memory.
-/// Drives the HUD model indicator; kept in sync by prewarm, start/stop,
-/// settings changes, and a slow poll while the app is idle.
+/// Whether the embedded translation model is loaded in this process.
+/// The service's published lifecycle drives the HUD model indicator.
 enum ModelState: Equatable {
     case unknown
     case loading
@@ -43,7 +42,7 @@ class TranscriptionViewModel: ObservableObject {
     /// Capture lifecycle state; the single source of truth for start/stop UI.
     @Published var captureState: CaptureState = .idle
 
-    /// Whether the translation model is held in Ollama's memory right now.
+    /// Whether the embedded translation model is loaded right now.
     @Published var modelState: ModelState = .unknown
 
     /// Is currently capturing audio (derived from `captureState`).
@@ -84,8 +83,9 @@ class TranscriptionViewModel: ObservableObject {
     /// Last translation latency
     @Published var lastLatencyMs: Int = 0
 
-    /// Ollama connection status
-    @Published var isOllamaConnected: Bool = false
+    @Published private(set) var translationStatusText = "Off"
+    var isTranslationReady: Bool { translationFailure == nil && translationReadiness() }
+    private var canTranslate: Bool { captureState == .capturing && settings.translationEnabled && isTranslationReady && !isPaused }
 
     /// When the current capture session started (nil when stopped)
     @Published var captureStartedAt: Date?
@@ -94,6 +94,32 @@ class TranscriptionViewModel: ObservableObject {
     /// filtering and "(download)" markers). Empty while the first probe is in
     /// flight — the menu then lists every language unannotated.
     @Published private(set) var languageAvailability: [SourceLanguage: LanguageAvailability] = [:]
+    @Published private var speechFailure: String?
+    @Published private var preparingSpeechLanguage: SourceLanguage?
+
+    /// Readiness of original captions, independent from optional translation.
+    var speechStatusText: String {
+        if speechFailure != nil { return "Unavailable" }
+        if preparingSpeechLanguage != nil { return "Preparing resources" }
+        switch captureState {
+        case .starting: return "Preparing resources"
+        case .capturing: return isPaused ? "Paused" : "Listening"
+        case .stopping: return "Stopping"
+        case .idle:
+            var sources: [AudioSource] = []
+            if settings.captureSystemAudio { sources.append(.system) }
+            if settings.captureMicrophone { sources.append(.microphone) }
+            let (effectiveSources, _) = SpeechEngineSelection.effectiveSources(sources, for: speechEngineKind)
+            let languages = effectiveSources.isEmpty
+                ? [settings.sourceLanguage]
+                : effectiveSources.map { settings.language(for: $0) }
+            let availability = languages.map { languageAvailability[$0] }
+            if availability.contains(.unsupported) { return "Unavailable" }
+            if availability.contains(.downloadable) { return "Resources needed" }
+            if availability.contains(nil) { return "Checking resources" }
+            return "Ready"
+        }
+    }
 
     /// Whether the selected engine runs independent per-lane recognition, so
     /// the microphone lane may use its own language (drives the Microphone
@@ -115,7 +141,12 @@ class TranscriptionViewModel: ObservableObject {
     // MARK: - Services
 
     private let audioCaptureService: AudioCaptureService
-    private let ollamaService: OllamaService
+    private let translationEngine: any TranslationEngine
+    private let embeddedTranslationService: EmbeddedTranslationService?
+    private let translationReadiness: @MainActor () -> Bool
+    private let persistSettings: (AppSettings) -> Bool
+    private let captionAudioGate = CaptionAudioGate()
+    private var translationFailure: String?
     private let translationQueue: TranslationQueue
     private let speakerManager: SpeakerManager
     /// The selected speech recognition engine (SpeechAnalyzer on macOS 26+,
@@ -126,13 +157,7 @@ class TranscriptionViewModel: ObservableObject {
     /// One segmenter per capture lane — each lane's transcript evolves
     /// independently and must not be fed into a shared segmenter.
     private var captionSegmenters: [AudioSource: CaptionSegmenter] = [:]
-    private let ollamaGuardian: OllamaGuardian
-    private let historyService = HistoryService()
-    /// Chip/memory of this Mac — decides whether the configured model can run
-    /// locally at all (MLX builds need Apple Silicon).
-    private let hardwareProfile: HardwareProfile
-    /// Factory for the model downloader; tests substitute a stub-session manager.
-    private let makeModelManager: (OllamaEndpoint) -> OllamaModelManager
+    private let historyService: HistoryService
 
     // MARK: - Settings
 
@@ -147,6 +172,8 @@ class TranscriptionViewModel: ObservableObject {
     /// Parallel to each lane's CaptionSegmenter committed segments so tail rollbacks align.
     private var activeTaskSegmentIds: [AudioSource: [UUID]] = [:]
     private var historyEntryIdsBySegmentId: [UUID: UUID] = [:]
+    private var persistedHistorySegmentIDs: Set<UUID> = []
+    private var historyPersistenceTask: Task<Void, Never>?
     /// Stable per-lane ids for the volatile draft translation tasks, kept out of
     /// `segments` so their streaming/complete callbacks route to the live area.
     private var liveDraftSegmentIds: [AudioSource: UUID] = [:]
@@ -157,8 +184,6 @@ class TranscriptionViewModel: ObservableObject {
     /// wrong recognition language); fed by `stallTimer` while capturing.
     private var stallDetector = RecognitionStallDetector()
     private var stallTimer: AnyCancellable?
-    /// Slow poll that keeps `modelState` in sync with Ollama while idle.
-    private var modelStateTimer: AnyCancellable?
     /// Identifies the mic-silence warning currently on screen so the recovery
     /// callback retracts exactly that notice and nothing else.
     private var micSilenceNoticeId: UUID?
@@ -171,36 +196,23 @@ class TranscriptionViewModel: ObservableObject {
     /// The task pulling the translation model from the Download notice
     /// action; non-nil only while a download is in flight.
     private var modelDownloadTask: Task<Void, Never>?
-    /// Capture-time Ollama patrol: restarts a dead service, re-warms an
-    /// unloaded model. Runs only while capturing.
-    private var ollamaPatrolTask: Task<Void, Never>?
-    /// Identifies the patrol's "restarting…" warning so recovery retracts
-    /// exactly that notice and nothing else.
-    private var ollamaRecoveryNoticeId: UUID?
-    /// Identifies the patrol's "could not be restarted" error so a later
-    /// recovery retracts it.
-    private var ollamaGaveUpNoticeId: UUID?
-    /// Identifies the patrol's "reloading model…" info notice.
-    private var modelReloadNoticeId: UUID?
-    /// Identifies an error notice raised from `ollamaService.lastError`
-    /// (e.g. "Ollama server is not running" from a failed translation). It
-    /// describes the same outage the patrol handles, so the patrol may
-    /// replace it with its restarting/recovered/gave-up notices.
-    private var ollamaServiceErrorNoticeId: UUID?
-
     // MARK: - Initialization
 
     init(settings: AppSettings = .load(),
          ollamaService: OllamaService? = nil,
-         ollamaGuardian: OllamaGuardian = .shared,
+         ollamaGuardian: OllamaGuardian? = nil,
          hardwareProfile: HardwareProfile = .current(),
          makeModelManager: @escaping (OllamaEndpoint) -> OllamaModelManager = { OllamaModelManager(endpoint: $0) },
          audioCaptureService: AudioCaptureService? = nil,
-         speechEngine: (any SpeechRecognitionEngine)? = nil) {
+         speechEngine: (any SpeechRecognitionEngine)? = nil,
+         translationEngine: (any TranslationEngine)? = nil,
+         translationReadiness: (@MainActor () -> Bool)? = nil,
+         historyService: HistoryService? = nil,
+         persistSettings: @escaping (AppSettings) -> Bool = { $0.save() }) {
         let loadedSettings = settings
         self.settings = loadedSettings
-        self.hardwareProfile = hardwareProfile
-        self.makeModelManager = makeModelManager
+        self.persistSettings = persistSettings
+        self.historyService = historyService ?? HistoryService()
         self.audioCaptureService = audioCaptureService ?? AudioCaptureService(
             config: AudioCaptureConfig(
                 captureSystemAudio: loadedSettings.captureSystemAudio,
@@ -208,9 +220,26 @@ class TranscriptionViewModel: ObservableObject {
                 microphoneDeviceUID: loadedSettings.microphoneDeviceUID
             )
         )
-        self.ollamaService = ollamaService ?? OllamaService(settings: loadedSettings)
-        self.ollamaGuardian = ollamaGuardian
-        self.translationQueue = TranslationQueue(ollamaService: self.ollamaService)
+        // Legacy arguments are accepted by old transport fixtures, but no
+        // guardian/model manager is constructed or invoked by the app.
+        let selectedEngine: any TranslationEngine
+        if let translationEngine {
+            selectedEngine = translationEngine
+            self.embeddedTranslationService = nil
+            self.translationReadiness = translationReadiness ?? { true }
+        } else if let ollamaService {
+            selectedEngine = ollamaService
+            self.embeddedTranslationService = nil
+            self.translationReadiness = translationReadiness ?? { true }
+        } else {
+            let service = EmbeddedTranslationService.shared
+            selectedEngine = service
+            self.embeddedTranslationService = service
+            self.translationReadiness = translationReadiness ?? { service.isReady }
+        }
+        self.translationEngine = selectedEngine
+        selectedEngine.updateSettings(loadedSettings)
+        self.translationQueue = TranslationQueue(engine: selectedEngine)
         self.speakerManager = SpeakerManager()
         if let speechEngine {
             self.speechEngineKind = speechEngine.kind
@@ -233,12 +262,8 @@ class TranscriptionViewModel: ObservableObject {
             notice = .warning(persistenceError, autoDismiss: false)
         }
 
-        // Probe Ollama on launch so the status indicator reflects reality
-        // immediately, instead of showing the default "stopped" until first use.
-        Task {
-            await self.ollamaGuardian.checkStatus()
-            isOllamaConnected = await self.ollamaService.checkHealth()
-        }
+        updateTranslationStatus()
+
     }
 
     // MARK: - Setup
@@ -276,11 +301,6 @@ class TranscriptionViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$isTranslating)
 
-        // Bind Ollama connection state
-        ollamaService.$isConnected
-            .receive(on: DispatchQueue.main)
-            .assign(to: &$isOllamaConnected)
-
         // Bind errors. These are runtime failures surfaced mid-session; offer a
         // retry since the user's intent was to keep capturing.
         audioCaptureService.$lastError
@@ -291,28 +311,13 @@ class TranscriptionViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        ollamaService.$lastError
-            .receive(on: DispatchQueue.main)
-            .compactMap { $0 }
-            .sink { [weak self] error in
-                guard let self else { return }
-                // While the patrol is restarting Ollama, its own notice already
-                // explains the outage; failed translations must not replace it.
-                if let id = self.ollamaRecoveryNoticeId, self.notice?.id == id {
-                    appLog("[TranscriptionVM] Ollama error during recovery — keeping the restart notice")
-                    return
-                }
-                let serviceErrorNotice = AppNotice.error(error, actions: [.retryCapture])
-                self.ollamaServiceErrorNoticeId = serviceErrorNotice.id
-                self.notice = serviceErrorNotice
-            }
-            .store(in: &cancellables)
-
         speechEngine.lastErrorPublisher
             .receive(on: DispatchQueue.main)
-            .compactMap { $0 }
             .sink { [weak self] error in
-                self?.notice = .error(error, actions: [.retryCapture])
+                self?.speechFailure = error
+                if let error {
+                    self?.notice = .error(error, actions: [.retryCapture])
+                }
             }
             .store(in: &cancellables)
 
@@ -378,72 +383,133 @@ class TranscriptionViewModel: ObservableObject {
             self?.handleSystemAudioAuthorizationDenied(captureContinues: captureContinues)
         }
 
-        // While the app is foreground and idle, re-check whether the model is
-        // still in memory — Ollama unloads it when keep_alive expires, and the
-        // HUD indicator must keep up. During capture the translation requests
-        // themselves keep the model loaded, so no polling is needed.
-        modelStateTimer = Timer.publish(every: 60, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                guard let self, self.captureState == .idle, NSApp?.isActive == true else { return }
-                Task { await self.refreshModelState() }
-            }
+        if let service = embeddedTranslationService {
+            service.$state
+                .sink { [weak self] state in
+                    guard let self else { return }
+                    self.updateTranslationStatus(state: state)
+                    if state != .ready { self.cancelPendingTranslation() }
+                }
+                .store(in: &cancellables)
+        }
+
     }
 
     // MARK: - Actions
 
-    /// Warm the translation model right after launch so the first start()
-    /// doesn't pay the cold-load cost. Local Ollama only, and only after
-    /// onboarding completed. Failures are logged, never shown — start() has
-    /// its own checks with actionable notices. Called once by AppCoordinator
-    /// when it creates the app's view model, not from init, so tests
-    /// constructing view models never hit a real Ollama.
-    func prepareModelOnLaunch() async {
-        guard AppSettings.hasCompletedSetup else { return }
-        guard settings.isLocalOllama, settings.validatedOllamaEndpoint != nil else { return }
+    /// Drain caption writes before exporting retained history or ending capture.
+    func flushHistoryPersistence() async {
+        await historyPersistenceTask?.value
+    }
 
-        do {
-            try await ollamaGuardian.ensureRunning()
-            guard await ollamaService.checkHealth() else {
-                modelState = .notLoaded
-                appLog("[TranscriptionVM] prepareModelOnLaunch: Ollama not reachable")
-                return
-            }
-            let availableModels = try await ollamaService.getAvailableModels()
-            guard isModelInstalled(settings.ollamaModel, in: availableModels) else {
-                modelState = .notLoaded
-                appLog("[TranscriptionVM] prepareModelOnLaunch: model not installed")
-                return
-            }
-            modelState = .loading
-            let latencyMs = try await ollamaService.prewarmModel()
-            modelState = .loaded
-            appLog("[TranscriptionVM] ✅ Model prewarmed on launch in \(latencyMs)ms")
-        } catch {
-            modelState = .failed(error.localizedDescription)
-            appLog("[TranscriptionVM] ⚠️ prepareModelOnLaunch failed: \(error.localizedDescription)")
+    /// Keep source saves, completed translations, and ASR rollbacks in order.
+    /// Otherwise a delayed source write could replace its finished translation.
+    private func enqueueHistoryMutation(_ operation: @escaping @Sendable (HistoryService) async throws -> Void) {
+        let previous = historyPersistenceTask
+        let service = historyService
+        historyPersistenceTask = Task {
+            await previous?.value
+            do { try await operation(service) }
+            catch { appLog("[TranscriptionVM] Failed to save history: \(error)") }
         }
     }
 
-    /// Re-read which models Ollama currently holds in memory and update
-    /// `modelState`. A failed probe keeps the previous state — a temporarily
-    /// unreachable server says nothing about the model.
+    private func persistHistoryEntry(_ entry: TranslationEntry) {
+        guard settings.historyEnabled else { return }
+        persistedHistorySegmentIDs.insert(entry.id)
+        let retentionDays = settings.historyRetentionDays
+        let maxEntries = settings.historyMaxEntries
+        enqueueHistoryMutation { service in
+            try await service.logTranslationAsync(entry)
+            try await service.pruneHistoryAsync(retentionDays: retentionDays, maxEntries: maxEntries)
+        }
+    }
+
+    /// Loading a previously downloaded model is optional and independent of
+    /// caption startup. This never downloads weights or starts an external service.
+    func prepareModelOnLaunch() async {
+        guard settings.translationEnabled,
+              let service = embeddedTranslationService, service.isModelDownloaded else { return }
+        await prepareTranslation()
+    }
+
     func refreshModelState() async {
-        guard settings.validatedOllamaEndpoint != nil else {
-            modelState = .unknown
+        updateTranslationStatus()
+    }
+
+    private func updateTranslationStatus(state: EmbeddedTranslationState? = nil) {
+        let state = state ?? embeddedTranslationService?.state
+        if let failure = translationFailure {
+            modelState = .failed(failure)
+            translationStatusText = "Translation unavailable"
+            return
+        }
+        if let state {
+            switch state {
+            case .notDownloaded:
+                modelState = .notLoaded
+                translationStatusText = settings.translationEnabled ? "Model needed" : "Off"
+            case .downloading:
+                modelState = .notLoaded
+                translationStatusText = "Downloading model"
+            case .verifying:
+                modelState = .notLoaded
+                translationStatusText = "Verifying model"
+            case .downloaded:
+                modelState = .notLoaded
+                translationStatusText = settings.translationEnabled ? "Model ready to load" : "Off"
+            case .loading:
+                modelState = .loading
+                translationStatusText = "Loading model"
+            case .ready:
+                modelState = .loaded
+                translationStatusText = settings.translationEnabled ? "Ready" : "Off"
+            case .failed(let message):
+                modelState = .failed(message)
+                translationStatusText = "Translation unavailable"
+            }
+        } else {
+            modelState = isTranslationReady ? .loaded : .notLoaded
+            translationStatusText = !settings.translationEnabled ? "Off" : (isTranslationReady ? "Ready" : "Translation unavailable")
+        }
+    }
+
+    /// Cancel only translation work. Original captions and completed translations
+    /// remain in the session when a model is disabled, changed, or fails.
+    private func cancelPendingTranslation() {
+        translationQueue.cancelAll()
+        liveTranslations.removeAll()
+        liveTranslation = ""
+        for index in segments.indices where segments[index].state == .translating || segments[index].state == .pending {
+            segments[index].state = .captionOnly
+            segments[index].translatedText = ""
+        }
+    }
+
+    func prepareTranslation() async {
+        translationFailure = nil
+        guard let service = embeddedTranslationService else {
+            updateTranslationStatus()
+            if notice?.actions.contains(.retryTranslation) == true { notice = nil }
+            return
+        }
+        guard service.isModelDownloaded else {
+            updateTranslationStatus()
+            notice = AppNotice(severity: .info, message: "Original captions are ready. Download the local model to add translation.", actions: [.downloadModel], autoDismiss: false)
             return
         }
         do {
-            let names = try await ollamaService.loadedModels()
-            modelState = isModelInstalled(settings.ollamaModel, in: names) ? .loaded : .notLoaded
+            try await service.loadModel()
+            updateTranslationStatus()
+            if notice?.actions.contains(.retryTranslation) == true { notice = nil }
+        } catch is CancellationError {
+            updateTranslationStatus()
         } catch {
-            appLog("[TranscriptionVM] refreshModelState probe failed: \(error.localizedDescription)")
+            updateTranslationStatus()
+            notice = AppNotice(severity: .warning, message: "Translation is unavailable: \(error.localizedDescription). Original captions continue.", actions: [.retryTranslation], autoDismiss: false)
         }
     }
 
-    /// Start capturing and translating. Ignored (with a log line) unless the
-    /// capture state is idle, so concurrent start requests — button, menu,
-    /// status bar, hotkey, notice actions — can never overlap.
     func start() async {
         appLog("[TranscriptionVM] ▶️ start() called")
         guard captureState == .idle else {
@@ -451,6 +517,7 @@ class TranscriptionViewModel: ObservableObject {
             return
         }
         captureState = .starting
+        speechFailure = nil
         // Every early return and catch branch below must land back on .idle;
         // only the success path flips to .capturing first.
         defer {
@@ -463,26 +530,6 @@ class TranscriptionViewModel: ObservableObject {
 
         do {
             notice = nil
-
-            // Fail closed on an invalid or non-consented Ollama endpoint before
-            // any service is started or request can be made.
-            if let endpointError = settings.ollamaEndpointError {
-                appLog("[TranscriptionVM] ❌ Invalid Ollama endpoint: \(endpointError)")
-                notice = .error("Ollama configuration is invalid: \(endpointError)", actions: [.openAppSettings])
-                return
-            }
-
-            // A model this Mac cannot run at all (MLX build on Intel) fails
-            // here, before permissions, services, or any loading attempt.
-            if settings.isLocalOllama,
-               !ModelCatalog.isCompatible(modelName: settings.ollamaModel, with: hardwareProfile) {
-                appLog("[TranscriptionVM] ❌ Model is incompatible with this Mac's chip")
-                notice = .error(
-                    "Model '\(settings.ollamaModel)' is an MLX model and needs Apple Silicon. Pick a GGUF model in Settings.",
-                    actions: [.openAppSettings]
-                )
-                return
-            }
 
             // Resolve which capture lanes to run. System audio needs no
             // permission (Core Audio process tap); only the microphone lane
@@ -532,97 +579,6 @@ class TranscriptionViewModel: ObservableObject {
             activeSources = engineSources
             appLog("[TranscriptionVM] Active sources: \(activeSources.map { $0.rawValue })")
 
-            if settings.isLocalOllama {
-                // Ensure local Ollama is running (will start it if needed).
-                // ensureRunning() already proved the service answers, so no
-                // separate health probe is needed — just reflect it in the UI.
-                appLog("[TranscriptionVM] Ensuring local Ollama is running...")
-                do {
-                    try await ollamaGuardian.ensureRunning()
-                    isOllamaConnected = true
-                    appLog("[TranscriptionVM] ✅ Local Ollama is running")
-                } catch let error as OllamaGuardianError {
-                    appLog("[TranscriptionVM] ❌ Local Ollama error: \(error)")
-                    notice = .error(error.localizedDescription, actions: [.startOllama])
-                    return
-                } catch {
-                    appLog("[TranscriptionVM] ❌ Local Ollama error: \(error)")
-                    notice = .error("Cannot start Ollama: \(error.localizedDescription)", actions: [.startOllama])
-                    return
-                }
-            } else {
-                appLog("[TranscriptionVM] Using remote Ollama at \(settings.ollamaURL); skipping local startup")
-
-                // Remote Ollama gets no guardian, so probe it directly.
-                appLog("[TranscriptionVM] Checking Ollama connection...")
-                let isConnected = await ollamaService.checkHealth()
-                appLog("[TranscriptionVM] Ollama connected: \(isConnected)")
-                if !isConnected {
-                    notice = .error(
-                        "Cannot connect to remote Ollama at \(settings.ollamaURL). Check the address in Settings.",
-                        actions: [.openAppSettings]
-                    )
-                    return
-                }
-            }
-
-            do {
-                let availableModels = try await ollamaService.getAvailableModels()
-                guard isModelInstalled(settings.ollamaModel, in: availableModels) else {
-                    if settings.isLocalOllama {
-                        // Local Ollama can pull the model right from this notice.
-                        notice = .error(
-                            "Model '\(settings.ollamaModel)' is not installed.",
-                            actions: [.downloadModel, .openAppSettings]
-                        )
-                    } else {
-                        notice = .error(
-                            "Model '\(settings.ollamaModel)' is not installed. Install it on the configured remote Ollama server.",
-                            actions: [.openAppSettings]
-                        )
-                    }
-                    return
-                }
-            } catch {
-                notice = .error("Cannot list Ollama models: \(error.localizedDescription)", actions: [.retryCapture])
-                return
-            }
-
-            // If the model is already in memory (launch prewarm, or a
-            // previous session within keep_alive), skip the loading notice —
-            // prewarm below is then a fast keep_alive refresh. Cold-loading
-            // can take far longer than an auto-dismiss interval, so the
-            // notice stays up until the load finishes.
-            let loadedModelNames = (try? await ollamaService.loadedModels()) ?? []
-            let modelAlreadyLoaded = isModelInstalled(settings.ollamaModel, in: loadedModelNames)
-            modelState = modelAlreadyLoaded ? .loaded : .loading
-            let loadingNotice = modelAlreadyLoaded ? nil : AppNotice(
-                severity: .info,
-                message: "Loading translation model \"\(settings.ollamaModel)\"… the first run can take up to 30 seconds.",
-                autoDismiss: false
-            )
-            if let loadingNotice {
-                notice = loadingNotice
-            }
-            do {
-                let latencyMs = try await ollamaService.prewarmModel()
-                appLog("[TranscriptionVM] ✅ Ollama model prewarmed in \(latencyMs)ms")
-                modelState = .loaded
-                // Clear only the loading notice; an error that arrived
-                // meanwhile (e.g. from a service binding) must survive.
-                if let loadingNotice, notice?.id == loadingNotice.id {
-                    notice = nil
-                }
-            } catch let error as OllamaError {
-                modelState = .notLoaded
-                notice = .error("Cannot load model '\(settings.ollamaModel)': \(error.localizedDescription)", actions: [.retryCapture])
-                return
-            } catch {
-                modelState = .notLoaded
-                notice = .error("Cannot load model '\(settings.ollamaModel)': \(error.localizedDescription)", actions: [.retryCapture])
-                return
-            }
-
             // Update speech recognizer language
             appLog("[TranscriptionVM] Setting speech language: \(settings.sourceLanguage.displayName)")
             speechEngine.setLanguage(settings.sourceLanguage)
@@ -637,7 +593,11 @@ class TranscriptionViewModel: ObservableObject {
 
             // Connect audio capture to speech recognizer (buffers stay tagged per lane)
             let engine = self.speechEngine
+            let gate = captionAudioGate
+            isPaused = false
+            gate.setEnabled(true)
             audioCaptureService.onAudioBuffer = { [weak engine] buffer, source in
+                guard gate.isEnabled else { return }
                 engine?.appendAudioBuffer(buffer, source: source)
             }
             audioCaptureService.onAudioData = nil
@@ -704,13 +664,9 @@ class TranscriptionViewModel: ObservableObject {
                 )
             }
 
-            // Patrol local Ollama while capturing: restart a dead service,
-            // re-warm a model Ollama dropped from memory.
-            if settings.isLocalOllama {
-                startOllamaPatrol()
-            }
 
         } catch let error as SpeechAnalyzerError {
+            speechFailure = error.localizedDescription
             switch error {
             case .notAuthorized:
                 notice = .error(
@@ -762,6 +718,7 @@ class TranscriptionViewModel: ObservableObject {
     /// downloading an on-device speech model. Downloads can take minutes, so
     /// the notice must not auto-dismiss; a live error outranks it.
     private func handleModelDownloadStatus(_ language: SourceLanguage?) {
+        preparingSpeechLanguage = language
         if let language {
             guard notice?.severity != .error else { return }
             let downloadNotice = AppNotice(
@@ -817,7 +774,7 @@ class TranscriptionViewModel: ObservableObject {
             Task { await self.speechEngine.stop() }
             translationQueue.cancelAll()
             stopStallMonitoring()
-            stopOllamaPatrol()
+            captionAudioGate.setEnabled(false)
             captureState = .idle
             captureStartedAt = nil
             recognitionLanes = []
@@ -884,167 +841,6 @@ class TranscriptionViewModel: ObservableObject {
         recognitionStallNotice = nil
     }
 
-    // MARK: - Ollama Patrol (capture-time recovery)
-
-    /// While capturing, probe local Ollama every `interval` seconds: restart
-    /// a service that stopped answering (backoff 10s → 20s → 40s, at most 3
-    /// attempts) and re-warm the translation model when Ollama dropped it
-    /// from memory. The decision logic lives in OllamaRecoveryController;
-    /// this loop only probes and executes.
-    func startOllamaPatrol(interval: TimeInterval = 10, backoffBase: TimeInterval = 10) {
-        stopOllamaPatrol()
-        ollamaPatrolTask = Task { [weak self] in
-            var controller = OllamaRecoveryController(baseBackoff: backoffBase)
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
-                guard !Task.isCancelled, let self, self.captureState == .capturing else { break }
-                await self.runOllamaPatrolStep(controller: &controller)
-            }
-        }
-    }
-
-    func stopOllamaPatrol() {
-        ollamaPatrolTask?.cancel()
-        ollamaPatrolTask = nil
-        // Retract the patrol's in-progress notices so they don't linger after
-        // the session ends; a give-up error stays — it is still actionable.
-        retractOllamaRecoveryNotice()
-        if let id = modelReloadNoticeId, notice?.id == id {
-            notice = nil
-        }
-        modelReloadNoticeId = nil
-    }
-
-    private func runOllamaPatrolStep(controller: inout OllamaRecoveryController) async {
-        let outcome = await probeOllamaHealth()
-        guard !Task.isCancelled, captureState == .capturing else { return }
-
-        switch controller.step(for: outcome) {
-        case .probeAgain:
-            break
-        case .restartService(let delay, let attempt):
-            showOllamaRecoveryNotice()
-            appLog("[TranscriptionVM] ⚠️ Ollama not responding — restart attempt \(attempt) in \(Int(delay))s")
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            guard !Task.isCancelled, captureState == .capturing else { return }
-            do {
-                try await ollamaGuardian.ensureRunning()
-                appLog("[TranscriptionVM] ✅ Ollama restart attempt \(attempt) succeeded")
-            } catch {
-                appLog("[TranscriptionVM] ⚠️ Ollama restart attempt \(attempt) failed: \(error.localizedDescription)")
-            }
-        case .reloadModel:
-            await reloadTranslationModel()
-        case .announceRecovered:
-            appLog("[TranscriptionVM] ✅ Ollama is healthy again")
-            retractOllamaRecoveryNotice()
-            if let id = ollamaGaveUpNoticeId, notice?.id == id {
-                notice = nil
-            }
-            ollamaGaveUpNoticeId = nil
-            if notice?.severity != .error || isOllamaServiceErrorNotice {
-                ollamaServiceErrorNoticeId = nil
-                notice = .info("Ollama is back — translation resumed.")
-            }
-        case .giveUp:
-            appLog("[TranscriptionVM] ❌ Ollama could not be restarted after \(OllamaRecoveryController.maxRestartAttempts) attempts")
-            retractOllamaRecoveryNotice()
-            if notice?.severity != .error || isOllamaServiceErrorNotice {
-                ollamaServiceErrorNoticeId = nil
-                let giveUpNotice = AppNotice(
-                    severity: .error,
-                    message: "Ollama could not be restarted.",
-                    actions: [.startOllama]
-                )
-                ollamaGaveUpNoticeId = giveUpNotice.id
-                notice = giveUpNotice
-            }
-        }
-    }
-
-    private func probeOllamaHealth() async -> OllamaRecoveryController.ProbeOutcome {
-        guard await ollamaGuardian.checkServiceStatus() else {
-            return .serviceUnreachable
-        }
-        do {
-            let names = try await ollamaService.loadedModels()
-            return isModelInstalled(settings.ollamaModel, in: names) ? .healthy : .modelNotLoaded
-        } catch {
-            // /api/ps failed while /api/tags answered — a flaky read says
-            // nothing reliable about the model; don't act on it.
-            appLog("[TranscriptionVM] Ollama patrol: loadedModels probe failed: \(error.localizedDescription)")
-            return .healthy
-        }
-    }
-
-    /// Ollama dropped the translation model from memory (crash restart,
-    /// memory pressure) — prewarm it again so translations resume.
-    private func reloadTranslationModel() async {
-        guard !Task.isCancelled, captureState == .capturing else { return }
-        var reloadNotice: AppNotice?
-        if notice?.severity != .error {
-            let n = AppNotice(severity: .info, message: "Reloading translation model…", autoDismiss: false)
-            modelReloadNoticeId = n.id
-            reloadNotice = n
-            notice = n
-        }
-        modelState = .loading
-        do {
-            _ = try await ollamaService.prewarmModel()
-            modelState = .loaded
-            appLog("[TranscriptionVM] ✅ Translation model reloaded")
-        } catch {
-            modelState = .notLoaded
-            appLog("[TranscriptionVM] ⚠️ Translation model reload failed: \(error.localizedDescription)")
-        }
-        if let reloadNotice, modelReloadNoticeId == reloadNotice.id, notice?.id == reloadNotice.id {
-            notice = nil
-        }
-        modelReloadNoticeId = nil
-    }
-
-    /// The patrol's non-auto-dismissing warning while a restart is in flight.
-    /// Never clobbers a live error notice.
-    /// Whether the notice on screen is an Ollama service error (from
-    /// `ollamaService.lastError`), which the patrol is allowed to replace.
-    private var isOllamaServiceErrorNotice: Bool {
-        guard let id = ollamaServiceErrorNoticeId else { return false }
-        return notice?.id == id
-    }
-
-    private func showOllamaRecoveryNotice() {
-        if let id = ollamaRecoveryNoticeId, notice?.id == id { return }
-        guard notice?.severity != .error || isOllamaServiceErrorNotice else { return }
-        ollamaServiceErrorNoticeId = nil
-        let n = AppNotice(
-            severity: .warning,
-            message: "Ollama stopped responding — restarting…",
-            autoDismiss: false
-        )
-        ollamaRecoveryNoticeId = n.id
-        notice = n
-    }
-
-    private func retractOllamaRecoveryNotice() {
-        if let id = ollamaRecoveryNoticeId, notice?.id == id {
-            notice = nil
-        }
-        ollamaRecoveryNoticeId = nil
-    }
-
-    /// Status-light click: bring Ollama up, surfacing failures as an
-    /// actionable error notice instead of swallowing them.
-    func startOllamaFromIndicator() {
-        Task {
-            do {
-                try await ollamaGuardian.ensureRunning()
-            } catch {
-                appLog("[TranscriptionVM] ⚠️ startOllamaFromIndicator failed: \(error.localizedDescription)")
-                notice = .error("Could not start Ollama: \(error.localizedDescription)", actions: [.startOllama])
-            }
-        }
-    }
-
     /// Dismiss the current notice.
     func dismissNotice() {
         notice = nil
@@ -1062,83 +858,39 @@ class TranscriptionViewModel: ObservableObject {
             AudioCaptureService.openSpeechRecognitionSettings()
         case .openSystemAudioSettings:
             AudioCaptureService.openSystemAudioSettings()
-        case .startOllama:
-            notice = .info("Starting Ollama…")
-            Task {
-                do {
-                    try await ollamaGuardian.ensureRunning()
-                    await start()
-                } catch {
-                    notice = .error("Could not start Ollama: \(error.localizedDescription)")
-                }
-            }
+        case .startOllama, .retryTranslation:
+            Task { await prepareTranslation() }
         case .retryCapture:
             notice = nil
             Task { await start() }
         case .downloadModel:
-            guard captureState == .idle, modelDownloadTask == nil else { return }
+            guard modelDownloadTask == nil else { return }
             modelDownloadTask = Task {
                 await downloadSelectedModel()
                 modelDownloadTask = nil
             }
+        case .cancelModelDownload:
+            modelDownloadTask?.cancel()
+            embeddedTranslationService?.cancelDownload()
         case .openAppSettings:
             break // handled by the view
         }
     }
 
-    /// Pull the configured model into local Ollama, driven by the Download
-    /// notice action. Progress lives in a non-auto-dismissing info notice; a
-    /// successful download restarts capture automatically.
     private func downloadSelectedModel() async {
-        let modelName = settings.ollamaModel
-        guard let endpoint = settings.validatedOllamaEndpoint, endpoint.isLoopback else {
-            notice = .error("Model downloads need a local Ollama server.", actions: [.openAppSettings])
-            return
-        }
-
-        let manager = makeModelManager(endpoint)
-        let progressNotice = AppNotice(
-            severity: .info,
-            message: "Downloading \(modelName)…",
-            autoDismiss: false
-        )
+        guard let service = embeddedTranslationService else { return }
+        let progressNotice = AppNotice(severity: .info, message: "Downloading the local translation model… Original captions remain available.", actions: [.cancelModelDownload], autoDismiss: false)
         notice = progressNotice
-
-        let progressUpdates = manager.$pullProgress
-            .combineLatest(manager.$pullCompletedBytes, manager.$pullTotalBytes)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] progress, completed, total in
-                guard let self, self.notice?.id == progressNotice.id else { return }
-                var message = "Downloading \(modelName)… \(Int((progress * 100).rounded()))%"
-                if total > 0 {
-                    message += " (\(ByteFormatting.string(completed)) / \(ByteFormatting.string(total)))"
-                }
-                self.notice?.message = message
-            }
-        defer { progressUpdates.cancel() }
-
         do {
-            try await manager.pullModel(modelName)
-            retractOllamaDownloadNotice(progressNotice)
-            notice = .info("Model \(modelName) downloaded — starting capture…")
-            await start()
+            try await service.downloadModel()
+            if notice?.id == progressNotice.id { notice = nil }
+            if settings.translationEnabled { await prepareTranslation() }
         } catch is CancellationError {
-            retractOllamaDownloadNotice(progressNotice)
+            if notice?.id == progressNotice.id { notice = nil }
         } catch {
-            retractOllamaDownloadNotice(progressNotice)
-            appLog("[TranscriptionVM] ❌ Model download failed: \(error.localizedDescription)")
-            // The Download button on this notice retries the pull.
-            notice = .error(
-                "Download of '\(modelName)' failed: \(error.localizedDescription)",
-                actions: [.downloadModel, .openAppSettings]
-            )
+            notice = AppNotice(severity: .warning, message: "Model download failed: \(error.localizedDescription). Original captions remain available.", actions: [.downloadModel], autoDismiss: false)
         }
-    }
-
-    private func retractOllamaDownloadNotice(_ progressNotice: AppNotice) {
-        if notice?.id == progressNotice.id {
-            notice = nil
-        }
+        updateTranslationStatus()
     }
 
     /// Single entry point for start/stop requests from the main button, the
@@ -1165,13 +917,22 @@ class TranscriptionViewModel: ObservableObject {
         captureState = .stopping
         captureStartedAt = nil
         stopStallMonitoring()
-        stopOllamaPatrol()
+        captionAudioGate.setEnabled(false)
         micSilenceNoticeId = nil
         modelDownloadNoticeId = nil
         await audioCaptureService.stopCapture()
         translationQueue.cancelAll()
         await speechEngine.stop()
+        // Some recognizers finish with only a partial result. Preserve each
+        // remaining visible draft after final callbacks have been drained;
+        // a lane that delivered its final result has no draft left to repeat.
+        for lane in [AudioSource.microphone, .system] {
+            finalizeLaneDraft(lane)
+        }
+        cancelPendingTranslation()
+        preparingSpeechLanguage = nil
         recognitionLanes = []
+        captionSegmenters.removeAll()
         liveDrafts.removeAll()
         liveTranslations.removeAll()
         liveSourceText = ""
@@ -1180,48 +941,28 @@ class TranscriptionViewModel: ObservableObject {
 
         captureState = .idle
 
-        // The model intentionally stays in memory (keep_alive governs its
-        // idle timeout; quitting LCT unloads it). Re-sync the HUD indicator
-        // in the background so stop() returns immediately.
-        Task { await refreshModelState() }
+        isPaused = false
+        await flushHistoryPersistence()
     }
 
-    /// Toggle pause state
+    /// Pause the caption stream without destroying the capture session. The
+    /// real-time gate stops audio entering ASR; late recognition results are
+    /// ignored while paused. Resume keeps the same transcript and segmenters.
     func togglePause() {
+        guard captureState == .capturing else { return }
         isPaused.toggle()
+        captionAudioGate.setEnabled(!isPaused)
         if isPaused {
-            translationQueue.cancelAll()
-            liveTranslations.removeAll()
-            liveTranslation = ""
-            // cancelAll() drops queued and in-flight work; mark those segments
-            // as pending (and discard partial streaming output) so they are
-            // re-enqueued on resume instead of dangling in .translating forever.
-            for idx in segments.indices where segments[idx].state == .translating {
-                segments[idx].state = .pending
-                segments[idx].translatedText = ""
-            }
+            cancelPendingTranslation()
+            stopStallMonitoring()
         } else {
-            resumePendingTranslations()
-        }
-    }
-
-    /// Re-enqueue segments that finalized while paused or were canceled by pausing
-    private func resumePendingTranslations() {
-        for idx in segments.indices where segments[idx].state == .pending {
-            segments[idx].state = .translating
-            let context = settings.contextAware ? caption.getContextForTranslation() : []
-            translationQueue.enqueue(
-                segmentId: segments[idx].id,
-                text: segments[idx].sourceText,
-                context: context,
-                priority: .high,
-                isFinal: true
-            )
+            startStallMonitoring()
         }
     }
 
     /// Clear all transcriptions and translations
     func clear() {
+        translationQueue.cancelAll()
         segments.removeAll()
         liveSourceText = ""
         liveTranslation = ""
@@ -1238,16 +979,13 @@ class TranscriptionViewModel: ObservableObject {
     /// Clear all persistent history from SQLite (only while history is enabled)
     func clearPersistentHistory() {
         guard settings.historyEnabled else { return }
-        do {
-            try historyService.clearHistory()
-        } catch {
-            appLog("[TranscriptionVM] Failed to clear history: \(error)")
-        }
+        enqueueHistoryMutation { try $0.clearHistory() }
     }
 
     /// Load persistent history from SQLite (only while history is enabled)
     func loadPersistentHistory(limit: Int = 200) async -> [TranslationEntry] {
         guard settings.historyEnabled else { return [] }
+        await flushHistoryPersistence()
         do {
             return try await historyService.loadRecentTranslationsAsync(limit: limit)
         } catch {
@@ -1270,11 +1008,7 @@ class TranscriptionViewModel: ObservableObject {
     /// Delete a single history entry from SQLite (only while history is enabled)
     func deletePersistentEntry(_ entry: TranslationEntry) {
         guard settings.historyEnabled else { return }
-        do {
-            try historyService.deleteTranslation(withId: entry.id)
-        } catch {
-            appLog("[TranscriptionVM] Failed to delete entry: \(error)")
-        }
+        enqueueHistoryMutation { try await $0.deleteTranslationAsync(withId: entry.id) }
     }
 
     /// Export history to CSV string (only while history is enabled)
@@ -1330,7 +1064,7 @@ class TranscriptionViewModel: ObservableObject {
     private func applyUpdatedSettings(_ newSettings: AppSettings) -> [AudioSource] {
         let oldSettings = self.settings
         self.settings = newSettings
-        let didSaveSettings = newSettings.save()
+        let didSaveSettings = persistSettings(newSettings)
         let saveError = didSaveSettings ? nil : AppSettings.consumeLastPersistenceError()
 
         // Update services
@@ -1339,7 +1073,12 @@ class TranscriptionViewModel: ObservableObject {
             captureMicrophone: newSettings.captureMicrophone,
             microphoneDeviceUID: newSettings.microphoneDeviceUID
         )
-        ollamaService.updateSettings(newSettings)
+        if oldSettings.translationEnabled != newSettings.translationEnabled
+            || oldSettings.targetLanguage != newSettings.targetLanguage
+            || oldSettings.customPrompt != newSettings.customPrompt {
+            cancelPendingTranslation()
+        }
+        translationEngine.updateSettings(newSettings)
         caption.maxContextEntries = newSettings.maxContextEntries
         trimSegmentsIfNeeded()
 
@@ -1366,7 +1105,6 @@ class TranscriptionViewModel: ObservableObject {
             let needsRestart = oldSettings.captureSystemAudio != newSettings.captureSystemAudio
                 || oldSettings.captureMicrophone != newSettings.captureMicrophone
                 || oldSettings.microphoneDeviceUID != newSettings.microphoneDeviceUID
-                || oldSettings.ollamaModel != newSettings.ollamaModel
             if needsRestart {
                 notice = .warning("Some settings need a restart — click Stop then Start to apply.")
             }
@@ -1379,47 +1117,13 @@ class TranscriptionViewModel: ObservableObject {
             )
         }
 
-        // Unload the OLD model by name when the model changed (the service
-        // already carries the new settings, so an unqualified unload would
-        // target the wrong model), then warm the new one in the background.
-        // While capturing, the restart warning above covers the switch.
-        if oldSettings.ollamaModel != newSettings.ollamaModel {
-            let oldModelName = oldSettings.ollamaModel
-            modelState = .unknown
-            Task {
-                if newSettings.isLocalOllama {
-                    try? await ollamaService.unloadModel(oldModelName)
-                    guard !isCapturing else {
-                        await refreshModelState()
-                        return
-                    }
-                    do {
-                        modelState = .loading
-                        _ = try await ollamaService.prewarmModel()
-                        modelState = .loaded
-                        appLog("[TranscriptionVM] ✅ New translation model prewarmed after settings change")
-                    } catch {
-                        modelState = .failed(error.localizedDescription)
-                        appLog("[TranscriptionVM] ⚠️ Prewarm after model change failed: \(error.localizedDescription)")
-                    }
-                } else {
-                    await refreshModelState()
-                }
+        if oldSettings.translationEnabled != newSettings.translationEnabled {
+            translationFailure = nil
+            if newSettings.translationEnabled {
+                Task { await prepareTranslation() }
             }
-        } else if oldSettings.modelKeepAlive != newSettings.modelKeepAlive {
-            // A keep_alive change applies to the next request. If the model
-            // is currently loaded, touch it with a prewarm so the new idle
-            // timeout takes effect immediately; never load it just for this.
-            Task {
-                let loaded = (try? await ollamaService.loadedModels()) ?? []
-                if isModelInstalled(newSettings.ollamaModel, in: loaded) {
-                    _ = try? await ollamaService.prewarmModel()
-                }
-                await refreshModelState()
-            }
-        } else {
-            Task { await refreshModelState() }
         }
+        updateTranslationStatus()
 
         return lanesToRestart
     }
@@ -1492,6 +1196,8 @@ class TranscriptionViewModel: ObservableObject {
 
     /// Handle a new transcription result from speech recognizer (any lane)
     private func handleTranscriptionResult(_ result: TranscriptionResult) {
+        guard !isPaused, captureState == .capturing || captureState == .stopping else { return }
+        speechFailure = nil
         let lane = result.source
 
         // Recognition is alive on this lane — reset its stall accumulation.
@@ -1538,7 +1244,7 @@ class TranscriptionViewModel: ObservableObject {
     /// for rollback — a flushed leftover from a finished task can no longer be
     /// revised by the recognizer.
     private func appendFinalizedSegment(text: String, lane: AudioSource, trackForRollback: Bool) {
-        let newSegment = TranslationSegment(sourceText: text, state: isPaused ? .pending : .translating, source: lane)
+        let newSegment = TranslationSegment(sourceText: text, state: canTranslate ? .translating : .captionOnly, source: lane)
         if trackForRollback {
             activeTaskSegmentIds[lane, default: []].append(newSegment.id)
         }
@@ -1550,10 +1256,20 @@ class TranscriptionViewModel: ObservableObject {
         segments.append(newSegment)
         trimSegmentsIfNeeded()
         sessionTranscript.append(id: newSegment.id, source: lane, sourceText: text, finalizedAt: newSegment.timestamp)
+        if trackForRollback {
+            historyEntryIdsBySegmentId[newSegment.id] = newSegment.id
+        }
+        persistHistoryEntry(TranslationEntry(
+            id: newSegment.id,
+            sourceText: text,
+            translatedText: "",
+            targetLanguage: "",
+            timestamp: newSegment.timestamp
+        ))
 
         caption.updateOriginal(text)
 
-        if !isPaused {
+        if canTranslate {
             let context = settings.contextAware ? caption.getContextForTranslation() : []
             translationQueue.enqueue(
                 segmentId: newSegment.id,
@@ -1594,7 +1310,7 @@ class TranscriptionViewModel: ObservableObject {
             liveTranslations[source] = nil
         }
 
-        guard !isPaused, settings.liveDraftTranslation else {
+        guard canTranslate, settings.liveDraftTranslation else {
             liveTranslations[source] = nil
             refreshLiveTranslation()
             return
@@ -1627,6 +1343,17 @@ class TranscriptionViewModel: ObservableObject {
     /// Handle translation result from queue
     private func handleTranslationResult(_ result: TranslationQueueResult) {
         let cleanedText = TextUtils.cleanTranslationOutput(result.translatedText)
+        if !result.success {
+            if let index = segments.firstIndex(where: { $0.id == result.segmentId }) {
+                segments[index].state = .failed
+                segments[index].translatedText = ""
+            }
+            translationFailure = result.error?.localizedDescription ?? "Translation failed"
+            cancelPendingTranslation()
+            updateTranslationStatus()
+            notice = AppNotice(severity: .warning, message: "Translation stopped. Original captions continue.", actions: [.retryTranslation], autoDismiss: false)
+            return
+        }
 
         // Draft translations are transient: update the live area and stop. They
         // must not touch segments, history, or translation context.
@@ -1657,10 +1384,12 @@ class TranscriptionViewModel: ObservableObject {
 
             // Log history
             let entry = TranslationEntry(
+                id: result.segmentId,
                 sourceText: sourceText,
                 translatedText: cleanedText,
                 speaker: nil,
                 targetLanguage: settings.targetLanguage.displayName,
+                timestamp: sessionTranscript.entries.first(where: { $0.id == result.segmentId })?.finalizedAt ?? Date(),
                 latencyMs: result.latencyMs
             )
             translationHistory.append(entry)
@@ -1669,31 +1398,17 @@ class TranscriptionViewModel: ObservableObject {
             }
             caption.addToContext(entry)
 
-            // History persistence is opt-in; without consent nothing is written
-            // to disk. Existing entries are retained, never silently deleted.
-            if settings.historyEnabled {
-                Task { try? await historyService.logTranslationAsync(entry) }
-                Task {
-                    try? await historyService.pruneHistoryAsync(
-                        retentionDays: settings.historyRetentionDays,
-                        maxEntries: settings.historyMaxEntries
-                    )
-                }
-            }
+            // Replace the source-only row, retaining its stable id and time.
+            persistHistoryEntry(entry)
 
             // Keep history limited
             if translationHistory.count > 100 {
                 translationHistory.removeFirst()
             }
-        } else {
-            if let idx {
-                segments[idx].state = .failed
-                segments[idx].translatedText = "Error: \(cleanedText)"
-            }
         }
 
         lastLatencyMs = result.latencyMs
-        caption.updateTranslation(cleanedText)
+        if result.success { caption.updateTranslation(cleanedText) }
     }
 
     private func trimSegmentsIfNeeded() {
@@ -1722,10 +1437,9 @@ class TranscriptionViewModel: ObservableObject {
             translationHistory.removeAll { staleHistoryIds.contains($0.id) }
             caption.removeContextEntries(withIds: staleHistoryIds)
 
-            for entryId in staleHistoryIds {
-                Task {
-                    try? await historyService.deleteTranslationAsync(withId: entryId)
-                }
+            for entryId in staleHistoryIds where persistedHistorySegmentIDs.contains(entryId) {
+                enqueueHistoryMutation { try await $0.deleteTranslationAsync(withId: entryId) }
+                persistedHistorySegmentIDs.remove(entryId)
             }
         }
 
@@ -1738,6 +1452,7 @@ class TranscriptionViewModel: ObservableObject {
         activeTranscriptionTaskIds.removeAll()
         activeTaskSegmentIds.removeAll()
         historyEntryIdsBySegmentId.removeAll()
+        persistedHistorySegmentIDs.removeAll()
     }
 
     private func isModelInstalled(_ modelName: String, in availableModels: [String]) -> Bool {
@@ -1802,5 +1517,23 @@ class TranscriptionViewModel: ObservableObject {
             appLog("[TranscriptionVM] ❌ Session export failed: \(error.localizedDescription)")
             notice = .error("Export failed: \(error.localizedDescription)")
         }
+    }
+}
+
+/// Audio callbacks run on real-time threads and cannot read MainActor state.
+private final class CaptionAudioGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var enabled = false
+
+    var isEnabled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return enabled
+    }
+
+    func setEnabled(_ value: Bool) {
+        lock.lock()
+        enabled = value
+        lock.unlock()
     }
 }
