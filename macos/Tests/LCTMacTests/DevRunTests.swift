@@ -288,6 +288,22 @@ final class DevRunTests: XCTestCase {
         XCTAssertFalse(log.contains("open "), "--no-launch must not open the app, got: \(log)")
     }
 
+    func testDevRun_Log_FollowsLogFileByName() throws {
+        let stubs = try makeStubbedRun(securityOutput: nil)
+        try writeExecutable("tail", contents: """
+            #!/bin/bash
+            echo "tail $*" >> "$LCT_STUB_LOG"
+            """, in: stubs.workDir.appendingPathComponent("bin"))
+        let result = try run("dev-run.sh", arguments: ["--log"], stubs: stubs, identity: "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF")
+
+        XCTAssertEqual(result.exitStatus, 0, "dev-run.sh failed: \(result.stderr)")
+        let log = stubLog(stubs)
+        XCTAssertTrue(
+            log.contains("tail -F ") && log.contains("Library/Logs/LCTMac.log"),
+            "the app replaces its log file on launch, so --log must follow it by name (tail -F), got: \(log)"
+        )
+    }
+
     func testDevRun_RunningInstance_QuitsGracefullyWithoutPkill() throws {
         let pgrep = """
             #!/bin/bash
